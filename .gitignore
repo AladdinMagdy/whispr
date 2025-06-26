@@ -7,9 +7,6 @@
 .env.development
 .env.production
 
-# Credentials
-.git-credentials
-
 # Node
 node_modules/
 
