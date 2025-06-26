@@ -1,0 +1,107 @@
+# OS
+.DS_Store
+
+# Environment
+.env
+.env.test
+.env.development
+.env.production
+
+# Node
+node_modules/
+
+# Build
+dist/
+dist/*
+**/dist/*
+
+# Yarn
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.yarnrc.yml
+
+# NPM
+.npmrc
+
+
+# Logs
+logs/
+
+# IDEs
+.cursorrules
+.cursorignore
+.cursorignore.md
+.cursorignore.txt
+.cursorignore.yml
+.cursorignore.yaml
+.cursorignore.json
+
+# Local env files
+.env.local
+.env.*.local
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor directories and files
+.idea/
+.vscode/
+.vscode/*
+**/.vscode/*
+
+# Xcode
+build/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata
+*.xccheckout
+*.moved-aside
+DerivedData
+*.hmap
+*.ipa
+*.xcuserstate
+ios/.xcode.env.local
+
+# Android/IntelliJ
+build/
+.idea
+.gradle
+local.properties
+*.iml
+*.hprof
+.cxx/
+
+# BUCK
+buck-out/
+\.buckd/
+*.keystore
+!debug.keystore
+
+# Bundle artifact
+*.jsbundle
+.artifacts/
+
+# Ruby / CocoaPods
+**/ios/Pods/
+**/vendor/bundle/
+
+# Coverage
+coverage/
+
+#Storybook
+storybook-static/
+
+# Redis
+/redis*
