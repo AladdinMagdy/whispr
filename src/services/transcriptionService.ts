@@ -1,5 +1,6 @@
 import { TranscriptionResponse } from "@/types";
 import { API_ENDPOINTS } from "@/constants";
+import { env } from "@/config/environment";
 
 export interface TranscriptionOptions {
   language?: string;
@@ -14,8 +15,8 @@ export class TranscriptionService {
   /**
    * Initialize the transcription service with API key
    */
-  static initialize(apiKey: string): void {
-    this.apiKey = apiKey;
+  static initialize(): void {
+    this.apiKey = env.openai.apiKey;
   }
 
   /**
@@ -25,6 +26,10 @@ export class TranscriptionService {
     audioUrl: string,
     options: TranscriptionOptions = {}
   ): Promise<TranscriptionResponse> {
+    if (!this.apiKey) {
+      this.initialize(); // Try to initialize if not already done
+    }
+
     if (!this.apiKey) {
       throw new Error(
         "Transcription service not initialized. Please provide OpenAI API key."
@@ -301,5 +306,8 @@ export class TranscriptionService {
     return durationMinutes * costPerMinute;
   }
 }
+
+// Initialize the service when the module is loaded
+TranscriptionService.initialize();
 
 export default TranscriptionService;
