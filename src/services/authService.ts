@@ -5,7 +5,7 @@ import {
   User as FirebaseUser,
 } from "firebase/auth";
 import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
-import { auth, db } from "@/config/firebase";
+import { getAuthInstance, getFirestoreInstance } from "@/config/firebase";
 import { User } from "@/types";
 import { FIRESTORE_COLLECTIONS } from "@/constants";
 
@@ -15,6 +15,9 @@ export class AuthService {
    */
   static async signInAnonymously(): Promise<User> {
     try {
+      const auth = getAuthInstance();
+      const db = getFirestoreInstance();
+
       const { user: firebaseUser } = await signInAnonymously(auth);
 
       // Check if user document exists
@@ -62,6 +65,7 @@ export class AuthService {
    */
   static async signOut(): Promise<void> {
     try {
+      const auth = getAuthInstance();
       await signOut(auth);
     } catch (error) {
       console.error("Error signing out:", error);
@@ -74,6 +78,9 @@ export class AuthService {
    */
   static async getCurrentUser(): Promise<User | null> {
     try {
+      const auth = getAuthInstance();
+      const db = getFirestoreInstance();
+
       const firebaseUser = auth.currentUser;
       if (!firebaseUser) return null;
 
@@ -102,6 +109,9 @@ export class AuthService {
    */
   static async updateLastActive(): Promise<void> {
     try {
+      const auth = getAuthInstance();
+      const db = getFirestoreInstance();
+
       const firebaseUser = auth.currentUser;
       if (!firebaseUser) return;
 
@@ -118,6 +128,7 @@ export class AuthService {
    * Listen to authentication state changes
    */
   static onAuthStateChanged(callback: (user: User | null) => void): () => void {
+    const auth = getAuthInstance();
     return onAuthStateChanged(
       auth,
       async (firebaseUser: FirebaseUser | null) => {

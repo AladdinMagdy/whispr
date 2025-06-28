@@ -28,6 +28,10 @@ dist/*
 # NPM
 .npmrc
 
+# Expo
+.expo/
+.expo-shared/
+web-build/
 
 # Logs
 logs/

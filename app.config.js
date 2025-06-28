@@ -18,7 +18,13 @@ export default {
     ],
     ios: {
       supportsTablet: true,
-      bundleIdentifier: 'com.aladdinmagdy.whispr'
+      bundleIdentifier: 'com.aladdinmagdy.whispr',
+      infoPlist: {
+        NSMicrophoneUsageDescription: "Allow Whispr to access your microphone.",
+        "UIBackgroundModes": [
+          "audio"
+        ]
+      }
     },
     android: {
       adaptiveIcon: {
@@ -31,9 +37,12 @@ export default {
       favicon: './assets/favicon.png'
     },
     plugins: [
-      'expo-av',
       'expo-file-system'
     ],
+    // Disable New Architecture for compatibility
+    experiments: {
+      newArchEnabled: false
+    },
     extra: {
       // Environment variables
       EXPO_PUBLIC_FIREBASE_API_KEY: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,

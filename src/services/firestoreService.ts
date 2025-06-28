@@ -2,54 +2,58 @@ import {
   collection,
   doc,
   addDoc,
-  updateDoc,
-  deleteDoc,
   getDoc,
   getDocs,
+  updateDoc,
+  deleteDoc,
   query,
   where,
   orderBy,
   limit,
-  onSnapshot,
-  serverTimestamp,
+  startAfter,
+  DocumentData,
+  QueryDocumentSnapshot,
   Timestamp,
 } from "firebase/firestore";
-import { db } from "@/config/firebase";
-import { Whisper, User } from "@/types";
+import { getFirestoreInstance } from "@/config/firebase";
+import { Whisper } from "@/types";
 import { FIRESTORE_COLLECTIONS } from "@/constants";
-
-export interface WhisperData {
-  userId: string;
-  audioUrl: string;
-  transcription?: string;
-  duration: number;
-  volume: number;
-  isWhisper: boolean;
-  isPublic: boolean;
-  likes: number;
-  replies: number;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
-}
 
 export class FirestoreService {
   /**
-   * Create a new whisper document
+   * Create a new whisper
    */
   static async createWhisper(
-    whisperData: Omit<WhisperData, "createdAt" | "updatedAt">
-  ): Promise<string> {
+    whisperData: Omit<Whisper, "id" | "createdAt" | "updatedAt">
+  ): Promise<Whisper> {
     try {
+      const db = getFirestoreInstance();
+
+      // Convert undefined values to null for Firestore compatibility
+      const firestoreData = Object.fromEntries(
+        Object.entries(whisperData).map(([key, value]) => [
+          key,
+          value === undefined ? null : value,
+        ])
+      );
+
       const docRef = await addDoc(
         collection(db, FIRESTORE_COLLECTIONS.WHISPERS),
         {
-          ...whisperData,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+          ...firestoreData,
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
         }
       );
 
-      return docRef.id;
+      const whisper: Whisper = {
+        id: docRef.id,
+        ...whisperData,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      return whisper;
     } catch (error) {
       console.error("Error creating whisper:", error);
       throw new Error("Failed to create whisper");
@@ -61,75 +65,90 @@ export class FirestoreService {
    */
   static async getWhisper(whisperId: string): Promise<Whisper | null> {
     try {
+      const db = getFirestoreInstance();
+
       const docRef = doc(db, FIRESTORE_COLLECTIONS.WHISPERS, whisperId);
       const docSnap = await getDoc(docRef);
 
       if (docSnap.exists()) {
-        const data = docSnap.data() as WhisperData;
-        return this.convertFirestoreWhisper(docSnap.id, data);
+        const data = docSnap.data();
+        return {
+          id: docSnap.id,
+          ...data,
+          createdAt: data.createdAt.toDate(),
+          updatedAt: data.updatedAt.toDate(),
+        } as Whisper;
       }
 
       return null;
     } catch (error) {
       console.error("Error getting whisper:", error);
-      throw new Error("Failed to get whisper");
+      return null;
     }
   }
 
   /**
-   * Get whispers for feed (public whispers, ordered by creation time)
+   * Get whispers with pagination
    */
-  static async getPublicWhispers(limitCount: number = 20): Promise<Whisper[]> {
+  static async getWhispers(
+    options: {
+      limit?: number;
+      lastDoc?: QueryDocumentSnapshot<DocumentData>;
+      userId?: string;
+      isPublic?: boolean;
+    } = {}
+  ): Promise<{
+    whispers: Whisper[];
+    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
+  }> {
     try {
-      const q = query(
+      const db = getFirestoreInstance();
+
+      const { limit: limitCount = 10, lastDoc, userId, isPublic } = options;
+
+      let q = query(
         collection(db, FIRESTORE_COLLECTIONS.WHISPERS),
-        where("isPublic", "==", true),
         orderBy("createdAt", "desc"),
         limit(limitCount)
       );
+
+      // Add filters
+      if (userId) {
+        q = query(q, where("userId", "==", userId));
+      }
+
+      if (isPublic !== undefined) {
+        q = query(q, where("isPublic", "==", isPublic));
+      }
+
+      // Add pagination
+      if (lastDoc) {
+        q = query(q, startAfter(lastDoc));
+      }
 
       const querySnapshot = await getDocs(q);
       const whispers: Whisper[] = [];
 
       querySnapshot.forEach((doc) => {
-        const data = doc.data() as WhisperData;
-        whispers.push(this.convertFirestoreWhisper(doc.id, data));
+        const data = doc.data();
+        whispers.push({
+          id: doc.id,
+          ...data,
+          createdAt: data.createdAt.toDate(),
+          updatedAt: data.updatedAt.toDate(),
+        } as Whisper);
       });
 
-      return whispers;
+      const lastVisible =
+        querySnapshot.docs[querySnapshot.docs.length - 1] || null;
+
+      return {
+        whispers,
+        lastDoc: lastVisible,
+      };
     } catch (error) {
-      console.error("Error getting public whispers:", error);
-      throw new Error("Failed to get public whispers");
-    }
-  }
-
-  /**
-   * Get whispers by user ID
-   */
-  static async getUserWhispers(
-    userId: string,
-    limitCount: number = 20
-  ): Promise<Whisper[]> {
-    try {
-      const q = query(
-        collection(db, FIRESTORE_COLLECTIONS.WHISPERS),
-        where("userId", "==", userId),
-        orderBy("createdAt", "desc"),
-        limit(limitCount)
-      );
-
-      const querySnapshot = await getDocs(q);
-      const whispers: Whisper[] = [];
-
-      querySnapshot.forEach((doc) => {
-        const data = doc.data() as WhisperData;
-        whispers.push(this.convertFirestoreWhisper(doc.id, data));
-      });
-
-      return whispers;
-    } catch (error) {
-      console.error("Error getting user whispers:", error);
-      throw new Error("Failed to get user whispers");
+      console.error("Error getting whispers:", error);
+      throw new Error("Failed to get whispers");
     }
   }
 
@@ -138,13 +157,15 @@ export class FirestoreService {
    */
   static async updateWhisper(
     whisperId: string,
-    updates: Partial<WhisperData>
+    updateData: Partial<Omit<Whisper, "id" | "createdAt" | "updatedAt">>
   ): Promise<void> {
     try {
+      const db = getFirestoreInstance();
+
       const docRef = doc(db, FIRESTORE_COLLECTIONS.WHISPERS, whisperId);
       await updateDoc(docRef, {
-        ...updates,
-        updatedAt: serverTimestamp(),
+        ...updateData,
+        updatedAt: Timestamp.now(),
       });
     } catch (error) {
       console.error("Error updating whisper:", error);
@@ -157,6 +178,8 @@ export class FirestoreService {
    */
   static async deleteWhisper(whisperId: string): Promise<void> {
     try {
+      const db = getFirestoreInstance();
+
       const docRef = doc(db, FIRESTORE_COLLECTIONS.WHISPERS, whisperId);
       await deleteDoc(docRef);
     } catch (error) {
@@ -166,20 +189,19 @@ export class FirestoreService {
   }
 
   /**
-   * Like a whisper (increment likes count)
+   * Like a whisper
    */
-  static async likeWhisper(whisperId: string): Promise<void> {
+  static async likeWhisper(whisperId: string, userId: string): Promise<void> {
     try {
-      const docRef = doc(db, FIRESTORE_COLLECTIONS.WHISPERS, whisperId);
-      const docSnap = await getDoc(docRef);
+      const db = getFirestoreInstance();
 
-      if (docSnap.exists()) {
-        const currentLikes = docSnap.data().likes || 0;
-        await updateDoc(docRef, {
-          likes: currentLikes + 1,
-          updatedAt: serverTimestamp(),
-        });
-      }
+      const docRef = doc(db, FIRESTORE_COLLECTIONS.WHISPERS, whisperId);
+      await updateDoc(docRef, {
+        likes: {
+          [userId]: true,
+        },
+        updatedAt: Timestamp.now(),
+      });
     } catch (error) {
       console.error("Error liking whisper:", error);
       throw new Error("Failed to like whisper");
@@ -187,114 +209,146 @@ export class FirestoreService {
   }
 
   /**
-   * Listen to real-time updates for public whispers
+   * Unlike a whisper
    */
-  static subscribeToPublicWhispers(
-    callback: (whispers: Whisper[]) => void,
-    limitCount: number = 20
-  ): () => void {
-    const q = query(
-      collection(db, FIRESTORE_COLLECTIONS.WHISPERS),
-      where("isPublic", "==", true),
-      orderBy("createdAt", "desc"),
-      limit(limitCount)
-    );
-
-    return onSnapshot(q, (querySnapshot) => {
-      const whispers: Whisper[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data() as WhisperData;
-        whispers.push(this.convertFirestoreWhisper(doc.id, data));
-      });
-      callback(whispers);
-    });
-  }
-
-  /**
-   * Listen to real-time updates for user whispers
-   */
-  static subscribeToUserWhispers(
-    userId: string,
-    callback: (whispers: Whisper[]) => void,
-    limitCount: number = 20
-  ): () => void {
-    const q = query(
-      collection(db, FIRESTORE_COLLECTIONS.WHISPERS),
-      where("userId", "==", userId),
-      orderBy("createdAt", "desc"),
-      limit(limitCount)
-    );
-
-    return onSnapshot(q, (querySnapshot) => {
-      const whispers: Whisper[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data() as WhisperData;
-        whispers.push(this.convertFirestoreWhisper(doc.id, data));
-      });
-      callback(whispers);
-    });
-  }
-
-  /**
-   * Convert Firestore document to Whisper type
-   */
-  private static convertFirestoreWhisper(
-    id: string,
-    data: WhisperData
-  ): Whisper {
-    return {
-      id,
-      userId: data.userId,
-      audioUrl: data.audioUrl,
-      transcription: data.transcription,
-      duration: data.duration,
-      volume: data.volume,
-      isWhisper: data.isWhisper,
-      isPublic: data.isPublic,
-      likes: data.likes,
-      replies: data.replies,
-      createdAt: data.createdAt.toDate(),
-      updatedAt: data.updatedAt.toDate(),
-    };
-  }
-
-  /**
-   * Search whispers by transcription text
-   */
-  static async searchWhispers(
-    searchTerm: string,
-    limitCount: number = 20
-  ): Promise<Whisper[]> {
+  static async unlikeWhisper(whisperId: string, userId: string): Promise<void> {
     try {
-      // Note: This is a simple search. For production, consider using Algolia or similar
-      const q = query(
+      const db = getFirestoreInstance();
+
+      const docRef = doc(db, FIRESTORE_COLLECTIONS.WHISPERS, whisperId);
+      await updateDoc(docRef, {
+        [`likes.${userId}`]: null,
+        updatedAt: Timestamp.now(),
+      });
+    } catch (error) {
+      console.error("Error unliking whisper:", error);
+      throw new Error("Failed to unlike whisper");
+    }
+  }
+
+  /**
+   * Get user's whispers
+   */
+  static async getUserWhispers(
+    userId: string,
+    options: {
+      limit?: number;
+      lastDoc?: QueryDocumentSnapshot<DocumentData>;
+    } = {}
+  ): Promise<{
+    whispers: Whisper[];
+    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
+  }> {
+    return this.getWhispers({
+      ...options,
+      userId,
+    });
+  }
+
+  /**
+   * Get public whispers with pagination
+   */
+  static async getPublicWhispers(
+    options: {
+      limit?: number;
+      lastDoc?: QueryDocumentSnapshot<DocumentData>;
+    } = {}
+  ): Promise<{
+    whispers: Whisper[];
+    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
+  }> {
+    const { limit: limitCount = 10, lastDoc } = options;
+
+    try {
+      const db = getFirestoreInstance();
+
+      let q = query(
         collection(db, FIRESTORE_COLLECTIONS.WHISPERS),
         where("isPublic", "==", true),
         orderBy("createdAt", "desc"),
         limit(limitCount)
       );
 
+      // Add pagination
+      if (lastDoc) {
+        q = query(q, startAfter(lastDoc));
+      }
+
       const querySnapshot = await getDocs(q);
       const whispers: Whisper[] = [];
 
       querySnapshot.forEach((doc) => {
-        const data = doc.data() as WhisperData;
-        const whisper = this.convertFirestoreWhisper(doc.id, data);
-
-        // Simple text search in transcription
-        if (
-          whisper.transcription
-            ?.toLowerCase()
-            .includes(searchTerm.toLowerCase())
-        ) {
-          whispers.push(whisper);
-        }
+        const data = doc.data();
+        whispers.push({
+          id: doc.id,
+          ...data,
+          createdAt: data.createdAt.toDate(),
+          updatedAt: data.updatedAt.toDate(),
+        } as Whisper);
       });
 
-      return whispers;
+      const lastVisible =
+        querySnapshot.docs[querySnapshot.docs.length - 1] || null;
+
+      return {
+        whispers,
+        lastDoc: lastVisible,
+      };
     } catch (error) {
-      console.error("Error searching whispers:", error);
-      throw new Error("Failed to search whispers");
+      console.error("Error getting public whispers:", error);
+
+      // Check if it's an index error
+      if (
+        error instanceof Error &&
+        error.message.includes("requires an index")
+      ) {
+        console.error(
+          "Firestore index missing. Please create the required index:"
+        );
+        console.error("Collection: whispers");
+        console.error("Fields: isPublic (Ascending), createdAt (Descending)");
+        console.error(
+          "You can create it at: https://console.firebase.google.com/project/YOUR_PROJECT_ID/firestore/indexes"
+        );
+
+        // For now, try a simpler query without the index
+        try {
+          console.log("Attempting fallback query without index...");
+          const db = getFirestoreInstance();
+          const q = query(
+            collection(db, FIRESTORE_COLLECTIONS.WHISPERS),
+            where("isPublic", "==", true),
+            limit(limitCount)
+          );
+
+          const querySnapshot = await getDocs(q);
+          const whispers: Whisper[] = [];
+
+          querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            whispers.push({
+              id: doc.id,
+              ...data,
+              createdAt: data.createdAt.toDate(),
+              updatedAt: data.updatedAt.toDate(),
+            } as Whisper);
+          });
+
+          // Sort in memory since we can't use the index
+          whispers.sort(
+            (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+          );
+
+          return {
+            whispers: whispers.slice(0, limitCount),
+            lastDoc: null,
+          };
+        } catch (fallbackError) {
+          console.error("Fallback query also failed:", fallbackError);
+        }
+      }
+
+      throw new Error("Failed to get public whispers");
     }
   }
 }

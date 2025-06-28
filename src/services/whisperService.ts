@@ -1,92 +1,94 @@
-import { AudioRecording } from "@/types";
-import { defaultWhisperValidator } from "@/utils/whisperValidator";
-import { StorageService, UploadProgress } from "./storageService";
 import { FirestoreService } from "./firestoreService";
+import { StorageService } from "./storageService";
 import { TranscriptionService } from "./transcriptionService";
+import { AudioFormatTest } from "../utils/audioFormatTest";
+import { Whisper, AudioRecording, User } from "@/types";
+import { defaultWhisperValidator } from "@/utils/whisperValidator";
 import { FEATURE_FLAGS } from "@/constants";
 
-export interface CreateWhisperOptions {
-  isPublic?: boolean;
+export interface WhisperCreationOptions {
   enableTranscription?: boolean;
-  onUploadProgress?: (progress: UploadProgress) => void;
+  isPublic?: boolean;
+  onUploadProgress?: (progress: number) => void;
 }
 
 export interface WhisperCreationResult {
-  whisperId: string;
-  audioUrl: string;
-  transcription?: string;
   success: boolean;
+  whisper?: Whisper;
   error?: string;
 }
 
 export class WhisperService {
   /**
-   * Create a complete whisper (validate, upload, transcribe, store)
+   * Create a new whisper with audio upload and optional transcription
    */
   static async createWhisper(
-    recording: AudioRecording,
+    audioRecording: AudioRecording,
     userId: string,
-    options: CreateWhisperOptions = {}
+    options: WhisperCreationOptions = {}
   ): Promise<WhisperCreationResult> {
     try {
-      // 1. Validate the recording
-      const validation = defaultWhisperValidator.validateWhisper(recording);
-      if (!validation.isValid) {
-        return {
-          whisperId: "",
-          audioUrl: "",
-          success: false,
-          error: validation.error || "Invalid whisper recording",
-        };
-      }
+      const {
+        enableTranscription = true,
+        isPublic = true,
+        onUploadProgress,
+      } = options;
 
-      // 2. Upload audio to Firebase Storage
-      const uploadResult = await StorageService.uploadAudio(
-        recording.uri,
-        userId,
-        options.onUploadProgress
-      );
+      // Test audio format before processing
+      console.log("🔍 Testing audio format before processing...");
+      await AudioFormatTest.logAudioInfo(audioRecording.uri);
 
-      // 3. Transcribe audio (if enabled)
+      // Upload audio to Firebase Storage
+      const audioUrl = await StorageService.uploadAudio(audioRecording, userId);
+
+      // Transcribe audio if enabled
       let transcription: string | undefined;
-      if (
-        FEATURE_FLAGS.ENABLE_TRANSCRIPTION &&
-        options.enableTranscription !== false
-      ) {
+      let transcriptionError: string | undefined;
+
+      if (enableTranscription) {
         try {
+          console.log("🎤 Starting transcription...");
           const transcriptionResult =
-            await TranscriptionService.transcribeWithRetry(uploadResult.url);
-          transcription = transcriptionResult.text;
+            await TranscriptionService.transcribeWithRetry(audioUrl);
+          transcription = transcriptionResult.text || undefined;
+          console.log(
+            "✅ Transcription completed:",
+            transcription?.substring(0, 50) + "..."
+          );
         } catch (error) {
-          console.warn("Transcription failed, continuing without it:", error);
-          // Continue without transcription if it fails
+          console.warn(
+            "❌ Transcription failed, continuing without it:",
+            error
+          );
+          transcriptionError =
+            error instanceof Error ? error.message : "Transcription failed";
+          // Keep transcription as undefined - the whisper will still be created
         }
       }
 
-      // 4. Create whisper document in Firestore
-      const whisperId = await FirestoreService.createWhisper({
+      // Create whisper document in Firestore
+      const whisperData: Omit<Whisper, "id" | "createdAt" | "updatedAt"> = {
         userId,
-        audioUrl: uploadResult.url,
-        transcription,
-        duration: recording.duration,
-        volume: recording.volume,
-        isWhisper: recording.isWhisper,
-        isPublic: options.isPublic ?? true,
+        audioUrl,
+        transcription, // This can be undefined, which is fine for the type
+        duration: audioRecording.duration,
+        volume: audioRecording.volume,
+        isWhisper: audioRecording.isWhisper,
+        isPublic,
         likes: 0,
         replies: 0,
-      });
+      };
+
+      const whisper = await FirestoreService.createWhisper(whisperData);
 
       return {
-        whisperId,
-        audioUrl: uploadResult.url,
-        transcription,
         success: true,
+        whisper,
+        error: transcriptionError, // Include transcription error if it occurred
       };
     } catch (error) {
-      console.error("Error creating whisper:", error);
+      console.error("❌ Error creating whisper:", error);
       return {
-        whisperId: "",
-        audioUrl: "",
         success: false,
         error:
           error instanceof Error ? error.message : "Failed to create whisper",
@@ -97,9 +99,10 @@ export class WhisperService {
   /**
    * Get public whispers for feed
    */
-  static async getPublicWhispers(limit: number = 20) {
+  static async getPublicWhispers(limit: number = 20): Promise<Whisper[]> {
     try {
-      return await FirestoreService.getPublicWhispers(limit);
+      const result = await FirestoreService.getPublicWhispers({ limit });
+      return result.whispers;
     } catch (error) {
       console.error("Error getting public whispers:", error);
       throw new Error("Failed to get public whispers");
@@ -109,9 +112,13 @@ export class WhisperService {
   /**
    * Get user's whispers
    */
-  static async getUserWhispers(userId: string, limit: number = 20) {
+  static async getUserWhispers(
+    userId: string,
+    limit: number = 20
+  ): Promise<Whisper[]> {
     try {
-      return await FirestoreService.getUserWhispers(userId, limit);
+      const result = await FirestoreService.getUserWhispers(userId, { limit });
+      return result.whispers;
     } catch (error) {
       console.error("Error getting user whispers:", error);
       throw new Error("Failed to get user whispers");
@@ -119,11 +126,23 @@ export class WhisperService {
   }
 
   /**
+   * Get a single whisper by ID
+   */
+  static async getWhisper(whisperId: string): Promise<Whisper | null> {
+    try {
+      return await FirestoreService.getWhisper(whisperId);
+    } catch (error) {
+      console.error("Error getting whisper:", error);
+      return null;
+    }
+  }
+
+  /**
    * Like a whisper
    */
-  static async likeWhisper(whisperId: string) {
+  static async likeWhisper(whisperId: string, userId: string): Promise<void> {
     try {
-      await FirestoreService.likeWhisper(whisperId);
+      await FirestoreService.likeWhisper(whisperId, userId);
     } catch (error) {
       console.error("Error liking whisper:", error);
       throw new Error("Failed to like whisper");
@@ -131,17 +150,30 @@ export class WhisperService {
   }
 
   /**
-   * Delete a whisper (and its audio file)
+   * Unlike a whisper
    */
-  static async deleteWhisper(whisperId: string, audioStoragePath?: string) {
+  static async unlikeWhisper(whisperId: string, userId: string): Promise<void> {
     try {
-      // Delete from Firestore first
+      await FirestoreService.unlikeWhisper(whisperId, userId);
+    } catch (error) {
+      console.error("Error unliking whisper:", error);
+      throw new Error("Failed to unlike whisper");
+    }
+  }
+
+  /**
+   * Delete a whisper
+   */
+  static async deleteWhisper(
+    whisperId: string,
+    audioUrl: string
+  ): Promise<void> {
+    try {
+      // Delete from Firestore
       await FirestoreService.deleteWhisper(whisperId);
 
-      // Delete audio file from storage if path is provided
-      if (audioStoragePath) {
-        await StorageService.deleteAudio(audioStoragePath);
-      }
+      // Delete from Storage
+      await StorageService.deleteAudio(audioUrl);
     } catch (error) {
       console.error("Error deleting whisper:", error);
       throw new Error("Failed to delete whisper");
@@ -149,35 +181,17 @@ export class WhisperService {
   }
 
   /**
-   * Subscribe to real-time public whispers
+   * Update whisper visibility
    */
-  static subscribeToPublicWhispers(
-    callback: (whispers: any[]) => void,
-    limit: number = 20
-  ) {
-    return FirestoreService.subscribeToPublicWhispers(callback, limit);
-  }
-
-  /**
-   * Subscribe to real-time user whispers
-   */
-  static subscribeToUserWhispers(
-    userId: string,
-    callback: (whispers: any[]) => void,
-    limit: number = 20
-  ) {
-    return FirestoreService.subscribeToUserWhispers(userId, callback, limit);
-  }
-
-  /**
-   * Search whispers by transcription text
-   */
-  static async searchWhispers(searchTerm: string, limit: number = 20) {
+  static async updateWhisperVisibility(
+    whisperId: string,
+    isPublic: boolean
+  ): Promise<void> {
     try {
-      return await FirestoreService.searchWhispers(searchTerm, limit);
+      await FirestoreService.updateWhisper(whisperId, { isPublic });
     } catch (error) {
-      console.error("Error searching whispers:", error);
-      throw new Error("Failed to search whispers");
+      console.error("Error updating whisper visibility:", error);
+      throw new Error("Failed to update whisper visibility");
     }
   }
 

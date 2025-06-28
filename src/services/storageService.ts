@@ -1,78 +1,52 @@
 import {
   ref,
-  uploadBytesResumable,
+  uploadBytes,
   getDownloadURL,
   deleteObject,
+  UploadResult,
 } from "firebase/storage";
-import { storage } from "@/config/firebase";
-import { STORAGE_PATHS } from "@/constants";
-
-export interface UploadProgress {
-  progress: number;
-  bytesTransferred: number;
-  totalBytes: number;
-}
-
-export interface UploadResult {
-  url: string;
-  path: string;
-}
+import { getStorageInstance } from "@/config/firebase";
+import { AudioRecording } from "@/types";
 
 export class StorageService {
   /**
    * Upload audio file to Firebase Storage
    */
   static async uploadAudio(
-    fileUri: string,
-    userId: string,
-    onProgress?: (progress: UploadProgress) => void
-  ): Promise<UploadResult> {
+    audioRecording: AudioRecording,
+    userId: string
+  ): Promise<string> {
     try {
-      // Convert file URI to blob
-      const response = await fetch(fileUri);
-      const blob = await response.blob();
+      const storage = getStorageInstance();
 
-      // Generate unique filename
+      // Create unique filename
       const timestamp = Date.now();
-      const filename = `whisper_${userId}_${timestamp}.m4a`;
-      const storagePath = `${STORAGE_PATHS.AUDIO}/${userId}/${filename}`;
+      const filename = `whispers/${userId}/${timestamp}.m4a`;
+      const storagePath = `audio/${filename}`;
 
       // Create storage reference
       const storageRef = ref(storage, storagePath);
 
-      // Upload with progress tracking
-      const uploadTask = uploadBytesResumable(storageRef, blob);
+      // Convert URI to blob
+      const response = await fetch(audioRecording.uri);
+      const blob = await response.blob();
 
-      return new Promise((resolve, reject) => {
-        uploadTask.on(
-          "state_changed",
-          (snapshot) => {
-            const progress =
-              (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-            onProgress?.({
-              progress,
-              bytesTransferred: snapshot.bytesTransferred,
-              totalBytes: snapshot.totalBytes,
-            });
-          },
-          (error) => {
-            console.error("Upload error:", error);
-            reject(new Error("Failed to upload audio file"));
-          },
-          async () => {
-            try {
-              const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-              resolve({
-                url: downloadURL,
-                path: storagePath,
-              });
-            } catch (error) {
-              console.error("Error getting download URL:", error);
-              reject(new Error("Failed to get download URL"));
-            }
-          }
-        );
+      // Upload to Firebase Storage
+      const uploadResult: UploadResult = await uploadBytes(storageRef, blob, {
+        contentType: "audio/m4a",
+        customMetadata: {
+          userId,
+          duration: audioRecording.duration.toString(),
+          volume: audioRecording.volume.toString(),
+          isWhisper: audioRecording.isWhisper.toString(),
+          timestamp: audioRecording.timestamp.toISOString(),
+        },
       });
+
+      // Get download URL
+      const downloadURL = await getDownloadURL(uploadResult.ref);
+
+      return downloadURL;
     } catch (error) {
       console.error("Error uploading audio:", error);
       throw new Error("Failed to upload audio file");
@@ -82,9 +56,24 @@ export class StorageService {
   /**
    * Delete audio file from Firebase Storage
    */
-  static async deleteAudio(storagePath: string): Promise<void> {
+  static async deleteAudio(audioUrl: string): Promise<void> {
     try {
-      const storageRef = ref(storage, storagePath);
+      const storage = getStorageInstance();
+
+      // Extract path from URL
+      const url = new URL(audioUrl);
+      const path = decodeURIComponent(
+        url.pathname.split("/o/")[1]?.split("?")[0] || ""
+      );
+
+      if (!path) {
+        throw new Error("Invalid audio URL");
+      }
+
+      // Create storage reference
+      const storageRef = ref(storage, path);
+
+      // Delete file
       await deleteObject(storageRef);
     } catch (error) {
       console.error("Error deleting audio:", error);
@@ -93,10 +82,12 @@ export class StorageService {
   }
 
   /**
-   * Get download URL for a file
+   * Get download URL for audio file
    */
-  static async getDownloadURL(storagePath: string): Promise<string> {
+  static async getAudioDownloadURL(storagePath: string): Promise<string> {
     try {
+      const storage = getStorageInstance();
+
       const storageRef = ref(storage, storagePath);
       return await getDownloadURL(storageRef);
     } catch (error) {
@@ -106,36 +97,44 @@ export class StorageService {
   }
 
   /**
-   * Generate storage path for audio file
+   * Refresh download URL for audio file (useful for expired URLs)
    */
-  static generateAudioPath(userId: string, filename?: string): string {
-    const timestamp = Date.now();
-    const finalFilename = filename || `whisper_${userId}_${timestamp}.m4a`;
-    return `${STORAGE_PATHS.AUDIO}/${userId}/${finalFilename}`;
+  static async refreshAudioDownloadURL(audioUrl: string): Promise<string> {
+    try {
+      const storage = getStorageInstance();
+
+      // Extract path from URL
+      const url = new URL(audioUrl);
+      const path = decodeURIComponent(
+        url.pathname.split("/o/")[1]?.split("?")[0] || ""
+      );
+
+      if (!path) {
+        throw new Error("Invalid audio URL");
+      }
+
+      // Create storage reference
+      const storageRef = ref(storage, path);
+
+      // Get fresh download URL
+      return await getDownloadURL(storageRef);
+    } catch (error) {
+      console.error("Error refreshing download URL:", error);
+      throw new Error("Failed to refresh download URL");
+    }
   }
 
   /**
-   * Validate file before upload
+   * Check if a Firebase Storage URL is expired or invalid
    */
-  static validateAudioFile(
-    fileUri: string,
-    maxSizeMB: number = 10
-  ): Promise<boolean> {
-    return new Promise((resolve) => {
-      fetch(fileUri)
-        .then((response) => {
-          const contentLength = response.headers.get("content-length");
-          if (contentLength) {
-            const fileSizeMB = parseInt(contentLength) / (1024 * 1024);
-            resolve(fileSizeMB <= maxSizeMB);
-          } else {
-            resolve(true); // Can't determine size, allow upload
-          }
-        })
-        .catch(() => {
-          resolve(false);
-        });
-    });
+  static async isAudioUrlValid(audioUrl: string): Promise<boolean> {
+    try {
+      const response = await fetch(audioUrl, { method: "HEAD" });
+      return response.ok;
+    } catch (error) {
+      console.warn("Audio URL validation failed:", error);
+      return false;
+    }
   }
 }
 

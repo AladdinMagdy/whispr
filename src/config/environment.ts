@@ -23,6 +23,7 @@ interface EnvironmentConfig {
     enableVolumeDetection: boolean;
     maxAudioDuration: number;
     whisperVolumeThreshold: number;
+    enableEmulators: boolean;
   };
 }
 
@@ -64,6 +65,8 @@ export const env: EnvironmentConfig = {
     whisperVolumeThreshold: parseFloat(
       getEnvVar("EXPO_PUBLIC_WHISPER_VOLUME_THRESHOLD", "0.4")
     ),
+    enableEmulators:
+      getEnvVar("EXPO_PUBLIC_ENABLE_EMULATORS", "false") === "true",
   },
 };
 

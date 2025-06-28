@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { devtools, persist } from "zustand/middleware";
+import { devtools, persist, createJSONStorage } from "zustand/middleware";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { User, Whisper, AudioRecording, AppState, AppActions } from "@/types";
 
 interface AppStore extends AppState, AppActions {
@@ -91,6 +92,7 @@ export const useAppStore = create<AppStore>()(
       }),
       {
         name: "whispr-store",
+        storage: createJSONStorage(() => AsyncStorage),
         partialize: (state) => ({
           user: state.user,
           whispers: state.whispers,
