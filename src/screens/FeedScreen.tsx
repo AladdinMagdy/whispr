@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -14,11 +14,12 @@ import TrackPlayer, {
   usePlaybackState,
   useProgress,
 } from "react-native-track-player";
+import { useAudioStore, AudioTrack } from "../store/useAudioStore";
 
 const { height, width } = Dimensions.get("window");
 
 // Placeholder data (replace with Firestore whispers)
-const AUDIO_FEED = [
+const AUDIO_FEED: AudioTrack[] = [
   {
     id: "1",
     title: "Bad Liar",
@@ -35,32 +36,90 @@ const AUDIO_FEED = [
   },
 ];
 
-type AudioFeedItem = (typeof AUDIO_FEED)[number];
-
-const setupPlayer = async () => {
-  await TrackPlayer.setupPlayer();
-  await TrackPlayer.reset();
-  await TrackPlayer.add(AUDIO_FEED);
-};
-
 const FeedScreen = () => {
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const flatListRef = useRef<FlatList<AudioTrack>>(null);
   const playbackState = usePlaybackState();
   const progress = useProgress();
-  const flatListRef = useRef<FlatList<AudioFeedItem>>(null);
+  const lastPlayedTrackRef = useRef<number>(-1);
 
+  // Zustand store
+  const {
+    tracks,
+    currentTrackIndex,
+    scrollPosition,
+    isPlaying,
+    isInitialized,
+    initializePlayer,
+    restorePlayerState,
+    setCurrentTrackIndex,
+    setScrollPosition,
+    playTrack,
+    switchTrack,
+    pause,
+    play,
+  } = useAudioStore();
+
+  // Initialize audio player
   useEffect(() => {
-    setupPlayer();
+    initializePlayer(AUDIO_FEED).catch(console.error);
+    // Reset the last played track ref when initializing
+    lastPlayedTrackRef.current = -1;
+  }, [initializePlayer]);
+
+  // Reset last played track ref when tracks change
+  useEffect(() => {
+    lastPlayedTrackRef.current = -1;
+  }, [tracks.length]);
+
+  // Sync playback state with Zustand
+  useEffect(() => {
+    const newPlayingState = playbackState.state === State.Playing;
+    if (newPlayingState !== isPlaying) {
+      console.log(`Playback state changed: ${isPlaying} -> ${newPlayingState}`);
+      useAudioStore.getState().setPlaybackState(newPlayingState);
+    }
+  }, [playbackState.state, isPlaying]);
+
+  // Sync progress with Zustand
+  useEffect(() => {
+    useAudioStore.getState().setPosition(progress.position);
+    useAudioStore.getState().setDuration(progress.duration);
+  }, [progress.position, progress.duration]);
+
+  // Restore scroll position when component mounts
+  useEffect(() => {
+    if (isInitialized && scrollPosition > 0 && flatListRef.current) {
+      setTimeout(() => {
+        flatListRef.current?.scrollToIndex({
+          index: scrollPosition,
+          animated: false,
+        });
+      }, 100);
+    }
+  }, [isInitialized, scrollPosition]);
+
+  // Restore player state when initialized (but don't auto-play)
+  useEffect(() => {
+    if (isInitialized && tracks.length > 0) {
+      // Only restore if we're not already on a track
+      if (currentTrackIndex === 0 && scrollPosition === 0) {
+        restorePlayerState().catch(console.error);
+      }
+    }
+  }, [
+    isInitialized,
+    tracks.length,
+    restorePlayerState,
+    currentTrackIndex,
+    scrollPosition,
+  ]);
+
+  // Cleanup: pause audio when leaving the screen
+  useEffect(() => {
     return () => {
-      TrackPlayer.reset();
+      pause().catch(console.error);
     };
-  }, []);
-
-  // Play the current track when index changes
-  useEffect(() => {
-    TrackPlayer.skip(AUDIO_FEED[currentIndex].id as any);
-    TrackPlayer.play();
-  }, [currentIndex]);
+  }, [pause]);
 
   const onViewableItemsChanged = useRef(
     (params: { viewableItems: ViewToken[]; changed: ViewToken[] }) => {
@@ -68,12 +127,47 @@ const FeedScreen = () => {
         params.viewableItems.length > 0 &&
         params.viewableItems[0].index !== null
       ) {
-        setCurrentIndex(params.viewableItems[0].index);
+        const newIndex = params.viewableItems[0].index;
+
+        console.log(
+          `onViewableItemsChanged: newIndex=${newIndex}, currentTrackIndex=${currentTrackIndex}, lastPlayed=${lastPlayedTrackRef.current}`
+        );
+
+        // Only proceed if this is actually a new track
+        if (newIndex !== lastPlayedTrackRef.current) {
+          console.log(`Scrolling to new track: ${newIndex}`);
+
+          // Update the last played track ref immediately to prevent duplicate calls
+          lastPlayedTrackRef.current = newIndex;
+
+          setCurrentTrackIndex(newIndex);
+          setScrollPosition(newIndex);
+
+          // Auto-play the new track when scrolling to it
+          setTimeout(() => {
+            console.log(`Calling playTrack for index ${newIndex}`);
+            playTrack(newIndex).catch(console.error);
+          }, 100); // Small delay to ensure scroll is complete
+        } else {
+          console.log(`Skipping duplicate call for track ${newIndex}`);
+        }
       }
     }
   ).current;
 
-  const renderItem = ({ item }: ListRenderItemInfo<AudioFeedItem>) => (
+  const handlePlayPause = useCallback(async () => {
+    try {
+      if (isPlaying) {
+        await pause();
+      } else {
+        await play();
+      }
+    } catch (error) {
+      console.error("Play/pause error:", error);
+    }
+  }, [isPlaying, pause, play]);
+
+  const renderItem = ({ item }: ListRenderItemInfo<AudioTrack>) => (
     <View style={styles.page}>
       <View style={styles.artworkContainer}>
         <View style={styles.artworkShadow} />
@@ -109,17 +203,33 @@ const FeedScreen = () => {
       </View>
       <TouchableOpacity
         style={styles.playPauseButton}
+        onPress={handlePlayPause}
+      >
+        <Text style={styles.playPauseText}>{isPlaying ? "Pause" : "Play"}</Text>
+      </TouchableOpacity>
+
+      {/* Debug button */}
+      <TouchableOpacity
+        style={[
+          styles.playPauseButton,
+          { marginTop: 10, backgroundColor: "#666" },
+        ]}
         onPress={() => {
-          if (playbackState.state === State.Playing) {
-            TrackPlayer.pause();
-          } else {
-            TrackPlayer.play();
-          }
+          console.log("Current state:", {
+            currentTrackIndex,
+            isPlaying,
+            currentPosition: progress.position,
+            duration: progress.duration,
+            lastPlayedTrack: lastPlayedTrackRef.current,
+          });
+
+          // Test manual track switching
+          const nextTrack = (currentTrackIndex + 1) % AUDIO_FEED.length;
+          console.log(`Manually switching to track ${nextTrack}`);
+          playTrack(nextTrack).catch(console.error);
         }}
       >
-        <Text style={styles.playPauseText}>
-          {playbackState.state === State.Playing ? "Pause" : "Play"}
-        </Text>
+        <Text style={styles.playPauseText}>Debug</Text>
       </TouchableOpacity>
     </View>
   );
@@ -142,6 +252,7 @@ const FeedScreen = () => {
         offset: height * index,
         index,
       })}
+      initialScrollIndex={scrollPosition}
     />
   );
 };
