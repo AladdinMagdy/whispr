@@ -20,7 +20,8 @@ interface AudioState {
   isPlaying: boolean;
   currentPosition: number;
   duration: number;
-  trackPositions: Record<string, number>; // Store position per track
+  lastPlayedTrackId: string | null; // Only store the last played track ID
+  lastPlayedPosition: number; // Only store the last played position
 
   // UI state
   scrollPosition: number;
@@ -61,7 +62,8 @@ export const useAudioStore = create<AudioState>()(
       duration: 0,
       scrollPosition: 0,
       isInitialized: false,
-      trackPositions: {},
+      lastPlayedTrackId: null,
+      lastPlayedPosition: 0,
 
       // State setters
       setTracks: (tracks) => set({ tracks }),
@@ -70,17 +72,21 @@ export const useAudioStore = create<AudioState>()(
       setPlaybackState: (isPlaying) => set({ isPlaying }),
       setPosition: (position) => {
         console.log(`Saving position: ${position}`);
-        const { tracks, currentTrackIndex, trackPositions } = get();
+        const {
+          tracks,
+          currentTrackIndex,
+          lastPlayedTrackId,
+          lastPlayedPosition,
+        } = get();
         const currentTrack = tracks[currentTrackIndex];
 
         if (currentTrack) {
-          const newTrackPositions = {
-            ...trackPositions,
-            [currentTrack.id]: position,
-          };
+          const newLastPlayedTrackId = currentTrack.id;
+          const newLastPlayedPosition = position;
           set({
             currentPosition: position,
-            trackPositions: newTrackPositions,
+            lastPlayedTrackId: newLastPlayedTrackId,
+            lastPlayedPosition: newLastPlayedPosition,
           });
         } else {
           set({ currentPosition: position });
@@ -91,18 +97,26 @@ export const useAudioStore = create<AudioState>()(
 
       // Audio control actions
       playTrack: async (index) => {
-        const { tracks, isInitialized, currentTrackIndex, trackPositions } =
-          get();
+        const {
+          tracks,
+          isInitialized,
+          currentTrackIndex,
+          lastPlayedTrackId,
+          lastPlayedPosition,
+        } = get();
         if (!isInitialized || index < 0 || index >= tracks.length) return;
 
         try {
           const targetTrack = tracks[index];
-          const savedPosition = trackPositions[targetTrack.id] || 0;
+          const isSameTrackAsLastPlayed = lastPlayedTrackId === targetTrack.id;
+          const savedPosition = isSameTrackAsLastPlayed
+            ? lastPlayedPosition
+            : 0;
 
           console.log(
             `playTrack called: index=${index}, currentTrackIndex=${currentTrackIndex}, isPlaying=${
               get().isPlaying
-            }, savedPosition=${savedPosition}`
+            }, isSameTrackAsLastPlayed=${isSameTrackAsLastPlayed}, savedPosition=${savedPosition}`
           );
 
           // Always switch to the target track to ensure proper track switching
@@ -118,15 +132,15 @@ export const useAudioStore = create<AudioState>()(
           // Switch to the specific track
           await TrackPlayer.skip(index);
 
-          // Check if we have a saved position for this track
-          if (savedPosition > 0) {
+          // Only restore position if it's the same track that was last played
+          if (isSameTrackAsLastPlayed && savedPosition > 0) {
             // Restore the saved position for this track
             await TrackPlayer.seekTo(savedPosition);
             console.log(
               `Restored position ${savedPosition} for track ${index}`
             );
           } else {
-            // Start from beginning for new track
+            // Start from beginning for new track or different track
             await TrackPlayer.seekTo(0);
             console.log(`Starting track ${index} from beginning`);
           }
@@ -139,6 +153,8 @@ export const useAudioStore = create<AudioState>()(
             isPlaying: true,
             duration: 0,
             currentPosition: savedPosition,
+            lastPlayedTrackId: targetTrack.id,
+            lastPlayedPosition: savedPosition,
           });
 
           console.log(
@@ -177,6 +193,8 @@ export const useAudioStore = create<AudioState>()(
             isPlaying: false,
             duration: 0,
             currentPosition: 0, // Reset position when switching tracks
+            lastPlayedTrackId: null,
+            lastPlayedPosition: 0,
           });
 
           console.log(
@@ -224,8 +242,13 @@ export const useAudioStore = create<AudioState>()(
 
       // Restore player state without playing
       restorePlayerState: async () => {
-        const { tracks, currentTrackIndex, trackPositions, isInitialized } =
-          get();
+        const {
+          tracks,
+          currentTrackIndex,
+          lastPlayedTrackId,
+          lastPlayedPosition,
+          isInitialized,
+        } = get();
         if (!isInitialized || tracks.length === 0) return;
 
         try {
@@ -236,10 +259,13 @@ export const useAudioStore = create<AudioState>()(
           );
           const actualTrackIndex = Math.max(0, validTrackIndex);
           const targetTrack = tracks[actualTrackIndex];
-          const savedPosition = trackPositions[targetTrack.id] || 0;
+          const isSameTrackAsLastPlayed = lastPlayedTrackId === targetTrack.id;
+          const savedPosition = isSameTrackAsLastPlayed
+            ? lastPlayedPosition
+            : 0;
 
           console.log(
-            `Restoring: saved index=${currentTrackIndex}, valid index=${actualTrackIndex}, tracks length=${tracks.length}, position=${savedPosition}`
+            `Restoring: saved index=${currentTrackIndex}, valid index=${actualTrackIndex}, tracks length=${tracks.length}, isSameTrackAsLastPlayed=${isSameTrackAsLastPlayed}, position=${savedPosition}`
           );
 
           // Check if we need to switch tracks or just seek to position
@@ -251,13 +277,18 @@ export const useAudioStore = create<AudioState>()(
             console.log(
               `Already on correct track, just seeking to position ${savedPosition}`
             );
-            if (savedPosition > 0) {
+            if (isSameTrackAsLastPlayed && savedPosition > 0) {
               await TrackPlayer.seekTo(savedPosition);
               console.log(`Seeked to position ${savedPosition}`);
+            } else {
+              await TrackPlayer.seekTo(0);
+              console.log(`Seeked to beginning (different track)`);
             }
             set({
               currentPosition: savedPosition,
               isPlaying: false, // Keep it paused when restoring
+              lastPlayedTrackId: null,
+              lastPlayedPosition: 0,
             });
             return;
           }
@@ -268,10 +299,13 @@ export const useAudioStore = create<AudioState>()(
           await TrackPlayer.add(tracks);
           await TrackPlayer.skip(actualTrackIndex);
 
-          // Seek to the saved position BEFORE updating state
-          if (savedPosition > 0) {
+          // Only seek to saved position if it's the same track
+          if (isSameTrackAsLastPlayed && savedPosition > 0) {
             await TrackPlayer.seekTo(savedPosition);
             console.log(`Seeked to position ${savedPosition}`);
+          } else {
+            await TrackPlayer.seekTo(0);
+            console.log(`Seeked to beginning (different track)`);
           }
 
           // Update state to reflect the restored track and position
@@ -279,6 +313,8 @@ export const useAudioStore = create<AudioState>()(
             currentTrackIndex: actualTrackIndex,
             currentPosition: savedPosition,
             isPlaying: false, // Keep it paused when restoring
+            lastPlayedTrackId: null,
+            lastPlayedPosition: 0,
           });
 
           console.log(
@@ -348,7 +384,8 @@ export const useAudioStore = create<AudioState>()(
         scrollPosition: state.scrollPosition,
         currentPosition: state.currentPosition,
         duration: state.duration,
-        trackPositions: state.trackPositions,
+        lastPlayedTrackId: state.lastPlayedTrackId,
+        lastPlayedPosition: state.lastPlayedPosition,
       }),
     }
   )

@@ -117,10 +117,13 @@ const FeedScreen = () => {
     if (isInitialized && tracks.length > 0 && !hasMountedRef.current) {
       // Only restore once when the component first mounts
       hasMountedRef.current = true;
-      const { currentTrackIndex, trackPositions } = useAudioStore.getState();
+      const { currentTrackIndex, lastPlayedTrackId, lastPlayedPosition } =
+        useAudioStore.getState();
       const currentTrack = tracks[currentTrackIndex];
       const hasSavedPosition =
-        currentTrack && trackPositions[currentTrack.id] > 0;
+        currentTrack &&
+        lastPlayedTrackId === currentTrack.id &&
+        lastPlayedPosition > 0;
 
       if (hasSavedPosition) {
         console.log("Restoring player state on first mount");
