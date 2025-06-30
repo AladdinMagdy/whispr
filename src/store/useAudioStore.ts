@@ -20,6 +20,7 @@ interface AudioState {
   isPlaying: boolean;
   currentPosition: number;
   duration: number;
+  trackPositions: Record<string, number>; // Store position per track
 
   // UI state
   scrollPosition: number;
@@ -60,32 +61,52 @@ export const useAudioStore = create<AudioState>()(
       duration: 0,
       scrollPosition: 0,
       isInitialized: false,
+      trackPositions: {},
 
       // State setters
       setTracks: (tracks) => set({ tracks }),
       setCurrentTrackIndex: (index) => set({ currentTrackIndex: index }),
       setScrollPosition: (position) => set({ scrollPosition: position }),
       setPlaybackState: (isPlaying) => set({ isPlaying }),
-      setPosition: (position) => set({ currentPosition: position }),
+      setPosition: (position) => {
+        console.log(`Saving position: ${position}`);
+        const { tracks, currentTrackIndex, trackPositions } = get();
+        const currentTrack = tracks[currentTrackIndex];
+
+        if (currentTrack) {
+          const newTrackPositions = {
+            ...trackPositions,
+            [currentTrack.id]: position,
+          };
+          set({
+            currentPosition: position,
+            trackPositions: newTrackPositions,
+          });
+        } else {
+          set({ currentPosition: position });
+        }
+      },
       setDuration: (duration) => set({ duration }),
       setInitialized: (initialized) => set({ isInitialized: initialized }),
 
       // Audio control actions
       playTrack: async (index) => {
-        const { tracks, isInitialized, currentTrackIndex } = get();
+        const { tracks, isInitialized, currentTrackIndex, trackPositions } =
+          get();
         if (!isInitialized || index < 0 || index >= tracks.length) return;
 
         try {
+          const targetTrack = tracks[index];
+          const savedPosition = trackPositions[targetTrack.id] || 0;
+
           console.log(
             `playTrack called: index=${index}, currentTrackIndex=${currentTrackIndex}, isPlaying=${
               get().isPlaying
-            }`
+            }, savedPosition=${savedPosition}`
           );
 
-          // Force complete player reset for clean track switching
-          console.log(
-            `Force switching to track ${index}: ${tracks[index].title}`
-          );
+          // Always switch to the target track to ensure proper track switching
+          console.log(`Switching to track ${index}: ${targetTrack.title}`);
 
           // Stop and reset everything
           await TrackPlayer.pause();
@@ -97,20 +118,31 @@ export const useAudioStore = create<AudioState>()(
           // Switch to the specific track
           await TrackPlayer.skip(index);
 
-          // Reset position and start playing
-          await TrackPlayer.seekTo(0);
+          // Check if we have a saved position for this track
+          if (savedPosition > 0) {
+            // Restore the saved position for this track
+            await TrackPlayer.seekTo(savedPosition);
+            console.log(
+              `Restored position ${savedPosition} for track ${index}`
+            );
+          } else {
+            // Start from beginning for new track
+            await TrackPlayer.seekTo(0);
+            console.log(`Starting track ${index} from beginning`);
+          }
+
           await TrackPlayer.play();
 
           // Update state
           set({
             currentTrackIndex: index,
             isPlaying: true,
-            currentPosition: 0,
             duration: 0,
+            currentPosition: savedPosition,
           });
 
           console.log(
-            `Successfully playing track ${index}: ${tracks[index].title}`
+            `Successfully playing track ${index}: ${targetTrack.title}`
           );
         } catch (error) {
           console.error("Error playing track:", error);
@@ -118,7 +150,8 @@ export const useAudioStore = create<AudioState>()(
       },
 
       switchTrack: async (index) => {
-        const { tracks, isInitialized, currentTrackIndex } = get();
+        const { tracks, isInitialized, currentTrackIndex, currentPosition } =
+          get();
         if (!isInitialized || index < 0 || index >= tracks.length) return;
 
         try {
@@ -142,8 +175,8 @@ export const useAudioStore = create<AudioState>()(
           set({
             currentTrackIndex: index,
             isPlaying: false,
-            currentPosition: 0,
             duration: 0,
+            currentPosition: 0, // Reset position when switching tracks
           });
 
           console.log(
@@ -191,25 +224,75 @@ export const useAudioStore = create<AudioState>()(
 
       // Restore player state without playing
       restorePlayerState: async () => {
-        const { tracks, currentTrackIndex, currentPosition, isInitialized } =
+        const { tracks, currentTrackIndex, trackPositions, isInitialized } =
           get();
         if (!isInitialized || tracks.length === 0) return;
 
         try {
-          // Switch to the saved track index (this will pause and reset position)
-          await get().switchTrack(currentTrackIndex);
-
-          // Seek to the saved position if it's greater than 0
-          if (currentPosition > 0) {
-            await TrackPlayer.seekTo(currentPosition);
-            set({ currentPosition }); // Update the state with the restored position
-          }
+          // Validate that the saved track index is within bounds
+          const validTrackIndex = Math.min(
+            currentTrackIndex,
+            tracks.length - 1
+          );
+          const actualTrackIndex = Math.max(0, validTrackIndex);
+          const targetTrack = tracks[actualTrackIndex];
+          const savedPosition = trackPositions[targetTrack.id] || 0;
 
           console.log(
-            `Restored to track ${currentTrackIndex} at position ${currentPosition}`
+            `Restoring: saved index=${currentTrackIndex}, valid index=${actualTrackIndex}, tracks length=${tracks.length}, position=${savedPosition}`
+          );
+
+          // Check if we need to switch tracks or just seek to position
+          const currentPlayerState = await TrackPlayer.getState();
+          const currentQueue = await TrackPlayer.getQueue();
+
+          // If we're already on the correct track and have tracks loaded, just seek
+          if (currentQueue.length > 0 && currentPlayerState !== State.None) {
+            console.log(
+              `Already on correct track, just seeking to position ${savedPosition}`
+            );
+            if (savedPosition > 0) {
+              await TrackPlayer.seekTo(savedPosition);
+              console.log(`Seeked to position ${savedPosition}`);
+            }
+            set({
+              currentPosition: savedPosition,
+              isPlaying: false, // Keep it paused when restoring
+            });
+            return;
+          }
+
+          // Direct restoration without using switchTrack (which resets position)
+          await TrackPlayer.pause();
+          await TrackPlayer.reset();
+          await TrackPlayer.add(tracks);
+          await TrackPlayer.skip(actualTrackIndex);
+
+          // Seek to the saved position BEFORE updating state
+          if (savedPosition > 0) {
+            await TrackPlayer.seekTo(savedPosition);
+            console.log(`Seeked to position ${savedPosition}`);
+          }
+
+          // Update state to reflect the restored track and position
+          set({
+            currentTrackIndex: actualTrackIndex,
+            currentPosition: savedPosition,
+            isPlaying: false, // Keep it paused when restoring
+          });
+
+          console.log(
+            `Restored to track ${actualTrackIndex} at position ${savedPosition}`
           );
         } catch (error) {
           console.error("Error restoring player state:", error);
+          // Fallback: reset to track 0 if restoration fails
+          try {
+            await get().switchTrack(0);
+            console.log("Fallback: reset to track 0");
+          } catch (fallbackError) {
+            console.error("Fallback error:", fallbackError);
+          }
         }
       },
 
@@ -265,6 +348,7 @@ export const useAudioStore = create<AudioState>()(
         scrollPosition: state.scrollPosition,
         currentPosition: state.currentPosition,
         duration: state.duration,
+        trackPositions: state.trackPositions,
       }),
     }
   )

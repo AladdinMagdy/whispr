@@ -41,6 +41,7 @@ const FeedScreen = () => {
   const playbackState = usePlaybackState();
   const progress = useProgress();
   const lastPlayedTrackRef = useRef<number>(-1);
+  const hasMountedRef = useRef<boolean>(false);
 
   // Zustand store
   const {
@@ -86,6 +87,19 @@ const FeedScreen = () => {
     useAudioStore.getState().setDuration(progress.duration);
   }, [progress.position, progress.duration]);
 
+  // Save position periodically during playback
+  useEffect(() => {
+    if (isPlaying && progress.position > 0) {
+      const interval = setInterval(() => {
+        const currentPos = progress.position;
+        useAudioStore.getState().setPosition(currentPos);
+        console.log(`Periodic save: position ${currentPos}`);
+      }, 2000); // Save position every 2 seconds during playback
+
+      return () => clearInterval(interval);
+    }
+  }, [isPlaying, progress.position]);
+
   // Restore scroll position when component mounts
   useEffect(() => {
     if (isInitialized && scrollPosition > 0 && flatListRef.current) {
@@ -100,26 +114,40 @@ const FeedScreen = () => {
 
   // Restore player state when initialized (but don't auto-play)
   useEffect(() => {
-    if (isInitialized && tracks.length > 0) {
-      // Only restore if we're not already on a track
-      if (currentTrackIndex === 0 && scrollPosition === 0) {
+    if (isInitialized && tracks.length > 0 && !hasMountedRef.current) {
+      // Only restore once when the component first mounts
+      hasMountedRef.current = true;
+      const { currentTrackIndex, trackPositions } = useAudioStore.getState();
+      const currentTrack = tracks[currentTrackIndex];
+      const hasSavedPosition =
+        currentTrack && trackPositions[currentTrack.id] > 0;
+
+      if (hasSavedPosition) {
+        console.log("Restoring player state on first mount");
         restorePlayerState().catch(console.error);
+
+        // If we're restoring to the current track index, update the last played ref
+        if (currentTrackIndex >= 0 && currentTrackIndex < tracks.length) {
+          lastPlayedTrackRef.current = currentTrackIndex;
+        }
       }
     }
-  }, [
-    isInitialized,
-    tracks.length,
-    restorePlayerState,
-    currentTrackIndex,
-    scrollPosition,
-  ]);
+  }, [isInitialized, tracks.length, restorePlayerState]);
 
   // Cleanup: pause audio when leaving the screen
   useEffect(() => {
     return () => {
+      // Save the current position before pausing (only on unmount)
+      const currentPos = progress.position;
+      if (currentPos > 0) {
+        useAudioStore.getState().setPosition(currentPos);
+        console.log(`Saving position ${currentPos} before leaving screen`);
+      }
       pause().catch(console.error);
+      // Reset mount flag for next mount
+      hasMountedRef.current = false;
     };
-  }, [pause]);
+  }, [pause]); // Remove progress.position dependency to prevent frequent pausing
 
   const onViewableItemsChanged = useRef(
     (params: { viewableItems: ViewToken[]; changed: ViewToken[] }) => {
@@ -143,7 +171,7 @@ const FeedScreen = () => {
           setCurrentTrackIndex(newIndex);
           setScrollPosition(newIndex);
 
-          // Auto-play the new track when scrolling to it
+          // Always switch to the new track when scrolling
           setTimeout(() => {
             console.log(`Calling playTrack for index ${newIndex}`);
             playTrack(newIndex).catch(console.error);
@@ -215,18 +243,27 @@ const FeedScreen = () => {
           { marginTop: 10, backgroundColor: "#666" },
         ]}
         onPress={() => {
+          const storeState = useAudioStore.getState();
           console.log("Current state:", {
             currentTrackIndex,
             isPlaying,
             currentPosition: progress.position,
             duration: progress.duration,
             lastPlayedTrack: lastPlayedTrackRef.current,
+            savedPosition: storeState.currentPosition,
+            savedTrackIndex: storeState.currentTrackIndex,
           });
 
-          // Test manual track switching
-          const nextTrack = (currentTrackIndex + 1) % AUDIO_FEED.length;
-          console.log(`Manually switching to track ${nextTrack}`);
-          playTrack(nextTrack).catch(console.error);
+          // Test manual restoration
+          if (storeState.currentPosition > 0) {
+            console.log("Testing manual restoration...");
+            restorePlayerState().catch(console.error);
+          } else {
+            // Test manual track switching
+            const nextTrack = (currentTrackIndex + 1) % AUDIO_FEED.length;
+            console.log(`Manually switching to track ${nextTrack}`);
+            playTrack(nextTrack).catch(console.error);
+          }
         }}
       >
         <Text style={styles.playPauseText}>Debug</Text>
