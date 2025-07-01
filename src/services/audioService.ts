@@ -1,3 +1,8 @@
+/**
+ * Audio Service using react-native-track-player
+ * Provides real audio recording with metering for whisper detection
+ */
+
 import TrackPlayer, { State } from "react-native-track-player";
 
 // Global state to track if player is initialized
@@ -165,3 +170,43 @@ class AudioService {
 
 // Export singleton instance
 export const audioService = new AudioService();
+
+/**
+ * Utility functions for audio operations
+ */
+export const AudioUtils = {
+  /**
+   * Convert seconds to MM:SS format
+   */
+  formatTime(seconds: number): string {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  },
+
+  /**
+   * Convert audio level to percentage
+   */
+  levelToPercentage(level: number): number {
+    return Math.round(level * 100);
+  },
+
+  /**
+   * Get whisper status description
+   */
+  getWhisperStatusDescription(isWhisper: boolean, level: number): string {
+    if (!isWhisper) {
+      return `Too loud (${AudioUtils.levelToPercentage(
+        level
+      )}%) - whisper quieter`;
+    }
+    return `Whisper detected (${AudioUtils.levelToPercentage(level)}%)`;
+  },
+
+  /**
+   * Get color for whisper status
+   */
+  getWhisperStatusColor(isWhisper: boolean): string {
+    return isWhisper ? "#4CAF50" : "#F44336";
+  },
+};

@@ -3,7 +3,6 @@ import { StorageService } from "./storageService";
 import { TranscriptionService } from "./transcriptionService";
 import { AudioFormatTest } from "../utils/audioFormatTest";
 import { Whisper, AudioRecording, User } from "@/types";
-import { defaultWhisperValidator } from "@/utils/whisperValidator";
 import { FEATURE_FLAGS } from "@/constants";
 
 export interface WhisperCreationOptions {
@@ -193,20 +192,6 @@ export class WhisperService {
       console.error("Error updating whisper visibility:", error);
       throw new Error("Failed to update whisper visibility");
     }
-  }
-
-  /**
-   * Validate recording before processing
-   */
-  static validateRecording(recording: AudioRecording) {
-    return defaultWhisperValidator.validateWhisper(recording);
-  }
-
-  /**
-   * Get feedback for improving whisper
-   */
-  static getWhisperFeedback(recording: AudioRecording) {
-    return defaultWhisperValidator.getWhisperFeedback(recording);
   }
 
   /**
