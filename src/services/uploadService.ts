@@ -16,6 +16,10 @@ import {
 } from "firebase/storage";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
+import {
+  WHISPER_VALIDATION,
+  WHISPER_ERROR_MESSAGES,
+} from "../constants/whisperValidation";
 
 export interface UploadProgress {
   progress: number; // 0-100
@@ -222,20 +226,34 @@ export class UploadService {
       errors.push("Audio URI is required");
     }
 
-    if (uploadData.duration < 2) {
-      errors.push("Recording must be at least 2 seconds long");
+    if (uploadData.duration < WHISPER_VALIDATION.RECORDING.MIN_DURATION) {
+      errors.push(WHISPER_ERROR_MESSAGES.DURATION_TOO_SHORT);
     }
 
-    if (uploadData.duration > 30) {
-      errors.push("Recording must be no longer than 30 seconds");
+    if (uploadData.duration > WHISPER_VALIDATION.RECORDING.MAX_DURATION) {
+      errors.push(WHISPER_ERROR_MESSAGES.DURATION_TOO_LONG);
     }
 
-    if (uploadData.whisperPercentage < 0.5) {
-      errors.push("At least 50% of the recording must be whispered");
+    if (
+      uploadData.whisperPercentage < WHISPER_VALIDATION.MIN_WHISPER_PERCENTAGE
+    ) {
+      errors.push(
+        WHISPER_ERROR_MESSAGES.INSUFFICIENT_WHISPER(
+          WHISPER_VALIDATION.MIN_WHISPER_PERCENTAGE * 100
+        )
+      );
     }
 
-    if (uploadData.confidence < 0.3) {
-      errors.push("Whisper confidence is too low");
+    if (uploadData.averageLevel > WHISPER_VALIDATION.MAX_AVERAGE_LEVEL) {
+      errors.push(
+        WHISPER_ERROR_MESSAGES.AVERAGE_LEVEL_TOO_HIGH(
+          WHISPER_VALIDATION.MAX_AVERAGE_LEVEL * 100
+        )
+      );
+    }
+
+    if (uploadData.confidence < WHISPER_VALIDATION.MIN_CONFIDENCE) {
+      errors.push(WHISPER_ERROR_MESSAGES.CONFIDENCE_TOO_LOW);
     }
 
     return {

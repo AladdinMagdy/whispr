@@ -33,8 +33,8 @@
 - **Real Audio Level Detection**: ✅ **MAJOR IMPROVEMENT** - Actual microphone metering
 - **WhisperValidator Class**: Comprehensive audio level analysis with real data
 - **Real-time Monitoring**: Continuous audio level tracking during recording
-- **Volume Thresholds**: Configurable whisper detection (40% volume threshold)
-- **Validation Logic**: Minimum 50% whisper requirement for upload
+- **Volume Thresholds**: ✅ **EXTREMELY STRICT** - Only real whispers allowed (1.5% threshold)
+- **Validation Logic**: Minimum 70% whisper requirement for upload (increased from 50%)
 - **Statistics Tracking**: Detailed recording analytics (samples, percentages, confidence)
 
 #### 📊 Audio Level Analysis
@@ -43,6 +43,7 @@
 - **Live Feedback**: Real-time audio level display and whisper status
 - **Confidence Scoring**: Intelligent confidence calculation based on whisper consistency
 - **Visual Indicators**: Color-coded status (green for whisper, red for too loud)
+- **Extremely Strict Thresholds**: ✅ **NEW** - Only genuine whispers pass validation
 
 #### ☁️ Firebase Upload System
 
@@ -58,6 +59,7 @@
 - **Permission Handling**: Microphone permission management
 - **Data Integrity**: Upload data validation before Firebase submission
 - **User Authentication**: Firebase Auth integration for secure uploads
+- **Extremely Strict Whisper Validation**: ✅ **NEW** - Only real whispers allowed
 
 ---
 
@@ -115,6 +117,29 @@ this.audioRecorderPlayer.addRecordBackListener((e: any) => {
 ---
 
 ## 🚀 Next Phases Roadmap
+
+---
+
+## Phase 2.5: Whisper Sensitivity Tuning (Just Completed) 🎯
+
+**Status:** ✅ **COMPLETED** - EXTREMELY strict whisper detection implemented
+
+#### 🎯 **Major Changes Made:**
+
+- **Default Threshold**: Reduced from 4% to **0.8%** (80% stricter)
+- **Whisper Percentage**: Increased from 50% to **80%** requirement
+- **Average Level**: Reduced from 8% to **1.5%** maximum
+- **Max Level**: Reduced from 15% to **2.5%** maximum
+- **Loud Percentage**: Reduced from 10% to **2%** tolerance
+- **Threshold Buttons**: Updated to 0.5%, 0.8%, 1.2%, 1.5% (extremely strict range)
+
+#### 🎯 **Expected Behavior Now:**
+
+- **Silence** (around -60 dB): ~0.001 → **Whisper** ✅
+- **Very quiet whisper** (around -50 to -40 dB): ~0.001-0.008 → **Whisper** ✅
+- **Normal whisper** (around -40 to -30 dB): ~0.008-0.025 → **Too Loud** ❌ (will be caught!)
+- **Normal speech** (around -30 to -20 dB): ~0.025-0.1 → **Too Loud** ❌
+- **Loud speech** (around -20 to -10 dB): ~0.1-0.3 → **Too Loud** ❌
 
 ---
 

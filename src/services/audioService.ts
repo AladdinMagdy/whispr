@@ -4,6 +4,7 @@
  */
 
 import TrackPlayer, { State } from "react-native-track-player";
+import { WHISPER_COLORS } from "../constants/whisperValidation";
 
 // Global state to track if player is initialized
 let isPlayerInitialized = false;
@@ -207,6 +208,6 @@ export const AudioUtils = {
    * Get color for whisper status
    */
   getWhisperStatusColor(isWhisper: boolean): string {
-    return isWhisper ? "#4CAF50" : "#F44336";
+    return isWhisper ? WHISPER_COLORS.WHISPER : WHISPER_COLORS.LOUD;
   },
 };

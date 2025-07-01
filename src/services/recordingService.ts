@@ -13,6 +13,10 @@ import AudioRecorderPlayer, {
   AVModeIOSOption,
 } from "react-native-audio-recorder-player";
 import { Platform } from "react-native";
+import {
+  WHISPER_VALIDATION,
+  WHISPER_COLORS,
+} from "../constants/whisperValidation";
 
 export interface AudioLevelData {
   level: number; // 0-1 range (converted from metering)
@@ -42,11 +46,14 @@ export class RecordingService {
   private recordingStartTime: number = 0;
   private callbacks: AudioRecorderCallbacks = {};
   private audioLevels: AudioLevelData[] = [];
-  private whisperThreshold: number = 0.4; // 40% of max volume
+  private whisperThreshold: number =
+    WHISPER_VALIDATION.DEFAULT_WHISPER_THRESHOLD;
 
   private constructor() {
     this.audioRecorderPlayer = new AudioRecorderPlayer();
-    this.audioRecorderPlayer.setSubscriptionDuration(0.1); // 100ms updates
+    this.audioRecorderPlayer.setSubscriptionDuration(
+      WHISPER_VALIDATION.RECORDING.SUBSCRIPTION_DURATION
+    );
   }
 
   static getInstance(): RecordingService {
@@ -85,6 +92,52 @@ export class RecordingService {
   }
 
   /**
+   * Auto-calibrate threshold based on recent audio levels
+   */
+  autoCalibrateThreshold(): void {
+    if (
+      this.audioLevels.length < WHISPER_VALIDATION.AUTO_CALIBRATION.MIN_SAMPLES
+    ) {
+      console.log("Not enough audio samples for calibration");
+      return;
+    }
+
+    const recentLevels = this.audioLevels.slice(
+      -WHISPER_VALIDATION.AUTO_CALIBRATION.RECENT_SAMPLES
+    );
+    const maxLevel = Math.max(...recentLevels.map((data) => data.level));
+    const avgLevel =
+      recentLevels.reduce((sum, data) => sum + data.level, 0) /
+      recentLevels.length;
+
+    // Set threshold to 60% of the max level seen, but within bounds
+    const newThreshold = Math.max(
+      WHISPER_VALIDATION.AUTO_CALIBRATION.MIN_THRESHOLD,
+      Math.min(
+        WHISPER_VALIDATION.AUTO_CALIBRATION.MAX_THRESHOLD,
+        maxLevel * WHISPER_VALIDATION.AUTO_CALIBRATION.CALIBRATION_FACTOR
+      )
+    );
+
+    console.log("🎯 Auto-calibrating threshold:", {
+      oldThreshold: this.whisperThreshold,
+      newThreshold,
+      maxLevel,
+      avgLevel,
+      samples: recentLevels.length,
+    });
+
+    this.whisperThreshold = newThreshold;
+  }
+
+  /**
+   * Get current threshold
+   */
+  getWhisperThreshold(): number {
+    return this.whisperThreshold;
+  }
+
+  /**
    * Start recording with real audio metering
    */
   async startRecording(): Promise<void> {
@@ -111,9 +164,64 @@ export class RecordingService {
         const currentTime = Date.now();
         const duration = (currentTime - this.recordingStartTime) / 1000;
 
-        // Convert metering to 0-1 range (metering is typically 0-100)
-        const audioLevel = Math.min(1, (e.currentMetering || 0) / 100);
+        // Debug: Log raw metering values
+        console.log("🔊 Raw metering data:", {
+          currentMetering: e.currentMetering,
+          currentPosition: e.currentPosition,
+          meteringType: typeof e.currentMetering,
+          hasMetering: "currentMetering" in e,
+        });
+
+        // Convert metering to 0-1 range
+        // The metering value can vary by platform and device
+        let audioLevel = 0;
+
+        if (e.currentMetering !== undefined && e.currentMetering !== null) {
+          // Handle different metering formats
+          if (e.currentMetering <= 1 && e.currentMetering >= 0) {
+            // Already 0-1 range
+            audioLevel = e.currentMetering;
+          } else if (e.currentMetering <= 100 && e.currentMetering >= 0) {
+            // 0-100 range
+            audioLevel = e.currentMetering / 100;
+          } else if (e.currentMetering < 0) {
+            // Decibel format (negative values like -40, -60, etc.)
+            // Convert from dB to linear scale (0-1)
+            // Typical range: -60 dB (very quiet) to 0 dB (very loud)
+            const dbValue = e.currentMetering;
+            const minDb = WHISPER_VALIDATION.AUDIO_LEVELS.MIN_DB;
+            const maxDb = WHISPER_VALIDATION.AUDIO_LEVELS.MAX_DB;
+
+            // Convert dB to linear scale using the correct formula
+            // dB = 20 * log10(amplitude)
+            // amplitude = 10^(dB/20)
+            const normalizedDb = Math.max(minDb, Math.min(maxDb, dbValue));
+            audioLevel = Math.pow(10, normalizedDb / 20);
+
+            // Ensure it's between 0 and 1
+            audioLevel = Math.max(0, Math.min(1, audioLevel));
+          } else {
+            // Unknown range, try to normalize
+            audioLevel = Math.min(1, e.currentMetering / 1000);
+          }
+        }
+
+        // Ensure audio level is between min and max
+        audioLevel = Math.max(
+          WHISPER_VALIDATION.AUDIO_LEVELS.MIN_LEVEL,
+          Math.min(WHISPER_VALIDATION.AUDIO_LEVELS.MAX_LEVEL, audioLevel)
+        );
+
         const isWhisper = audioLevel <= this.whisperThreshold;
+
+        // Debug: Log processed values
+        console.log("🎤 Processed audio data:", {
+          rawMetering: e.currentMetering,
+          audioLevel,
+          isWhisper,
+          threshold: this.whisperThreshold,
+          percentage: Math.round(audioLevel * 100),
+        });
 
         // Store audio level data
         const audioData: AudioLevelData = {
@@ -253,6 +361,8 @@ export class RecordingService {
     averageLevel: number;
     maxLevel: number;
     minLevel: number;
+    loudSamples: number;
+    loudPercentage: number;
   } {
     if (this.audioLevels.length === 0) {
       return {
@@ -262,11 +372,16 @@ export class RecordingService {
         averageLevel: 0,
         maxLevel: 0,
         minLevel: 0,
+        loudSamples: 0,
+        loudPercentage: 0,
       };
     }
 
     const whisperSamples = this.audioLevels.filter(
       (data) => data.isWhisper
+    ).length;
+    const loudSamples = this.audioLevels.filter(
+      (data) => data.level > this.whisperThreshold
     ).length;
     const levels = this.audioLevels.map((data) => data.level);
     const averageLevel =
@@ -281,6 +396,8 @@ export class RecordingService {
       averageLevel,
       maxLevel,
       minLevel,
+      loudSamples,
+      loudPercentage: loudSamples / this.audioLevels.length,
     };
   }
 
@@ -347,6 +464,6 @@ export const RecordingUtils = {
    * Get color for whisper status
    */
   getWhisperStatusColor(isWhisper: boolean): string {
-    return isWhisper ? "#4CAF50" : "#F44336";
+    return isWhisper ? WHISPER_COLORS.WHISPER : WHISPER_COLORS.LOUD;
   },
 };

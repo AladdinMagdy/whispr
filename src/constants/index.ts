@@ -7,7 +7,7 @@ export const AUDIO_CONSTANTS = {
   BIT_RATE: 128000,
 } as const;
 
-// Volume threshold constants for whisper detection
+// Volume threshold constants for whisper detection (legacy - use WHISPER_VALIDATION instead)
 export const VOLUME_THRESHOLDS = {
   WHISPER_MIN: 0.1, // Minimum volume to be considered a whisper
   WHISPER_MAX: 0.4, // Maximum volume to be considered a whisper
@@ -15,6 +15,14 @@ export const VOLUME_THRESHOLDS = {
   NORMAL_MAX: 1.0, // Maximum volume for normal speech
   SILENCE_THRESHOLD: 0.05, // Below this is considered silence
 } as const;
+
+// Re-export whisper validation constants
+export {
+  WHISPER_VALIDATION,
+  WHISPER_COLORS,
+  WHISPER_ERROR_MESSAGES,
+  WHISPER_SUCCESS_MESSAGES,
+} from "./whisperValidation";
 
 // Firebase collection names
 export const FIRESTORE_COLLECTIONS = {

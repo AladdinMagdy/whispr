@@ -16,6 +16,12 @@ import {
   RecordingUtils,
 } from "../services/recordingService";
 import { getUploadService, UploadUtils } from "../services/uploadService";
+import {
+  WHISPER_VALIDATION,
+  WHISPER_COLORS,
+  WHISPER_ERROR_MESSAGES,
+  WHISPER_SUCCESS_MESSAGES,
+} from "../constants/whisperValidation";
 
 const { width, height } = Dimensions.get("window");
 
@@ -89,7 +95,9 @@ export default function RecordScreen() {
     });
 
     // Set whisper threshold
-    recordingService.setWhisperThreshold(0.4); // 40% threshold
+    recordingService.setWhisperThreshold(
+      WHISPER_VALIDATION.DEFAULT_WHISPER_THRESHOLD
+    );
 
     return () => {
       // Cleanup
@@ -171,13 +179,54 @@ export default function RecordScreen() {
     // Get whisper statistics from recording service
     const stats = recordingService.getWhisperStatistics();
 
-    if (stats.whisperPercentage < 0.5) {
-      Alert.alert(
-        "Invalid Whisper",
-        `Only ${(stats.whisperPercentage * 100).toFixed(
-          1
-        )}% was whispered. At least 50% must be whispered.`
+    // Debug: Log the actual statistics
+    console.log("🔍 Upload validation stats:", {
+      whisperPercentage: (stats.whisperPercentage * 100).toFixed(1) + "%",
+      averageLevel: (stats.averageLevel * 100).toFixed(1) + "%",
+      maxLevel: (stats.maxLevel * 100).toFixed(1) + "%",
+      loudPercentage: (stats.loudPercentage * 100).toFixed(1) + "%",
+      totalSamples: stats.totalSamples,
+      whisperSamples: stats.whisperSamples,
+      loudSamples: stats.loudSamples,
+    });
+
+    // Comprehensive whisper validation
+    const validationErrors: string[] = [];
+
+    if (stats.whisperPercentage < WHISPER_VALIDATION.MIN_WHISPER_PERCENTAGE) {
+      validationErrors.push(
+        WHISPER_ERROR_MESSAGES.INSUFFICIENT_WHISPER(
+          stats.whisperPercentage * 100
+        )
       );
+    }
+
+    if (stats.averageLevel > WHISPER_VALIDATION.MAX_AVERAGE_LEVEL) {
+      validationErrors.push(
+        WHISPER_ERROR_MESSAGES.AVERAGE_LEVEL_TOO_HIGH(
+          RecordingUtils.levelToPercentage(stats.averageLevel)
+        )
+      );
+    }
+
+    if (stats.maxLevel > WHISPER_VALIDATION.MAX_LEVEL) {
+      validationErrors.push(
+        WHISPER_ERROR_MESSAGES.MAX_LEVEL_TOO_HIGH(
+          RecordingUtils.levelToPercentage(stats.maxLevel)
+        )
+      );
+    }
+
+    if (stats.loudPercentage > WHISPER_VALIDATION.MAX_LOUD_PERCENTAGE) {
+      validationErrors.push(
+        WHISPER_ERROR_MESSAGES.TOO_MUCH_LOUD_CONTENT(stats.loudPercentage * 100)
+      );
+    }
+
+    if (validationErrors.length > 0) {
+      Alert.alert("Invalid Whisper", validationErrors.join("\n\n"), [
+        { text: "OK", style: "default" },
+      ]);
       return;
     }
 
@@ -261,8 +310,10 @@ export default function RecordScreen() {
   };
 
   const getWhisperStatusColor = (): string => {
-    if (!recordingState.isRecording) return "#666";
-    return recordingState.isWhisper ? "#4CAF50" : "#F44336";
+    if (!recordingState.isRecording) return WHISPER_COLORS.NEUTRAL;
+    return recordingState.isWhisper
+      ? WHISPER_COLORS.WHISPER
+      : WHISPER_COLORS.LOUD;
   };
 
   const getWhisperStatusText = (): string => {
@@ -276,6 +327,42 @@ export default function RecordScreen() {
   const getValidationStats = () => {
     if (!recordingState.isRecording) return null;
     return recordingService.getWhisperStatistics();
+  };
+
+  const isRecordingUploadable = () => {
+    if (!recordingState.recordingUri || recordingState.isRecording)
+      return false;
+
+    const stats = recordingService.getWhisperStatistics();
+    return (
+      stats.whisperPercentage >= WHISPER_VALIDATION.MIN_WHISPER_PERCENTAGE &&
+      stats.averageLevel <= WHISPER_VALIDATION.MAX_AVERAGE_LEVEL &&
+      stats.maxLevel <= WHISPER_VALIDATION.MAX_LEVEL &&
+      stats.loudPercentage <= WHISPER_VALIDATION.MAX_LOUD_PERCENTAGE
+    );
+  };
+
+  const getUploadButtonStyle = () => {
+    if (!recordingState.recordingUri || recordingState.isRecording)
+      return styles.uploadButton;
+
+    if (isRecordingUploadable()) {
+      return [styles.uploadButton, { backgroundColor: WHISPER_COLORS.SUCCESS }];
+    } else {
+      return [styles.uploadButton, { backgroundColor: WHISPER_COLORS.WARNING }];
+    }
+  };
+
+  const getUploadButtonText = () => {
+    if (recordingState.isUploading) return "Uploading...";
+    if (!recordingState.recordingUri || recordingState.isRecording)
+      return "Upload Whisper";
+
+    if (isRecordingUploadable()) {
+      return "Upload Whisper";
+    } else {
+      return "Recording Too Loud";
+    }
   };
 
   return (
@@ -310,7 +397,11 @@ export default function RecordScreen() {
             <View style={styles.audioLevelContainer}>
               <ProgressBar
                 progress={recordingState.audioLevel}
-                color={recordingState.isWhisper ? "#4CAF50" : "#F44336"}
+                color={
+                  recordingState.isWhisper
+                    ? WHISPER_COLORS.WHISPER
+                    : WHISPER_COLORS.LOUD
+                }
                 style={styles.audioLevelBar}
               />
               <Text variant="bodySmall" style={styles.audioLevelText}>
@@ -332,6 +423,25 @@ export default function RecordScreen() {
                 )}
                 % | Samples: {getValidationStats()!.totalSamples}
               </Text>
+              {!recordingState.isRecording && recordingState.recordingUri && (
+                <Text
+                  variant="bodySmall"
+                  style={[
+                    styles.statsText,
+                    {
+                      color: isRecordingUploadable()
+                        ? WHISPER_COLORS.SUCCESS
+                        : WHISPER_COLORS.LOUD,
+                      fontWeight: "bold",
+                      marginTop: 5,
+                    },
+                  ]}
+                >
+                  {isRecordingUploadable()
+                    ? "✅ Ready to Upload"
+                    : "❌ Too Loud to Upload"}
+                </Text>
+              )}
             </View>
           )}
 
@@ -349,7 +459,8 @@ export default function RecordScreen() {
                 Is Whisper: {recordingState.isWhisper ? "Yes" : "No"}
               </Text>
               <Text variant="bodySmall" style={styles.debugText}>
-                Threshold: 40%
+                Threshold:{" "}
+                {Math.round(recordingService.getWhisperThreshold() * 100)}%
               </Text>
               {getValidationStats() && (
                 <>
@@ -376,7 +487,81 @@ export default function RecordScreen() {
                     )}
                     %
                   </Text>
+                  <Text variant="bodySmall" style={styles.debugText}>
+                    Avg Level:{" "}
+                    {RecordingUtils.levelToPercentage(
+                      getValidationStats()!.averageLevel
+                    )}
+                    %
+                  </Text>
                 </>
+              )}
+
+              {/* Calibration Button */}
+              {recordingState.isRecording && (
+                <TouchableOpacity
+                  style={[styles.calibrateButton, { marginTop: 10 }]}
+                  onPress={() => {
+                    recordingService.autoCalibrateThreshold();
+                    console.log("Manual calibration triggered");
+                  }}
+                >
+                  <Text style={styles.calibrateButtonText}>
+                    Auto-Calibrate Threshold
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Manual Threshold Adjustment */}
+              {recordingState.isRecording && (
+                <View style={styles.thresholdContainer}>
+                  <Text variant="bodySmall" style={styles.debugText}>
+                    Manual Threshold:{" "}
+                    {Math.round(recordingService.getWhisperThreshold() * 100)}%
+                  </Text>
+                  <View style={styles.thresholdButtons}>
+                    <TouchableOpacity
+                      style={styles.thresholdButton}
+                      onPress={() =>
+                        recordingService.setWhisperThreshold(
+                          WHISPER_VALIDATION.THRESHOLD_BUTTONS.VERY_LOW
+                        )
+                      }
+                    >
+                      <Text style={styles.thresholdButtonText}>0.5%</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.thresholdButton}
+                      onPress={() =>
+                        recordingService.setWhisperThreshold(
+                          WHISPER_VALIDATION.THRESHOLD_BUTTONS.LOW
+                        )
+                      }
+                    >
+                      <Text style={styles.thresholdButtonText}>0.8%</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.thresholdButton}
+                      onPress={() =>
+                        recordingService.setWhisperThreshold(
+                          WHISPER_VALIDATION.THRESHOLD_BUTTONS.MEDIUM
+                        )
+                      }
+                    >
+                      <Text style={styles.thresholdButtonText}>1.2%</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.thresholdButton}
+                      onPress={() =>
+                        recordingService.setWhisperThreshold(
+                          WHISPER_VALIDATION.THRESHOLD_BUTTONS.HIGH
+                        )
+                      }
+                    >
+                      <Text style={styles.thresholdButtonText}>1.5%</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
               )}
             </View>
           )}
@@ -428,12 +613,16 @@ export default function RecordScreen() {
           <Button
             mode="contained"
             onPress={handleUpload}
-            style={styles.uploadButton}
+            style={getUploadButtonStyle()}
             icon="cloud-upload"
-            disabled={isLoading || recordingState.isUploading}
+            disabled={
+              isLoading ||
+              recordingState.isUploading ||
+              !isRecordingUploadable()
+            }
             loading={recordingState.isUploading}
           >
-            {recordingState.isUploading ? "Uploading..." : "Upload Whisper"}
+            {getUploadButtonText()}
           </Button>
         )}
 
@@ -579,5 +768,39 @@ const styles = StyleSheet.create({
   },
   debugButton: {
     marginTop: 10,
+  },
+  calibrateButton: {
+    backgroundColor: "#007AFF",
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 50,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  calibrateButtonText: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+  thresholdContainer: {
+    marginTop: 10,
+    alignItems: "center",
+  },
+  thresholdButtons: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  thresholdButton: {
+    backgroundColor: "#007AFF",
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 50,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  thresholdButtonText: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "bold",
   },
 });
