@@ -10,6 +10,7 @@ import {
   ViewToken,
   ActivityIndicator,
   RefreshControl,
+  AppState,
 } from "react-native";
 import TrackPlayer, {
   State,
@@ -17,9 +18,13 @@ import TrackPlayer, {
   useProgress,
 } from "react-native-track-player";
 import { useAudioStore, AudioTrack } from "../store/useAudioStore";
-import { getFirestoreService } from "../services/firestoreService";
+import {
+  getFirestoreService,
+  PaginatedWhispersResult,
+} from "../services/firestoreService";
 import { Whisper } from "../types";
 import { useAuth } from "../providers/AuthProvider";
+import { QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
 
 const { height, width } = Dimensions.get("window");
 
@@ -27,7 +32,13 @@ const FeedScreen = () => {
   const [whispers, setWhispers] = useState<Whisper[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [newWhispersCount, setNewWhispersCount] = useState(0);
+  const [isAppActive, setIsAppActive] = useState(true);
+  const [lastDoc, setLastDoc] =
+    useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMore, setHasMore] = useState(true);
   const { user } = useAuth();
   const firestoreService = getFirestoreService();
   const flatListRef = useRef<FlatList<AudioTrack>>(null);
@@ -76,11 +87,14 @@ const FeedScreen = () => {
     try {
       setLoading(true);
       setError(null);
-      const fetchedWhispers = await firestoreService.getWhispers();
-      setWhispers(fetchedWhispers);
+      const result: PaginatedWhispersResult =
+        await firestoreService.getWhispers();
+      setWhispers(result.whispers);
+      setLastDoc(result.lastDoc);
+      setHasMore(result.hasMore);
 
       // Convert to audio tracks and initialize player
-      const audioTracks = convertWhispersToAudioTracks(fetchedWhispers);
+      const audioTracks = convertWhispersToAudioTracks(result.whispers);
       await initializePlayer(audioTracks);
       lastPlayedTrackRef.current = -1;
     } catch (err) {
@@ -88,6 +102,69 @@ const FeedScreen = () => {
       setError(err instanceof Error ? err.message : "Failed to load whispers");
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Set up real-time listener for whispers
+  useEffect(() => {
+    if (!user || !isAppActive) return; // Don't set up listener if not authenticated or app is in background
+
+    console.log("🔄 Setting up real-time whisper listener...");
+
+    const unsubscribe = firestoreService.subscribeToNewWhispers(
+      (newWhisper) => {
+        console.log(`🆕 New whisper detected: ${newWhisper.id}`);
+
+        // Add new whisper to the beginning of the list
+        setWhispers((prev) => [newWhisper, ...prev.slice(0, 19)]); // Keep only 20 whispers
+
+        // Update audio player with new track at the beginning
+        const updatedWhispers = [newWhisper, ...whispers.slice(0, 19)];
+        const audioTracks = convertWhispersToAudioTracks(updatedWhispers);
+        initializePlayer(audioTracks).catch(console.error);
+
+        // Show new whisper indicator
+        setNewWhispersCount(1);
+
+        // Auto-hide the indicator after 5 seconds
+        setTimeout(() => {
+          setNewWhispersCount(0);
+        }, 5000);
+      },
+      new Date(Date.now() - 60000) // Listen to whispers from the last minute
+    );
+
+    // Cleanup listener on unmount
+    return () => {
+      console.log("🔄 Cleaning up real-time whisper listener");
+      unsubscribe();
+    };
+  }, [user, firestoreService, isAppActive]);
+
+  // Load more whispers (pagination)
+  const loadMoreWhispers = async () => {
+    if (!hasMore || loadingMore || !lastDoc) return;
+
+    try {
+      setLoadingMore(true);
+      const result: PaginatedWhispersResult =
+        await firestoreService.getWhispers({
+          limit: 20,
+          startAfter: lastDoc,
+        });
+
+      setWhispers((prev) => [...prev, ...result.whispers]);
+      setLastDoc(result.lastDoc);
+      setHasMore(result.hasMore);
+
+      // Update audio player with new tracks
+      const allWhispers = [...whispers, ...result.whispers];
+      const audioTracks = convertWhispersToAudioTracks(allWhispers);
+      await initializePlayer(audioTracks);
+    } catch (err) {
+      console.error("Error loading more whispers:", err);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -101,6 +178,20 @@ const FeedScreen = () => {
   // Initialize audio player and load whispers
   useEffect(() => {
     loadWhispers();
+  }, []);
+
+  // Handle app state changes (background/foreground)
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState: string) => {
+      setIsAppActive(nextAppState === "active");
+      console.log(`📱 App state changed: ${nextAppState}`);
+    };
+
+    const subscription = AppState.addEventListener(
+      "change",
+      handleAppStateChange
+    );
+    return () => subscription?.remove();
   }, []);
 
   // Reset last played track ref when tracks change
@@ -346,28 +437,51 @@ const FeedScreen = () => {
   }
 
   return (
-    <FlatList
-      ref={flatListRef}
-      data={convertWhispersToAudioTracks(whispers)}
-      renderItem={renderItem}
-      keyExtractor={(item) => item.id}
-      pagingEnabled
-      horizontal={false}
-      showsVerticalScrollIndicator={false}
-      snapToInterval={height}
-      decelerationRate="fast"
-      onViewableItemsChanged={onViewableItemsChanged}
-      viewabilityConfig={{ itemVisiblePercentThreshold: 80 }}
-      getItemLayout={(_, index) => ({
-        length: height,
-        offset: height * index,
-        index,
-      })}
-      initialScrollIndex={scrollPosition}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
-    />
+    <View style={styles.container}>
+      {/* New whispers indicator */}
+      {newWhispersCount > 0 && (
+        <View style={styles.newWhispersIndicator}>
+          <Text style={styles.newWhispersText}>
+            🎉 {newWhispersCount} new whisper{newWhispersCount > 1 ? "s" : ""}!
+          </Text>
+        </View>
+      )}
+
+      <FlatList
+        ref={flatListRef}
+        data={convertWhispersToAudioTracks(whispers)}
+        renderItem={renderItem}
+        keyExtractor={(item) => item.id}
+        pagingEnabled
+        horizontal={false}
+        showsVerticalScrollIndicator={false}
+        snapToInterval={height}
+        decelerationRate="fast"
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={{ itemVisiblePercentThreshold: 80 }}
+        getItemLayout={(_, index) => ({
+          length: height,
+          offset: height * index,
+          index,
+        })}
+        initialScrollIndex={scrollPosition}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        onEndReached={loadMoreWhispers}
+        onEndReachedThreshold={0.5}
+        ListFooterComponent={
+          loadingMore ? (
+            <View style={styles.loadingMoreContainer}>
+              <ActivityIndicator size="small" color="#007AFF" />
+              <Text style={styles.loadingMoreText}>
+                Loading more whispers...
+              </Text>
+            </View>
+          ) : null
+        }
+      />
+    </View>
   );
 };
 
@@ -518,6 +632,47 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "bold",
+  },
+  // Real-time update styles
+  container: {
+    flex: 1,
+    backgroundColor: "#fff",
+  },
+  newWhispersIndicator: {
+    position: "absolute",
+    top: 50,
+    left: 20,
+    right: 20,
+    backgroundColor: "#007AFF",
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    zIndex: 1000,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  newWhispersText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  // Pagination styles
+  loadingMoreContainer: {
+    paddingVertical: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingMoreText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: "#666",
   },
 });
 

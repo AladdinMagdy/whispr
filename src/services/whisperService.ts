@@ -86,8 +86,8 @@ export class WhisperService {
       }
 
       // Get the created whisper
-      const whispers = await firestoreService.getWhispers();
-      const whisper = whispers.find((w) => w.id === whisperId);
+      const result = await firestoreService.getWhispers();
+      const whisper = result.whispers.find((w) => w.id === whisperId);
 
       return {
         success: true,
@@ -110,7 +110,8 @@ export class WhisperService {
   static async getPublicWhispers(limit: number = 20): Promise<Whisper[]> {
     try {
       const firestoreService = getFirestoreService();
-      return await firestoreService.getWhispers({ limit });
+      const result = await firestoreService.getWhispers({ limit });
+      return result.whispers;
     } catch (error) {
       console.error("Error getting public whispers:", error);
       throw new Error("Failed to get public whispers");
@@ -126,7 +127,8 @@ export class WhisperService {
   ): Promise<Whisper[]> {
     try {
       const firestoreService = getFirestoreService();
-      return await firestoreService.getUserWhispers(userId);
+      const result = await firestoreService.getUserWhispers(userId);
+      return result.whispers;
     } catch (error) {
       console.error("Error getting user whispers:", error);
       throw new Error("Failed to get user whispers");
@@ -139,8 +141,8 @@ export class WhisperService {
   static async getWhisper(whisperId: string): Promise<Whisper | null> {
     try {
       const firestoreService = getFirestoreService();
-      const whispers = await firestoreService.getWhispers();
-      return whispers.find((w) => w.id === whisperId) || null;
+      const result = await firestoreService.getWhispers();
+      return result.whispers.find((w) => w.id === whisperId) || null;
     } catch (error) {
       console.error("Error getting whisper:", error);
       return null;
