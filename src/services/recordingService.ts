@@ -402,12 +402,14 @@ export class RecordingService {
   }
 
   /**
-   * Reset recording service
+   * Reset recording service state
    */
   reset(): void {
     this.audioLevels = [];
     this.isRecording = false;
     this.recordingStartTime = 0;
+    this.callbacks = {};
+    this.whisperThreshold = WHISPER_VALIDATION.DEFAULT_WHISPER_THRESHOLD;
   }
 
   /**
@@ -419,6 +421,30 @@ export class RecordingService {
     }
     this.reset();
   }
+
+  /**
+   * Reset singleton instance - allows complete reinitialization
+   * Use this when you need to completely reset the service state
+   */
+  static resetInstance(): void {
+    if (RecordingService.instance) {
+      RecordingService.instance.destroy();
+      RecordingService.instance = new RecordingService();
+      console.log("🔄 RecordingService singleton reset successfully");
+    }
+  }
+
+  /**
+   * Force destroy singleton instance
+   * Use this when you need to completely clean up the service
+   */
+  static destroyInstance(): void {
+    if (RecordingService.instance) {
+      RecordingService.instance.destroy();
+      RecordingService.instance = null as any;
+      console.log("🗑️ RecordingService singleton destroyed");
+    }
+  }
 }
 
 /**
@@ -426,6 +452,22 @@ export class RecordingService {
  */
 export const getRecordingService = (): RecordingService => {
   return RecordingService.getInstance();
+};
+
+/**
+ * Reset the RecordingService singleton instance
+ * Use this when you need to completely reset the service state
+ */
+export const resetRecordingService = (): void => {
+  RecordingService.resetInstance();
+};
+
+/**
+ * Destroy the RecordingService singleton instance
+ * Use this when you need to completely clean up the service
+ */
+export const destroyRecordingService = (): void => {
+  RecordingService.destroyInstance();
 };
 
 /**
