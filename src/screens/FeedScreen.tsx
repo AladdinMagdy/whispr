@@ -16,12 +16,16 @@ import TrackPlayer, {
   State,
   usePlaybackState,
   useProgress,
+  Event,
 } from "react-native-track-player";
 import { useAudioStore, AudioTrack } from "../store/useAudioStore";
+import { useFeedStore } from "../store/useFeedStore";
 import {
   getFirestoreService,
   PaginatedWhispersResult,
 } from "../services/firestoreService";
+import { getAudioCacheService } from "../services/audioCacheService";
+import { getPreloadService } from "../services/preloadService";
 import { Whisper } from "../types";
 import { useAuth } from "../providers/AuthProvider";
 import { QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
@@ -29,25 +33,24 @@ import { QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
 const { height, width } = Dimensions.get("window");
 
 const FeedScreen = () => {
-  const [whispers, setWhispers] = useState<Whisper[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newWhispersCount, setNewWhispersCount] = useState(0);
   const [isAppActive, setIsAppActive] = useState(true);
-  const [lastDoc, setLastDoc] =
-    useState<QueryDocumentSnapshot<DocumentData> | null>(null);
-  const [hasMore, setHasMore] = useState(true);
+
   const { user } = useAuth();
   const firestoreService = getFirestoreService();
+  const audioCacheService = getAudioCacheService();
+  const preloadService = getPreloadService();
   const flatListRef = useRef<FlatList<AudioTrack>>(null);
   const playbackState = usePlaybackState();
   const progress = useProgress();
   const lastPlayedTrackRef = useRef<number>(-1);
   const hasMountedRef = useRef<boolean>(false);
 
-  // Zustand store
+  // Zustand stores
   const {
     tracks,
     currentTrackIndex,
@@ -59,12 +62,29 @@ const FeedScreen = () => {
     setCurrentTrackIndex,
     setScrollPosition,
     playTrack,
+    replayTrack,
     switchTrack,
     pause,
     play,
+    setupAutoReplay,
+    cleanupAutoReplay,
   } = useAudioStore();
 
-  // Convert whispers to AudioTrack format
+  // FeedStore for persistent caching
+  const {
+    whispers,
+    lastDoc,
+    hasMore,
+    isCacheValid,
+    setWhispers,
+    setLastDoc,
+    setHasMore,
+    setLastLoadTime,
+    addNewWhisper,
+    updateCache,
+  } = useFeedStore();
+
+  // Convert whispers to AudioTrack format (synchronous for FlatList)
   const convertWhispersToAudioTracks = (whispers: Whisper[]): AudioTrack[] => {
     return whispers.map((whisper) => ({
       id: whisper.id,
@@ -78,25 +98,103 @@ const FeedScreen = () => {
         "#",
         ""
       )}&color=fff&size=200`,
-      url: whisper.audioUrl,
+      url: whisper.audioUrl, // Keep original URL for FlatList display
     }));
   };
 
-  // Load whispers from Firestore
-  const loadWhispers = async () => {
+  // Convert whispers to AudioTrack format with cached URLs (async for audio player)
+  const convertWhispersToAudioTracksWithCache = async (
+    whispers: Whisper[]
+  ): Promise<AudioTrack[]> => {
+    const audioTracks: AudioTrack[] = [];
+
+    for (const whisper of whispers) {
+      try {
+        // Get cached URL (downloads if not cached)
+        const cachedUrl = await audioCacheService.getCachedAudioUrl(
+          whisper.audioUrl
+        );
+
+        audioTracks.push({
+          id: whisper.id,
+          title: whisper.userDisplayName,
+          artist: `${whisper.whisperPercentage.toFixed(
+            1
+          )}% whisper • ${formatTime(whisper.duration)}`,
+          artwork: `https://ui-avatars.com/api/?name=${encodeURIComponent(
+            whisper.userDisplayName
+          )}&background=${whisper.userProfileColor.replace(
+            "#",
+            ""
+          )}&color=fff&size=200`,
+          url: cachedUrl, // Use cached URL for audio player
+        });
+      } catch (error) {
+        console.warn(
+          `⚠️ Failed to cache audio for whisper ${whisper.id}:`,
+          error
+        );
+        // Fallback to original URL if caching fails
+        audioTracks.push({
+          id: whisper.id,
+          title: whisper.userDisplayName,
+          artist: `${whisper.whisperPercentage.toFixed(
+            1
+          )}% whisper • ${formatTime(whisper.duration)}`,
+          artwork: `https://ui-avatars.com/api/?name=${encodeURIComponent(
+            whisper.userDisplayName
+          )}&background=${whisper.userProfileColor.replace(
+            "#",
+            ""
+          )}&color=fff&size=200`,
+          url: whisper.audioUrl, // Fallback to original URL
+        });
+      }
+    }
+
+    return audioTracks;
+  };
+
+  // Load whispers with caching
+  const loadWhispers = async (forceRefresh = false) => {
     try {
       setLoading(true);
       setError(null);
+
+      // Check if we have valid cached data and don't need to force refresh
+      if (!forceRefresh && isCacheValid()) {
+        console.log("✅ Using cached whispers:", whispers.length);
+
+        // Convert to audio tracks and initialize player
+        const audioTracks = await convertWhispersToAudioTracksWithCache(
+          whispers
+        );
+        await initializePlayer(audioTracks);
+        lastPlayedTrackRef.current = -1;
+
+        // Preload audio files in background
+        audioCacheService.preloadTracks(audioTracks, 0, 5).catch(console.error);
+
+        setLoading(false);
+        return;
+      }
+
+      console.log("🔄 Loading fresh whispers from Firestore...");
       const result: PaginatedWhispersResult =
         await firestoreService.getWhispers();
-      setWhispers(result.whispers);
-      setLastDoc(result.lastDoc);
-      setHasMore(result.hasMore);
+
+      // Update cache
+      updateCache(result.whispers, result.lastDoc, result.hasMore);
 
       // Convert to audio tracks and initialize player
-      const audioTracks = convertWhispersToAudioTracks(result.whispers);
+      const audioTracks = await convertWhispersToAudioTracksWithCache(
+        result.whispers
+      );
       await initializePlayer(audioTracks);
       lastPlayedTrackRef.current = -1;
+
+      // Preload audio files in background
+      audioCacheService.preloadTracks(audioTracks, 0, 5).catch(console.error);
     } catch (err) {
       console.error("Error loading whispers:", err);
       setError(err instanceof Error ? err.message : "Failed to load whispers");
@@ -115,13 +213,19 @@ const FeedScreen = () => {
       (newWhisper) => {
         console.log(`🆕 New whisper detected: ${newWhisper.id}`);
 
-        // Add new whisper to the beginning of the list
-        setWhispers((prev) => [newWhisper, ...prev.slice(0, 19)]); // Keep only 20 whispers
+        // Add new whisper to cache
+        addNewWhisper(newWhisper);
 
         // Update audio player with new track at the beginning
         const updatedWhispers = [newWhisper, ...whispers.slice(0, 19)];
-        const audioTracks = convertWhispersToAudioTracks(updatedWhispers);
-        initializePlayer(audioTracks).catch(console.error);
+        convertWhispersToAudioTracksWithCache(updatedWhispers)
+          .then((audioTracks) => initializePlayer(audioTracks))
+          .catch(console.error);
+
+        // Preload the new audio file
+        audioCacheService
+          .getCachedAudioUrl(newWhisper.audioUrl)
+          .catch(console.error);
 
         // Show new whisper indicator
         setNewWhispersCount(1);
@@ -139,7 +243,15 @@ const FeedScreen = () => {
       console.log("🔄 Cleaning up real-time whisper listener");
       unsubscribe();
     };
-  }, [user, firestoreService, isAppActive]);
+  }, [
+    user,
+    firestoreService,
+    isAppActive,
+    whispers,
+    addNewWhisper,
+    initializePlayer,
+    audioCacheService,
+  ]);
 
   // Load more whispers (pagination)
   const loadMoreWhispers = async () => {
@@ -153,14 +265,21 @@ const FeedScreen = () => {
           startAfter: lastDoc,
         });
 
-      setWhispers((prev) => [...prev, ...result.whispers]);
-      setLastDoc(result.lastDoc);
-      setHasMore(result.hasMore);
+      // Update cache with new whispers
+      const allWhispers = [...whispers, ...result.whispers];
+      updateCache(allWhispers, result.lastDoc, result.hasMore);
 
       // Update audio player with new tracks
-      const allWhispers = [...whispers, ...result.whispers];
-      const audioTracks = convertWhispersToAudioTracks(allWhispers);
+      const audioTracks = await convertWhispersToAudioTracksWithCache(
+        allWhispers
+      );
       await initializePlayer(audioTracks);
+
+      // Preload new audio files
+      const newTracks = audioTracks.slice(whispers.length);
+      for (const track of newTracks) {
+        audioCacheService.getCachedAudioUrl(track.url).catch(console.error);
+      }
     } catch (err) {
       console.error("Error loading more whispers:", err);
     } finally {
@@ -171,7 +290,7 @@ const FeedScreen = () => {
   // Refresh whispers
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadWhispers();
+    await loadWhispers(true); // Force refresh
     setRefreshing(false);
   };
 
@@ -185,6 +304,15 @@ const FeedScreen = () => {
     const handleAppStateChange = (nextAppState: string) => {
       setIsAppActive(nextAppState === "active");
       console.log(`📱 App state changed: ${nextAppState}`);
+
+      // Clean up cache when app goes to background
+      if (nextAppState === "background" || nextAppState === "inactive") {
+        const stats = audioCacheService.getCacheStats();
+        if (stats.usagePercentage > 80) {
+          console.log("🧹 Cleaning up audio cache due to high usage...");
+          audioCacheService.clearCache().catch(console.error);
+        }
+      }
     };
 
     const subscription = AppState.addEventListener(
@@ -192,7 +320,17 @@ const FeedScreen = () => {
       handleAppStateChange
     );
     return () => subscription?.remove();
-  }, []);
+  }, [audioCacheService]);
+
+  // Set up centralized auto-replay from the store
+  useEffect(() => {
+    if (isInitialized) {
+      setupAutoReplay();
+      return () => {
+        cleanupAutoReplay();
+      };
+    }
+  }, [isInitialized, setupAutoReplay, cleanupAutoReplay]);
 
   // Reset last played track ref when tracks change
   useEffect(() => {
@@ -306,6 +444,11 @@ const FeedScreen = () => {
             console.log(`Calling playTrack for index ${newIndex}`);
             playTrack(newIndex).catch(console.error);
           }, 100); // Small delay to ensure scroll is complete
+
+          // Preload next tracks when scrolling
+          audioCacheService
+            .preloadTracks(tracks, newIndex, 5)
+            .catch(console.error);
         } else {
           console.log(`Skipping duplicate call for track ${newIndex}`);
         }
@@ -374,6 +517,7 @@ const FeedScreen = () => {
         ]}
         onPress={() => {
           const storeState = useAudioStore.getState();
+          const cacheStats = audioCacheService.getCacheStats();
           console.log("Current state:", {
             currentTrackIndex,
             isPlaying,
@@ -382,6 +526,9 @@ const FeedScreen = () => {
             lastPlayedTrack: lastPlayedTrackRef.current,
             savedPosition: storeState.currentPosition,
             savedTrackIndex: storeState.currentTrackIndex,
+            cacheStats,
+            cachedWhispers: whispers.length,
+            cacheValid: isCacheValid(),
           });
 
           // Test manual restoration
@@ -416,7 +563,10 @@ const FeedScreen = () => {
     return (
       <View style={styles.errorContainer}>
         <Text style={styles.errorText}>Error: {error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={loadWhispers}>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={() => loadWhispers(true)}
+        >
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -429,7 +579,10 @@ const FeedScreen = () => {
       <View style={styles.emptyContainer}>
         <Text style={styles.emptyText}>No whispers yet</Text>
         <Text style={styles.emptySubtext}>Be the first to whisper!</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={loadWhispers}>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={() => loadWhispers(true)}
+        >
           <Text style={styles.retryButtonText}>Refresh</Text>
         </TouchableOpacity>
       </View>

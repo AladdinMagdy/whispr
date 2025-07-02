@@ -17,6 +17,8 @@ import { AuthProvider } from "./providers/AuthProvider";
 // Import Firebase initialization
 import { initializeFirebase } from "./config/firebase";
 import { setupAuthServiceCallbacks } from "./store/useAuthStore";
+import { getAudioCacheService } from "./services/audioCacheService";
+import { AppState } from "react-native";
 
 const Stack = createStackNavigator();
 
@@ -38,6 +40,30 @@ export default function App() {
 
         // Setup AuthService callbacks after Firebase is ready
         setupAuthServiceCallbacks();
+
+        // Preload whispers in background for faster FeedScreen loading
+        const { getFirestoreService } = await import(
+          "./services/firestoreService"
+        );
+        const firestoreService = getFirestoreService();
+        firestoreService.getWhispers({ limit: 20 }).catch(console.error);
+
+        // Set up cache cleanup on app state changes
+        const handleAppStateChange = (nextAppState: string) => {
+          if (nextAppState === "background" || nextAppState === "inactive") {
+            // App is going to background, clean up old cache
+            const audioCacheService = getAudioCacheService();
+            const stats = audioCacheService.getCacheStats();
+
+            // If cache is over 80% full, clean up old files
+            if (stats.usagePercentage > 80) {
+              console.log("🧹 Cleaning up audio cache due to high usage...");
+              audioCacheService.clearCache().catch(console.error);
+            }
+          }
+        };
+
+        AppState.addEventListener("change", handleAppStateChange);
 
         setIsInitialized(true);
         console.log("Whispr app initialized successfully");

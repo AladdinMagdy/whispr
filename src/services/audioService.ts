@@ -4,6 +4,7 @@
  */
 
 import TrackPlayer, { State } from "react-native-track-player";
+import { getAudioCacheService } from "./audioCacheService";
 import { WHISPER_COLORS } from "../constants/whisperValidation";
 
 // Global state to track if player is initialized
@@ -21,6 +22,7 @@ class AudioService {
   private tracks: AudioTrack[] = [];
   private currentTrackIndex: number = 0;
   private lastScrollPosition: number = 0;
+  private audioCacheService = getAudioCacheService();
 
   async initialize(tracks: AudioTrack[] = []) {
     if (isPlayerInitialized) {
@@ -29,6 +31,10 @@ class AudioService {
 
     try {
       await TrackPlayer.setupPlayer();
+
+      // Pre-cache audio files for faster playback
+      await this.preloadTracks(tracks);
+
       this.tracks = tracks;
 
       if (tracks.length > 0) {
@@ -53,6 +59,9 @@ class AudioService {
     if (tracksChanged) {
       this.tracks = tracks;
       if (isPlayerInitialized && tracks.length > 0) {
+        // Pre-cache new tracks
+        await this.preloadTracks(tracks);
+
         await TrackPlayer.reset();
         await TrackPlayer.add(tracks);
         // Reset current index when tracks change
@@ -60,6 +69,30 @@ class AudioService {
       }
     } else {
       console.log("Tracks unchanged, preserving current state");
+    }
+  }
+
+  /**
+   * Preload tracks using audio cache service
+   */
+  private async preloadTracks(tracks: AudioTrack[]): Promise<void> {
+    try {
+      console.log(`🚀 Preloading ${tracks.length} tracks...`);
+
+      // Preload first 5 tracks for immediate playback
+      const preloadPromises = tracks.slice(0, 5).map(async (track) => {
+        try {
+          await this.audioCacheService.getCachedAudioUrl(track.url);
+          console.log(`✅ Preloaded: ${track.title}`);
+        } catch (error) {
+          console.warn(`⚠️ Failed to preload ${track.title}:`, error);
+        }
+      });
+
+      await Promise.allSettled(preloadPromises);
+      console.log("🎉 Track preloading completed");
+    } catch (error) {
+      console.error("❌ Error preloading tracks:", error);
     }
   }
 
@@ -84,6 +117,12 @@ class AudioService {
     }
 
     this.currentTrackIndex = index;
+
+    // Preload next tracks when playing
+    this.audioCacheService
+      .preloadTracks(this.tracks, index, 3)
+      .catch(console.error);
+
     await TrackPlayer.skip(index);
     await TrackPlayer.play();
   }
@@ -157,6 +196,20 @@ class AudioService {
     return await TrackPlayer.getState();
   }
 
+  /**
+   * Get cache statistics
+   */
+  getCacheStats() {
+    return this.audioCacheService.getCacheStats();
+  }
+
+  /**
+   * Clear audio cache
+   */
+  async clearCache() {
+    return await this.audioCacheService.clearCache();
+  }
+
   async destroy() {
     if (isPlayerInitialized) {
       await TrackPlayer.reset();
@@ -197,17 +250,15 @@ export const AudioUtils = {
    */
   getWhisperStatusDescription(isWhisper: boolean, level: number): string {
     if (!isWhisper) {
-      return `Too loud (${AudioUtils.levelToPercentage(
-        level
-      )}%) - whisper quieter`;
+      return `Too loud (${AudioUtils.levelToPercentage(level)}%)`;
     }
-    return `Whisper detected (${AudioUtils.levelToPercentage(level)}%)`;
+    return `Whisper (${AudioUtils.levelToPercentage(level)}%)`;
   },
 
   /**
-   * Get color for whisper status
+   * Get whisper status color
    */
   getWhisperStatusColor(isWhisper: boolean): string {
-    return isWhisper ? WHISPER_COLORS.WHISPER : WHISPER_COLORS.LOUD;
+    return isWhisper ? WHISPER_COLORS.SUCCESS : WHISPER_COLORS.LOUD;
   },
 };

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import TrackPlayer, { State } from "react-native-track-player";
+import TrackPlayer, { State, Event } from "react-native-track-player";
 
 export interface AudioTrack {
   id: string;
@@ -40,6 +40,7 @@ interface AudioState {
 
   // Audio control actions
   playTrack: (index: number) => Promise<void>;
+  replayTrack: (index: number) => Promise<void>;
   switchTrack: (index: number) => Promise<void>;
   pause: () => Promise<void>;
   play: () => Promise<void>;
@@ -49,6 +50,11 @@ interface AudioState {
   // Initialize player
   initializePlayer: (tracks: AudioTrack[]) => Promise<void>;
   restorePlayerState: () => Promise<void>;
+
+  // Auto-replay functionality
+  setupAutoReplay: () => void;
+  cleanupAutoReplay: () => void;
+  progressCheckInterval: NodeJS.Timeout | null;
 }
 
 export const useAudioStore = create<AudioState>()(
@@ -64,6 +70,7 @@ export const useAudioStore = create<AudioState>()(
       isInitialized: false,
       lastPlayedTrackId: null,
       lastPlayedPosition: 0,
+      progressCheckInterval: null,
 
       // State setters
       setTracks: (tracks) => set({ tracks }),
@@ -126,11 +133,8 @@ export const useAudioStore = create<AudioState>()(
           await TrackPlayer.pause();
           await TrackPlayer.reset();
 
-          // Add all tracks again
-          await TrackPlayer.add(tracks);
-
-          // Switch to the specific track
-          await TrackPlayer.skip(index);
+          // Only add the specific track to prevent auto-advance
+          await TrackPlayer.add([targetTrack]);
 
           // Only restore position if it's the same track that was last played
           if (isSameTrackAsLastPlayed && savedPosition > 0) {
@@ -165,6 +169,39 @@ export const useAudioStore = create<AudioState>()(
         }
       },
 
+      replayTrack: async (index) => {
+        const { tracks, isInitialized } = get();
+        if (!isInitialized || index < 0 || index >= tracks.length) return;
+
+        try {
+          const targetTrack = tracks[index];
+          console.log(`Replaying track ${index}: ${targetTrack.title}`);
+
+          // Always start from the beginning for replay
+          await TrackPlayer.pause();
+          await TrackPlayer.reset();
+          await TrackPlayer.add([targetTrack]);
+          await TrackPlayer.seekTo(0);
+          await TrackPlayer.play();
+
+          // Update state - always start from position 0 for replay
+          set({
+            currentTrackIndex: index,
+            isPlaying: true,
+            duration: 0,
+            currentPosition: 0,
+            lastPlayedTrackId: targetTrack.id,
+            lastPlayedPosition: 0, // Reset position for replay
+          });
+
+          console.log(
+            `Successfully replayed track ${index}: ${targetTrack.title}`
+          );
+        } catch (error) {
+          console.error("Error replaying track:", error);
+        }
+      },
+
       switchTrack: async (index) => {
         const { tracks, isInitialized, currentTrackIndex, currentPosition } =
           get();
@@ -183,8 +220,7 @@ export const useAudioStore = create<AudioState>()(
           );
           await TrackPlayer.pause();
           await TrackPlayer.reset();
-          await TrackPlayer.add(tracks);
-          await TrackPlayer.skip(index);
+          await TrackPlayer.add([tracks[index]]);
           await TrackPlayer.seekTo(0);
 
           // Update state (but don't set isPlaying to true)
@@ -296,8 +332,7 @@ export const useAudioStore = create<AudioState>()(
           // Direct restoration without using switchTrack (which resets position)
           await TrackPlayer.pause();
           await TrackPlayer.reset();
-          await TrackPlayer.add(tracks);
-          await TrackPlayer.skip(actualTrackIndex);
+          await TrackPlayer.add([tracks[actualTrackIndex]]);
 
           // Only seek to saved position if it's the same track
           if (isSameTrackAsLastPlayed && savedPosition > 0) {
@@ -346,20 +381,33 @@ export const useAudioStore = create<AudioState>()(
             );
 
           if (tracksChanged) {
+            console.log("🔄 Updating audio tracks...");
             await TrackPlayer.reset();
-            await TrackPlayer.add(tracks);
+            // Only add the first track to prevent auto-advance
+            if (tracks.length > 0) {
+              await TrackPlayer.add([tracks[0]]);
+            }
             set({ tracks, currentTrackIndex: 0, scrollPosition: 0 });
           } else {
             // Tracks are the same, just restore the player state
+            console.log("✅ Audio tracks unchanged, restoring state...");
             await get().restorePlayerState();
           }
           return;
         }
 
         try {
-          await TrackPlayer.setupPlayer();
+          console.log("🎵 Initializing audio player...");
+          await TrackPlayer.setupPlayer({
+            // Configure player to NOT auto-advance to next track
+            autoHandleInterruptions: true,
+            waitForBuffer: true,
+          });
           await TrackPlayer.reset();
-          await TrackPlayer.add(tracks);
+          // Only add the first track to prevent auto-advance
+          if (tracks.length > 0) {
+            await TrackPlayer.add([tracks[0]]);
+          }
 
           set({
             tracks,
@@ -368,11 +416,113 @@ export const useAudioStore = create<AudioState>()(
             scrollPosition: 0,
           });
 
-          console.log("Audio player initialized successfully");
+          console.log("✅ Audio player initialized successfully");
         } catch (error) {
-          console.error("Failed to initialize audio player:", error);
+          console.error("❌ Failed to initialize audio player:", error);
           throw error;
         }
+      },
+
+      // Auto-replay functionality
+      setupAutoReplay: () => {
+        let isReplaying = false;
+
+        const handleTrackEnd = async (event: any) => {
+          console.log("🎵 Track event received:", event.type);
+
+          if (event.type === Event.PlaybackQueueEnded && !isReplaying) {
+            console.log("🔄 Track ended, auto-replaying");
+            isReplaying = true;
+
+            try {
+              // Simple replay: seek to 0 and play
+              await TrackPlayer.seekTo(0);
+              await TrackPlayer.play();
+              console.log("✅ Track auto-replayed successfully");
+            } catch (error) {
+              console.error("❌ Error auto-replaying track:", error);
+            } finally {
+              // Reset replay flag after a delay
+              setTimeout(() => {
+                isReplaying = false;
+              }, 1000);
+            }
+          }
+        };
+
+        // Progress-based auto-replay as fallback
+        const startProgressCheck = () => {
+          const { progressCheckInterval } = get();
+          if (progressCheckInterval) {
+            clearInterval(progressCheckInterval);
+          }
+
+          const newInterval = setInterval(async () => {
+            try {
+              const state = await TrackPlayer.getState();
+              if (state === State.Playing) {
+                const position = await TrackPlayer.getPosition();
+                const duration = await TrackPlayer.getDuration();
+
+                // If we're within 0.5 seconds of the end and not already replaying
+                if (
+                  duration > 0 &&
+                  position >= duration - 0.5 &&
+                  !isReplaying
+                ) {
+                  console.log("🔄 Progress-based auto-replay triggered");
+                  isReplaying = true;
+
+                  await TrackPlayer.seekTo(0);
+                  await TrackPlayer.play();
+                  console.log("✅ Progress-based auto-replay successful");
+
+                  // Reset replay flag after a delay
+                  setTimeout(() => {
+                    isReplaying = false;
+                  }, 1000);
+                }
+              }
+            } catch (error) {
+              console.error("❌ Error in progress check:", error);
+            }
+          }, 500); // Check every 500ms
+
+          // Store the interval reference
+          set({ progressCheckInterval: newInterval });
+        };
+
+        // Set up event listeners
+        TrackPlayer.addEventListener(Event.PlaybackQueueEnded, handleTrackEnd);
+
+        // Start progress checking when playback starts
+        TrackPlayer.addEventListener(Event.PlaybackState, (event) => {
+          if (event.state === State.Playing) {
+            startProgressCheck();
+          } else if (
+            event.state === State.Paused ||
+            event.state === State.Stopped
+          ) {
+            const { progressCheckInterval } = get();
+            if (progressCheckInterval) {
+              clearInterval(progressCheckInterval);
+              set({ progressCheckInterval: null });
+            }
+          }
+        });
+
+        console.log("✅ Auto-replay setup complete (event + progress-based)");
+      },
+
+      cleanupAutoReplay: () => {
+        // TrackPlayer automatically cleans up listeners when the player is destroyed
+        // But we need to clear any intervals we created
+        const { progressCheckInterval } = get();
+        if (progressCheckInterval) {
+          clearInterval(progressCheckInterval);
+          set({ progressCheckInterval: null });
+        }
+        console.log("🧹 Auto-replay cleanup complete");
       },
     }),
     {
