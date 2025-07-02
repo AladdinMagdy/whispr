@@ -86,8 +86,22 @@ export default function RecordScreen() {
       onRecordingComplete: (uri: string) => {
         setRecordingState((prev) => ({
           ...prev,
+          isRecording: false,
           recordingUri: uri,
         }));
+      },
+      onRecordingStopped: (uri: string, wasAutoStop: boolean) => {
+        setRecordingState((prev) => ({
+          ...prev,
+          isRecording: false,
+          recordingUri: uri,
+        }));
+
+        if (wasAutoStop) {
+          console.log("🎯 Recording auto-stopped at maximum duration");
+          // Optionally show a message to the user
+          setError("Recording stopped automatically at 30 seconds");
+        }
       },
       onError: (error: string) => {
         setError(error);
@@ -139,11 +153,20 @@ export default function RecordScreen() {
 
       const uri = await recordingService.stopRecording();
 
-      setRecordingState((prev) => ({
-        ...prev,
-        isRecording: false,
-        recordingUri: uri,
-      }));
+      // Only update state if we got a valid URI (recording was actually stopped)
+      if (uri) {
+        setRecordingState((prev) => ({
+          ...prev,
+          isRecording: false,
+          recordingUri: uri,
+        }));
+      } else {
+        // Recording was already stopped (likely by auto-stop)
+        setRecordingState((prev) => ({
+          ...prev,
+          isRecording: false,
+        }));
+      }
 
       setLoading(false);
     } catch (error) {
@@ -193,6 +216,19 @@ export default function RecordScreen() {
     // Comprehensive whisper validation
     const validationErrors: string[] = [];
 
+    // Check duration first (with small tolerance for timing precision)
+    if (recordingState.duration < WHISPER_VALIDATION.RECORDING.MIN_DURATION) {
+      validationErrors.push(WHISPER_ERROR_MESSAGES.DURATION_TOO_SHORT);
+    }
+
+    if (
+      recordingState.duration >
+      WHISPER_VALIDATION.RECORDING.MAX_DURATION +
+        WHISPER_VALIDATION.RECORDING.DURATION_TOLERANCE
+    ) {
+      validationErrors.push(WHISPER_ERROR_MESSAGES.DURATION_TOO_LONG);
+    }
+
     if (stats.whisperPercentage < WHISPER_VALIDATION.MIN_WHISPER_PERCENTAGE) {
       validationErrors.push(
         WHISPER_ERROR_MESSAGES.INSUFFICIENT_WHISPER(
@@ -225,7 +261,23 @@ export default function RecordScreen() {
 
     if (validationErrors.length > 0) {
       Alert.alert("Invalid Whisper", validationErrors.join("\n\n"), [
-        { text: "OK", style: "default" },
+        {
+          text: "OK",
+          style: "default",
+          onPress: () => {
+            // Reset recording state on validation failure
+            recordingService.reset();
+            setRecordingState({
+              isRecording: false,
+              duration: 0,
+              audioLevel: 0,
+              isWhisper: false,
+              recordingUri: null,
+              uploadProgress: 0,
+              isUploading: false,
+            });
+          },
+        },
       ]);
       return;
     }
@@ -302,6 +354,18 @@ export default function RecordScreen() {
       setError("Failed to upload recording");
       setLoading(false);
       setRecordingState((prev) => ({ ...prev, isUploading: false }));
+
+      // Reset recording state on upload error
+      recordingService.reset();
+      setRecordingState({
+        isRecording: false,
+        duration: 0,
+        audioLevel: 0,
+        isWhisper: false,
+        recordingUri: null,
+        uploadProgress: 0,
+        isUploading: false,
+      });
     }
   };
 
@@ -333,6 +397,33 @@ export default function RecordScreen() {
     if (!recordingState.recordingUri || recordingState.isRecording)
       return false;
 
+    // Debug: Log duration for troubleshooting
+    console.log("🔍 Duration check:", {
+      duration: recordingState.duration,
+      minDuration: WHISPER_VALIDATION.RECORDING.MIN_DURATION,
+      maxDuration: WHISPER_VALIDATION.RECORDING.MAX_DURATION,
+      tolerance: WHISPER_VALIDATION.RECORDING.DURATION_TOLERANCE,
+      maxWithTolerance:
+        WHISPER_VALIDATION.RECORDING.MAX_DURATION +
+        WHISPER_VALIDATION.RECORDING.DURATION_TOLERANCE,
+      isTooShort:
+        recordingState.duration < WHISPER_VALIDATION.RECORDING.MIN_DURATION,
+      isTooLong:
+        recordingState.duration >
+        WHISPER_VALIDATION.RECORDING.MAX_DURATION +
+          WHISPER_VALIDATION.RECORDING.DURATION_TOLERANCE,
+    });
+
+    // Check duration first (with small tolerance for timing precision)
+    if (
+      recordingState.duration < WHISPER_VALIDATION.RECORDING.MIN_DURATION ||
+      recordingState.duration >
+        WHISPER_VALIDATION.RECORDING.MAX_DURATION +
+          WHISPER_VALIDATION.RECORDING.DURATION_TOLERANCE
+    ) {
+      return false;
+    }
+
     const stats = recordingService.getWhisperStatistics();
     return (
       stats.whisperPercentage >= WHISPER_VALIDATION.MIN_WHISPER_PERCENTAGE &&
@@ -357,6 +448,18 @@ export default function RecordScreen() {
     if (recordingState.isUploading) return "Uploading...";
     if (!recordingState.recordingUri || recordingState.isRecording)
       return "Upload Whisper";
+
+    // Check duration first (with small tolerance for timing precision)
+    if (recordingState.duration < WHISPER_VALIDATION.RECORDING.MIN_DURATION) {
+      return "Recording Too Short";
+    }
+    if (
+      recordingState.duration >
+      WHISPER_VALIDATION.RECORDING.MAX_DURATION +
+        WHISPER_VALIDATION.RECORDING.DURATION_TOLERANCE
+    ) {
+      return "Recording Too Long";
+    }
 
     if (isRecordingUploadable()) {
       return "Upload Whisper";

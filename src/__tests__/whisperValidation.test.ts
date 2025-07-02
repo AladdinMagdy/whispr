@@ -38,6 +38,7 @@ describe("Whisper Validation Constants", () => {
       expect(WHISPER_VALIDATION.RECORDING.SUBSCRIPTION_DURATION).toBe(0.1);
       expect(WHISPER_VALIDATION.RECORDING.MIN_DURATION).toBe(2);
       expect(WHISPER_VALIDATION.RECORDING.MAX_DURATION).toBe(30);
+      expect(WHISPER_VALIDATION.RECORDING.DURATION_TOLERANCE).toBe(0.1);
     });
 
     test("should have extremely strict threshold buttons", () => {
@@ -245,6 +246,66 @@ describe("Whisper Validation Logic", () => {
       expect(DEFAULT_WHISPER_THRESHOLD).toBeLessThanOrEqual(
         THRESHOLD_BUTTONS.MEDIUM
       );
+    });
+  });
+
+  describe("Duration Validation with Tolerance", () => {
+    test("should validate duration tolerance constant", () => {
+      const { RECORDING } = WHISPER_VALIDATION;
+
+      expect(RECORDING.DURATION_TOLERANCE).toBe(0.1);
+      expect(RECORDING.DURATION_TOLERANCE).toBeGreaterThan(0);
+      expect(RECORDING.DURATION_TOLERANCE).toBeLessThan(1); // Should be less than 1 second
+    });
+
+    test("should calculate max duration with tolerance correctly", () => {
+      const { RECORDING } = WHISPER_VALIDATION;
+      const maxWithTolerance =
+        RECORDING.MAX_DURATION + RECORDING.DURATION_TOLERANCE;
+
+      expect(maxWithTolerance).toBe(30.1);
+      expect(maxWithTolerance).toBeGreaterThan(RECORDING.MAX_DURATION);
+    });
+
+    test("should validate acceptable duration ranges", () => {
+      const { RECORDING } = WHISPER_VALIDATION;
+      const maxWithTolerance =
+        RECORDING.MAX_DURATION + RECORDING.DURATION_TOLERANCE;
+
+      // Test minimum duration
+      expect(2).toBeGreaterThanOrEqual(RECORDING.MIN_DURATION);
+      expect(1.9).toBeLessThan(RECORDING.MIN_DURATION); // Should be rejected
+
+      // Test maximum duration with tolerance
+      expect(30).toBeLessThanOrEqual(maxWithTolerance); // Exactly 30s should be allowed
+      expect(30.05).toBeLessThanOrEqual(maxWithTolerance); // Slightly over 30s should be allowed
+      expect(30.1).toBeLessThanOrEqual(maxWithTolerance); // At tolerance limit should be allowed
+      expect(30.2).toBeGreaterThan(maxWithTolerance); // Over tolerance should be rejected
+    });
+
+    test("should handle edge cases in duration validation", () => {
+      const { RECORDING } = WHISPER_VALIDATION;
+      const maxWithTolerance =
+        RECORDING.MAX_DURATION + RECORDING.DURATION_TOLERANCE;
+
+      // Edge cases around the tolerance boundary
+      expect(29.9).toBeLessThan(maxWithTolerance); // Just under max
+      expect(30.0).toBeLessThanOrEqual(maxWithTolerance); // Exactly at max
+      expect(30.1).toBeLessThanOrEqual(maxWithTolerance); // Exactly at tolerance limit
+      expect(30.11).toBeGreaterThan(maxWithTolerance); // Just over tolerance limit
+    });
+
+    test("should validate duration tolerance is reasonable", () => {
+      const { RECORDING } = WHISPER_VALIDATION;
+
+      // Tolerance should be small but not zero
+      expect(RECORDING.DURATION_TOLERANCE).toBeGreaterThan(0);
+      expect(RECORDING.DURATION_TOLERANCE).toBeLessThan(0.5); // Should be less than half a second
+
+      // Tolerance should be a reasonable percentage of max duration
+      const tolerancePercentage =
+        RECORDING.DURATION_TOLERANCE / RECORDING.MAX_DURATION;
+      expect(tolerancePercentage).toBeLessThan(0.01); // Less than 1% of max duration
     });
   });
 });

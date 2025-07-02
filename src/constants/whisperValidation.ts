@@ -34,6 +34,7 @@ export const WHISPER_VALIDATION = {
     SUBSCRIPTION_DURATION: 0.1, // 100ms update intervals
     MIN_DURATION: 2, // Minimum recording duration (seconds)
     MAX_DURATION: 30, // Maximum recording duration (seconds)
+    DURATION_TOLERANCE: 0.1, // Tolerance for timing precision (seconds)
   },
 
   // Threshold adjustment buttons - EXTREMELY STRICT for real whispers only

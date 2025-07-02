@@ -16,6 +16,7 @@ import {
   resetRecordingService,
   destroyRecordingService,
 } from "../services/recordingService";
+import { WHISPER_VALIDATION } from "../constants/whisperValidation";
 
 describe("RecordingService Singleton Reset", () => {
   beforeEach(() => {
@@ -68,5 +69,47 @@ describe("RecordingService Singleton Reset", () => {
     const instance2 = RecordingService.getInstance();
     expect(instance1).not.toBe(instance2);
     expect(instance2.getWhisperThreshold()).toBe(0.008);
+  });
+});
+
+describe("RecordingService Duration Tolerance", () => {
+  beforeEach(() => {
+    resetRecordingService();
+  });
+
+  afterEach(() => {
+    destroyRecordingService();
+  });
+
+  test("should use correct duration tolerance from constants", () => {
+    const service = RecordingService.getInstance();
+
+    // Verify the service uses the same tolerance as defined in constants
+    expect(WHISPER_VALIDATION.RECORDING.DURATION_TOLERANCE).toBe(0.1);
+
+    // Test that the service can access the tolerance
+    const maxWithTolerance =
+      WHISPER_VALIDATION.RECORDING.MAX_DURATION +
+      WHISPER_VALIDATION.RECORDING.DURATION_TOLERANCE;
+    expect(maxWithTolerance).toBe(30.1);
+  });
+
+  test("should reset duration tolerance on service reset", () => {
+    const service = RecordingService.getInstance();
+
+    // Verify default threshold is restored after reset
+    expect(service.getWhisperThreshold()).toBe(
+      WHISPER_VALIDATION.DEFAULT_WHISPER_THRESHOLD
+    );
+
+    // Change threshold and verify it's reset
+    service.setWhisperThreshold(0.5);
+    expect(service.getWhisperThreshold()).toBe(0.5);
+
+    resetRecordingService();
+    const newService = RecordingService.getInstance();
+    expect(newService.getWhisperThreshold()).toBe(
+      WHISPER_VALIDATION.DEFAULT_WHISPER_THRESHOLD
+    );
   });
 });

@@ -36,6 +36,7 @@ export interface AudioRecorderCallbacks {
   onAudioLevelChange?: (level: number, isWhisper: boolean) => void;
   onDurationChange?: (duration: number) => void;
   onRecordingComplete?: (uri: string) => void;
+  onRecordingStopped?: (uri: string, wasAutoStop: boolean) => void;
   onError?: (error: string) => void;
 }
 
@@ -48,6 +49,8 @@ export class RecordingService {
   private audioLevels: AudioLevelData[] = [];
   private whisperThreshold: number =
     WHISPER_VALIDATION.DEFAULT_WHISPER_THRESHOLD;
+  private autoStopTriggered: boolean = false;
+  private wasAutoStop: boolean = false;
 
   private constructor() {
     this.audioRecorderPlayer = new AudioRecorderPlayer();
@@ -149,6 +152,8 @@ export class RecordingService {
       // Reset audio levels
       this.audioLevels = [];
       this.recordingStartTime = Date.now();
+      this.autoStopTriggered = false;
+      this.wasAutoStop = false;
 
       // Start recording with metering enabled
       const uri = await this.audioRecorderPlayer.startRecorder(
@@ -234,6 +239,23 @@ export class RecordingService {
         // Call callbacks
         this.callbacks.onAudioLevelChange?.(audioLevel, isWhisper);
         this.callbacks.onDurationChange?.(duration);
+
+        // Auto-stop if duration exceeds maximum
+        if (
+          duration >= WHISPER_VALIDATION.RECORDING.MAX_DURATION &&
+          this.isRecording &&
+          !this.autoStopTriggered
+        ) {
+          console.log("⏰ Auto-stopping recording at maximum duration");
+          this.autoStopTriggered = true; // Prevent multiple auto-stop attempts
+          this.wasAutoStop = true; // Mark as auto-stop
+          // Use setTimeout to avoid calling stopRecording from within the callback
+          setTimeout(() => {
+            if (this.isRecording) {
+              this.stopRecording().catch(console.error);
+            }
+          }, 0);
+        }
       });
 
       console.log("Recording started with real audio metering");
@@ -252,6 +274,14 @@ export class RecordingService {
   async stopRecording(): Promise<string> {
     try {
       if (!this.isRecording) {
+        // If auto-stop was triggered but recording state is inconsistent,
+        // try to clean up gracefully
+        if (this.autoStopTriggered) {
+          console.log("🔄 Auto-stop cleanup: recording already stopped");
+          this.audioRecorderPlayer.removeRecordBackListener();
+          this.isRecording = false;
+          return ""; // Return empty URI since recording was already stopped
+        }
         throw new Error("Not recording");
       }
 
@@ -265,6 +295,9 @@ export class RecordingService {
 
       // Call completion callback
       this.callbacks.onRecordingComplete?.(uri);
+
+      // Call stopped callback with auto-stop info
+      this.callbacks.onRecordingStopped?.(uri, this.wasAutoStop);
 
       console.log("Recording stopped, URI:", uri);
       return uri;
@@ -410,6 +443,8 @@ export class RecordingService {
     this.recordingStartTime = 0;
     this.callbacks = {};
     this.whisperThreshold = WHISPER_VALIDATION.DEFAULT_WHISPER_THRESHOLD;
+    this.autoStopTriggered = false;
+    this.wasAutoStop = false;
   }
 
   /**

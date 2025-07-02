@@ -230,7 +230,11 @@ export class UploadService {
       errors.push(WHISPER_ERROR_MESSAGES.DURATION_TOO_SHORT);
     }
 
-    if (uploadData.duration > WHISPER_VALIDATION.RECORDING.MAX_DURATION) {
+    if (
+      uploadData.duration >
+      WHISPER_VALIDATION.RECORDING.MAX_DURATION +
+        WHISPER_VALIDATION.RECORDING.DURATION_TOLERANCE
+    ) {
       errors.push(WHISPER_ERROR_MESSAGES.DURATION_TOO_LONG);
     }
 

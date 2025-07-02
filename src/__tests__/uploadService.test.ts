@@ -205,6 +205,50 @@ describe("UploadService", () => {
         "Recording must be at least 2 seconds long"
       );
     });
+
+    test("should reject upload data with duration too long (without tolerance)", () => {
+      const mockUploadData: WhisperUploadData = {
+        audioUri: "file://mock-audio.m4a",
+        duration: 31, // Too long (above 30.1 seconds with tolerance)
+        whisperPercentage: 0.9,
+        averageLevel: 0.01,
+        confidence: 0.8,
+      };
+
+      const validation = uploadService.validateUploadData(mockUploadData);
+      expect(validation.isValid).toBe(false);
+      expect(validation.errors).toContain(
+        "Recording must be no longer than 30 seconds"
+      );
+    });
+
+    test("should accept upload data with duration at tolerance limit", () => {
+      const mockUploadData: WhisperUploadData = {
+        audioUri: "file://mock-audio.m4a",
+        duration: 30.1, // Exactly at tolerance limit (30 + 0.1)
+        whisperPercentage: 0.9,
+        averageLevel: 0.01,
+        confidence: 0.8,
+      };
+
+      const validation = uploadService.validateUploadData(mockUploadData);
+      expect(validation.isValid).toBe(true);
+      expect(validation.errors).toHaveLength(0);
+    });
+
+    test("should accept upload data with duration slightly over 30 seconds", () => {
+      const mockUploadData: WhisperUploadData = {
+        audioUri: "file://mock-audio.m4a",
+        duration: 30.05, // Slightly over 30 seconds but within tolerance
+        whisperPercentage: 0.9,
+        averageLevel: 0.01,
+        confidence: 0.8,
+      };
+
+      const validation = uploadService.validateUploadData(mockUploadData);
+      expect(validation.isValid).toBe(true);
+      expect(validation.errors).toHaveLength(0);
+    });
   });
 
   describe("File Upload", () => {
