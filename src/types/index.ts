@@ -9,16 +9,18 @@ export interface User {
 export interface Whisper {
   id: string;
   userId: string;
+  userDisplayName: string;
+  userProfileColor: string;
   audioUrl: string;
-  transcription?: string;
   duration: number;
-  volume: number;
-  isWhisper: boolean;
-  isPublic: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  whisperPercentage: number;
+  averageLevel: number;
+  confidence: number;
   likes: number;
   replies: number;
+  createdAt: Date;
+  transcription?: string;
+  isTranscribed: boolean;
 }
 
 export interface AudioRecording {

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef, useCallback, useState } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,8 @@ import {
   TouchableOpacity,
   ListRenderItemInfo,
   ViewToken,
+  ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import TrackPlayer, {
   State,
@@ -15,28 +17,19 @@ import TrackPlayer, {
   useProgress,
 } from "react-native-track-player";
 import { useAudioStore, AudioTrack } from "../store/useAudioStore";
+import { getFirestoreService } from "../services/firestoreService";
+import { Whisper } from "../types";
+import { useAuth } from "../providers/AuthProvider";
 
 const { height, width } = Dimensions.get("window");
 
-// Placeholder data (replace with Firestore whispers)
-const AUDIO_FEED: AudioTrack[] = [
-  {
-    id: "1",
-    title: "Bad Liar",
-    artist: "Imagine Dragons",
-    artwork: "https://i.imgur.com/8Km9tLL.jpg",
-    url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-  },
-  {
-    id: "2",
-    title: "Sample 2",
-    artist: "Unknown",
-    artwork: "https://i.imgur.com/8Km9tLL.jpg",
-    url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-  },
-];
-
 const FeedScreen = () => {
+  const [whispers, setWhispers] = useState<Whisper[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { user } = useAuth();
+  const firestoreService = getFirestoreService();
   const flatListRef = useRef<FlatList<AudioTrack>>(null);
   const playbackState = usePlaybackState();
   const progress = useProgress();
@@ -60,12 +53,55 @@ const FeedScreen = () => {
     play,
   } = useAudioStore();
 
-  // Initialize audio player
+  // Convert whispers to AudioTrack format
+  const convertWhispersToAudioTracks = (whispers: Whisper[]): AudioTrack[] => {
+    return whispers.map((whisper) => ({
+      id: whisper.id,
+      title: whisper.userDisplayName,
+      artist: `${whisper.whisperPercentage.toFixed(1)}% whisper • ${formatTime(
+        whisper.duration
+      )}`,
+      artwork: `https://ui-avatars.com/api/?name=${encodeURIComponent(
+        whisper.userDisplayName
+      )}&background=${whisper.userProfileColor.replace(
+        "#",
+        ""
+      )}&color=fff&size=200`,
+      url: whisper.audioUrl,
+    }));
+  };
+
+  // Load whispers from Firestore
+  const loadWhispers = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const fetchedWhispers = await firestoreService.getWhispers();
+      setWhispers(fetchedWhispers);
+
+      // Convert to audio tracks and initialize player
+      const audioTracks = convertWhispersToAudioTracks(fetchedWhispers);
+      await initializePlayer(audioTracks);
+      lastPlayedTrackRef.current = -1;
+    } catch (err) {
+      console.error("Error loading whispers:", err);
+      setError(err instanceof Error ? err.message : "Failed to load whispers");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Refresh whispers
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadWhispers();
+    setRefreshing(false);
+  };
+
+  // Initialize audio player and load whispers
   useEffect(() => {
-    initializePlayer(AUDIO_FEED).catch(console.error);
-    // Reset the last played track ref when initializing
-    lastPlayedTrackRef.current = -1;
-  }, [initializePlayer]);
+    loadWhispers();
+  }, []);
 
   // Reset last played track ref when tracks change
   useEffect(() => {
@@ -263,7 +299,7 @@ const FeedScreen = () => {
             restorePlayerState().catch(console.error);
           } else {
             // Test manual track switching
-            const nextTrack = (currentTrackIndex + 1) % AUDIO_FEED.length;
+            const nextTrack = (currentTrackIndex + 1) % tracks.length;
             console.log(`Manually switching to track ${nextTrack}`);
             playTrack(nextTrack).catch(console.error);
           }
@@ -274,10 +310,45 @@ const FeedScreen = () => {
     </View>
   );
 
+  // Show loading state
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={styles.loadingText}>Loading whispers...</Text>
+      </View>
+    );
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>Error: {error}</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={loadWhispers}>
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // Show empty state
+  if (whispers.length === 0) {
+    return (
+      <View style={styles.emptyContainer}>
+        <Text style={styles.emptyText}>No whispers yet</Text>
+        <Text style={styles.emptySubtext}>Be the first to whisper!</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={loadWhispers}>
+          <Text style={styles.retryButtonText}>Refresh</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <FlatList
       ref={flatListRef}
-      data={AUDIO_FEED}
+      data={convertWhispersToAudioTracks(whispers)}
       renderItem={renderItem}
       keyExtractor={(item) => item.id}
       pagingEnabled
@@ -293,6 +364,9 @@ const FeedScreen = () => {
         index,
       })}
       initialScrollIndex={scrollPosition}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
     />
   );
 };
@@ -388,6 +462,61 @@ const styles = StyleSheet.create({
   playPauseText: {
     color: "#fff",
     fontSize: 20,
+    fontWeight: "bold",
+  },
+  // Loading, error, and empty states
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#fff",
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: "#666",
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    padding: 20,
+  },
+  errorText: {
+    fontSize: 16,
+    color: "#ff3b30",
+    textAlign: "center",
+    marginBottom: 20,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    padding: 20,
+  },
+  emptyText: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#222",
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: 16,
+    color: "#666",
+    textAlign: "center",
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: "#007AFF",
+    borderRadius: 24,
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+  },
+  retryButtonText: {
+    color: "#fff",
+    fontSize: 16,
     fontWeight: "bold",
   },
 });

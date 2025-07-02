@@ -1,103 +1,154 @@
+/**
+ * Authentication Service for Whispr
+ * Handles Firebase anonymous authentication and user session management
+ */
+
+import { getAuthInstance, getFirestoreInstance } from "../config/firebase";
 import {
   signInAnonymously,
-  signOut,
   onAuthStateChanged,
+  signOut,
   User as FirebaseUser,
 } from "firebase/auth";
-import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
-import { getAuthInstance, getFirestoreInstance } from "@/config/firebase";
-import { User } from "@/types";
-import { FIRESTORE_COLLECTIONS } from "@/constants";
+import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
+
+export interface AnonymousUser {
+  uid: string;
+  displayName: string;
+  isAnonymous: boolean;
+  createdAt: Date;
+  lastActiveAt: Date;
+  whisperCount: number;
+  totalReactions: number;
+  profileColor: string;
+}
+
+export interface AuthState {
+  user: AnonymousUser | null;
+  isLoading: boolean;
+  isAuthenticated: boolean;
+  error: string | null;
+}
+
+export interface AuthCallbacks {
+  onAuthStateChanged?: (user: AnonymousUser | null) => void;
+  onError?: (error: string) => void;
+}
 
 export class AuthService {
+  private static instance: AuthService;
+  private callbacks: AuthCallbacks = {};
+  private unsubscribeAuth: (() => void) | null = null;
+
+  // Use lazy getters for auth and firestore
+  private get auth() {
+    return getAuthInstance();
+  }
+  private get firestore() {
+    return getFirestoreInstance();
+  }
+
+  private constructor() {
+    this.initializeAuthListener();
+  }
+
+  static getInstance(): AuthService {
+    if (!AuthService.instance) {
+      AuthService.instance = new AuthService();
+    }
+    return AuthService.instance;
+  }
+
   /**
-   * Sign in anonymously and create/update user document
+   * Set callbacks for auth events
    */
-  static async signInAnonymously(): Promise<User> {
-    try {
-      const auth = getAuthInstance();
-      const db = getFirestoreInstance();
+  setCallbacks(callbacks: AuthCallbacks): void {
+    this.callbacks = callbacks;
+  }
 
-      const { user: firebaseUser } = await signInAnonymously(auth);
-
-      // Check if user document exists
-      const userDocRef = doc(db, FIRESTORE_COLLECTIONS.USERS, firebaseUser.uid);
-      const userDoc = await getDoc(userDocRef);
-
-      if (userDoc.exists()) {
-        // Update last active
-        await updateDoc(userDocRef, {
-          lastActive: new Date(),
-        });
-
-        const userData = userDoc.data();
-        return {
-          id: firebaseUser.uid,
-          anonymousId: userData.anonymousId,
-          createdAt: userData.createdAt.toDate(),
-          lastActive: new Date(),
-        };
-      } else {
-        // Create new user document
-        const newUser: User = {
-          id: firebaseUser.uid,
-          anonymousId: this.generateAnonymousId(),
-          createdAt: new Date(),
-          lastActive: new Date(),
-        };
-
-        await setDoc(userDocRef, {
-          ...newUser,
-          createdAt: newUser.createdAt,
-          lastActive: newUser.lastActive,
-        });
-
-        return newUser;
+  /**
+   * Initialize Firebase auth state listener
+   */
+  private initializeAuthListener(): void {
+    this.unsubscribeAuth = onAuthStateChanged(
+      this.auth,
+      async (firebaseUser: FirebaseUser | null) => {
+        if (firebaseUser) {
+          try {
+            const anonymousUser = await this.getOrCreateAnonymousUser(
+              firebaseUser
+            );
+            this.callbacks.onAuthStateChanged?.(anonymousUser);
+          } catch (error) {
+            console.error("Error getting anonymous user:", error);
+            this.callbacks.onError?.(
+              error instanceof Error ? error.message : "Authentication error"
+            );
+          }
+        } else {
+          this.callbacks.onAuthStateChanged?.(null);
+        }
+      },
+      (error) => {
+        console.error("Auth state change error:", error);
+        this.callbacks.onError?.(
+          error instanceof Error ? error.message : "Authentication error"
+        );
       }
+    );
+  }
+
+  /**
+   * Sign in anonymously
+   */
+  async signInAnonymously(): Promise<AnonymousUser> {
+    try {
+      const userCredential = await signInAnonymously(this.auth);
+      const firebaseUser = userCredential.user;
+
+      // Get or create anonymous user profile
+      const anonymousUser = await this.getOrCreateAnonymousUser(firebaseUser);
+
+      console.log("Anonymous sign-in successful:", anonymousUser.displayName);
+      return anonymousUser;
     } catch (error) {
-      console.error("Error signing in anonymously:", error);
-      throw new Error("Failed to sign in anonymously");
+      console.error("Anonymous sign-in error:", error);
+      throw new Error(
+        `Failed to sign in anonymously: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   }
 
   /**
-   * Sign out the current user
+   * Sign out current user
    */
-  static async signOut(): Promise<void> {
+  async signOut(): Promise<void> {
     try {
-      const auth = getAuthInstance();
-      await signOut(auth);
+      await signOut(this.auth);
+      console.log("Sign out successful");
     } catch (error) {
-      console.error("Error signing out:", error);
-      throw new Error("Failed to sign out");
+      console.error("Sign out error:", error);
+      throw new Error(
+        `Failed to sign out: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   }
 
   /**
-   * Get current user from Firestore
+   * Get current authenticated user
    */
-  static async getCurrentUser(): Promise<User | null> {
-    try {
-      const auth = getAuthInstance();
-      const db = getFirestoreInstance();
-
-      const firebaseUser = auth.currentUser;
-      if (!firebaseUser) return null;
-
-      const userDocRef = doc(db, FIRESTORE_COLLECTIONS.USERS, firebaseUser.uid);
-      const userDoc = await getDoc(userDocRef);
-
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        return {
-          id: firebaseUser.uid,
-          anonymousId: userData.anonymousId,
-          createdAt: userData.createdAt.toDate(),
-          lastActive: userData.lastActive.toDate(),
-        };
-      }
-
+  async getCurrentUser(): Promise<AnonymousUser | null> {
+    const firebaseUser = this.auth.currentUser;
+    if (!firebaseUser) {
       return null;
+    }
+
+    try {
+      return await this.getOrCreateAnonymousUser(firebaseUser);
     } catch (error) {
       console.error("Error getting current user:", error);
       return null;
@@ -105,84 +156,257 @@ export class AuthService {
   }
 
   /**
+   * Get or create anonymous user profile in Firestore
+   */
+  private async getOrCreateAnonymousUser(
+    firebaseUser: FirebaseUser
+  ): Promise<AnonymousUser> {
+    const userDocRef = doc(this.firestore, "users", firebaseUser.uid);
+
+    try {
+      // Try to get existing user document
+      const userDoc = await getDoc(userDocRef);
+
+      if (userDoc.exists()) {
+        // User exists, return existing data
+        const userData = userDoc.data();
+        return {
+          uid: firebaseUser.uid,
+          displayName: userData.displayName,
+          isAnonymous: firebaseUser.isAnonymous,
+          createdAt: userData.createdAt.toDate(),
+          lastActiveAt: userData.lastActiveAt.toDate(),
+          whisperCount: userData.whisperCount || 0,
+          totalReactions: userData.totalReactions || 0,
+          profileColor: userData.profileColor,
+        };
+      } else {
+        // User doesn't exist, create new anonymous profile
+        const anonymousProfile = this.generateAnonymousProfile();
+
+        const newUserData = {
+          displayName: anonymousProfile.displayName,
+          isAnonymous: true,
+          createdAt: serverTimestamp(),
+          lastActiveAt: serverTimestamp(),
+          whisperCount: 0,
+          totalReactions: 0,
+          profileColor: anonymousProfile.profileColor,
+        };
+
+        await setDoc(userDocRef, newUserData);
+
+        return {
+          uid: firebaseUser.uid,
+          displayName: anonymousProfile.displayName,
+          isAnonymous: true,
+          createdAt: new Date(),
+          lastActiveAt: new Date(),
+          whisperCount: 0,
+          totalReactions: 0,
+          profileColor: anonymousProfile.profileColor,
+        };
+      }
+    } catch (error) {
+      console.error("Error getting/creating user profile:", error);
+      throw new Error(
+        `Failed to get user profile: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Generate anonymous profile with random name and color
+   */
+  private generateAnonymousProfile(): {
+    displayName: string;
+    profileColor: string;
+  } {
+    const adjectives = [
+      "Whispering",
+      "Silent",
+      "Quiet",
+      "Mysterious",
+      "Secretive",
+      "Gentle",
+      "Soft",
+      "Hushed",
+      "Muted",
+      "Subtle",
+      "Hidden",
+      "Veiled",
+      "Concealed",
+      "Private",
+      "Intimate",
+    ];
+
+    const nouns = [
+      "Whisperer",
+      "Listener",
+      "Voice",
+      "Echo",
+      "Shadow",
+      "Ghost",
+      "Spirit",
+      "Soul",
+      "Heart",
+      "Mind",
+      "Dreamer",
+      "Thinker",
+      "Observer",
+      "Wanderer",
+      "Seeker",
+    ];
+
+    const colors = [
+      "#4CAF50",
+      "#2196F3",
+      "#9C27B0",
+      "#FF9800",
+      "#F44336",
+      "#00BCD4",
+      "#8BC34A",
+      "#FF5722",
+      "#795548",
+      "#607D8B",
+      "#E91E63",
+      "#3F51B5",
+      "#009688",
+      "#FFC107",
+      "#9E9E9E",
+    ];
+
+    const randomAdjective =
+      adjectives[Math.floor(Math.random() * adjectives.length)];
+    const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
+    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+
+    return {
+      displayName: `${randomAdjective} ${randomNoun}`,
+      profileColor: randomColor,
+    };
+  }
+
+  /**
    * Update user's last active timestamp
    */
-  static async updateLastActive(): Promise<void> {
+  async updateLastActive(): Promise<void> {
+    const firebaseUser = this.auth.currentUser;
+    if (!firebaseUser) return;
+
     try {
-      const auth = getAuthInstance();
-      const db = getFirestoreInstance();
-
-      const firebaseUser = auth.currentUser;
-      if (!firebaseUser) return;
-
-      const userDocRef = doc(db, FIRESTORE_COLLECTIONS.USERS, firebaseUser.uid);
-      await updateDoc(userDocRef, {
-        lastActive: new Date(),
-      });
+      const userDocRef = doc(this.firestore, "users", firebaseUser.uid);
+      await setDoc(
+        userDocRef,
+        { lastActiveAt: serverTimestamp() },
+        { merge: true }
+      );
     } catch (error) {
       console.error("Error updating last active:", error);
     }
   }
 
   /**
-   * Listen to authentication state changes
+   * Increment user's whisper count
    */
-  static onAuthStateChanged(callback: (user: User | null) => void): () => void {
-    const auth = getAuthInstance();
-    return onAuthStateChanged(
-      auth,
-      async (firebaseUser: FirebaseUser | null) => {
-        if (firebaseUser) {
-          const user = await this.getCurrentUser();
-          callback(user);
-        } else {
-          callback(null);
-        }
+  async incrementWhisperCount(): Promise<void> {
+    const firebaseUser = this.auth.currentUser;
+    if (!firebaseUser) return;
+
+    try {
+      const userDocRef = doc(this.firestore, "users", firebaseUser.uid);
+      const userDoc = await getDoc(userDocRef);
+
+      if (userDoc.exists()) {
+        const currentCount = userDoc.data().whisperCount || 0;
+        await setDoc(
+          userDocRef,
+          { whisperCount: currentCount + 1 },
+          { merge: true }
+        );
       }
-    );
+    } catch (error) {
+      console.error("Error incrementing whisper count:", error);
+    }
   }
 
   /**
-   * Generate a random anonymous ID
+   * Increment user's reaction count
    */
-  private static generateAnonymousId(): string {
-    const adjectives = [
-      "Whispering",
-      "Silent",
-      "Quiet",
-      "Secret",
-      "Hidden",
-      "Mysterious",
-      "Gentle",
-      "Soft",
-      "Calm",
-      "Peaceful",
-      "Serene",
-      "Tranquil",
-    ];
+  async incrementReactionCount(): Promise<void> {
+    const firebaseUser = this.auth.currentUser;
+    if (!firebaseUser) return;
 
-    const nouns = [
-      "Whisperer",
-      "Listener",
-      "Dreamer",
-      "Thinker",
-      "Soul",
-      "Spirit",
-      "Shadow",
-      "Echo",
-      "Voice",
-      "Heart",
-      "Mind",
-      "Soul",
-    ];
+    try {
+      const userDocRef = doc(this.firestore, "users", firebaseUser.uid);
+      const userDoc = await getDoc(userDocRef);
 
-    const randomAdjective =
-      adjectives[Math.floor(Math.random() * adjectives.length)];
-    const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
-    const randomNumber = Math.floor(Math.random() * 999) + 1;
+      if (userDoc.exists()) {
+        const currentCount = userDoc.data().totalReactions || 0;
+        await setDoc(
+          userDocRef,
+          { totalReactions: currentCount + 1 },
+          { merge: true }
+        );
+      }
+    } catch (error) {
+      console.error("Error incrementing reaction count:", error);
+    }
+  }
 
-    return `${randomAdjective}${randomNoun}${randomNumber}`;
+  /**
+   * Clean up resources
+   */
+  destroy(): void {
+    if (this.unsubscribeAuth) {
+      this.unsubscribeAuth();
+      this.unsubscribeAuth = null;
+    }
+    this.callbacks = {};
+  }
+
+  /**
+   * Reset singleton instance
+   */
+  static resetInstance(): void {
+    if (AuthService.instance) {
+      AuthService.instance.destroy();
+      AuthService.instance = new AuthService();
+      console.log("🔄 AuthService singleton reset successfully");
+    }
+  }
+
+  /**
+   * Destroy singleton instance
+   */
+  static destroyInstance(): void {
+    if (AuthService.instance) {
+      AuthService.instance.destroy();
+      AuthService.instance = null as any;
+      console.log("🗑️ AuthService singleton destroyed");
+    }
   }
 }
 
-export default AuthService;
+/**
+ * Factory function to get AuthService instance
+ */
+export const getAuthService = (): AuthService => {
+  return AuthService.getInstance();
+};
+
+/**
+ * Reset the AuthService singleton instance
+ */
+export const resetAuthService = (): void => {
+  AuthService.resetInstance();
+};
+
+/**
+ * Destroy the AuthService singleton instance
+ */
+export const destroyAuthService = (): void => {
+  AuthService.destroyInstance();
+};

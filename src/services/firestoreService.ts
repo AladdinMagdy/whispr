@@ -1,3 +1,8 @@
+/**
+ * Firestore Service for Whispers
+ * Handles whisper data operations and real-time listeners
+ */
+
 import {
   collection,
   doc,
@@ -14,116 +19,106 @@ import {
   DocumentData,
   QueryDocumentSnapshot,
   Timestamp,
+  increment,
+  onSnapshot,
+  serverTimestamp,
 } from "firebase/firestore";
 import { getFirestoreInstance } from "@/config/firebase";
 import { Whisper } from "@/types";
 import { FIRESTORE_COLLECTIONS } from "@/constants";
 
+export interface WhisperUploadData {
+  audioUrl: string;
+  duration: number;
+  whisperPercentage: number;
+  averageLevel: number;
+  confidence: number;
+}
+
+export interface WhisperFeedOptions {
+  limit?: number;
+  lastWhisper?: QueryDocumentSnapshot<DocumentData>;
+  userId?: string; // For user-specific feeds
+}
+
 export class FirestoreService {
+  private static instance: FirestoreService;
+  private firestore = getFirestoreInstance();
+  private whispersCollection = "whispers";
+  private usersCollection = "users";
+
+  private constructor() {}
+
+  static getInstance(): FirestoreService {
+    if (!FirestoreService.instance) {
+      FirestoreService.instance = new FirestoreService();
+    }
+    return FirestoreService.instance;
+  }
+
   /**
-   * Create a new whisper
+   * Create a new whisper in Firestore
    */
-  static async createWhisper(
-    whisperData: Omit<Whisper, "id" | "createdAt" | "updatedAt">
-  ): Promise<Whisper> {
+  async createWhisper(
+    userId: string,
+    userDisplayName: string,
+    userProfileColor: string,
+    uploadData: WhisperUploadData
+  ): Promise<string> {
     try {
-      const db = getFirestoreInstance();
-
-      // Convert undefined values to null for Firestore compatibility
-      const firestoreData = Object.fromEntries(
-        Object.entries(whisperData).map(([key, value]) => [
-          key,
-          value === undefined ? null : value,
-        ])
-      );
-
-      const docRef = await addDoc(
-        collection(db, FIRESTORE_COLLECTIONS.WHISPERS),
-        {
-          ...firestoreData,
-          createdAt: Timestamp.now(),
-          updatedAt: Timestamp.now(),
-        }
-      );
-
-      const whisper: Whisper = {
-        id: docRef.id,
-        ...whisperData,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+      const whisperData = {
+        userId,
+        userDisplayName,
+        userProfileColor,
+        audioUrl: uploadData.audioUrl,
+        duration: uploadData.duration,
+        whisperPercentage: uploadData.whisperPercentage,
+        averageLevel: uploadData.averageLevel,
+        confidence: uploadData.confidence,
+        likes: 0,
+        replies: 0,
+        createdAt: serverTimestamp(),
+        isTranscribed: false,
       };
 
-      return whisper;
+      const docRef = await addDoc(
+        collection(this.firestore, this.whispersCollection),
+        whisperData
+      );
+
+      console.log("✅ Whisper created successfully:", docRef.id);
+      return docRef.id;
     } catch (error) {
-      console.error("Error creating whisper:", error);
-      throw new Error("Failed to create whisper");
+      console.error("❌ Error creating whisper:", error);
+      throw new Error(
+        `Failed to create whisper: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   }
 
   /**
-   * Get a whisper by ID
+   * Fetch whispers with pagination
    */
-  static async getWhisper(whisperId: string): Promise<Whisper | null> {
+  async getWhispers(options: WhisperFeedOptions = {}): Promise<Whisper[]> {
     try {
-      const db = getFirestoreInstance();
-
-      const docRef = doc(db, FIRESTORE_COLLECTIONS.WHISPERS, whisperId);
-      const docSnap = await getDoc(docRef);
-
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        return {
-          id: docSnap.id,
-          ...data,
-          createdAt: data.createdAt.toDate(),
-          updatedAt: data.updatedAt.toDate(),
-        } as Whisper;
-      }
-
-      return null;
-    } catch (error) {
-      console.error("Error getting whisper:", error);
-      return null;
-    }
-  }
-
-  /**
-   * Get whispers with pagination
-   */
-  static async getWhispers(
-    options: {
-      limit?: number;
-      lastDoc?: QueryDocumentSnapshot<DocumentData>;
-      userId?: string;
-      isPublic?: boolean;
-    } = {}
-  ): Promise<{
-    whispers: Whisper[];
-    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
-  }> {
-    try {
-      const db = getFirestoreInstance();
-
-      const { limit: limitCount = 10, lastDoc, userId, isPublic } = options;
+      const { limit: limitCount = 20, lastWhisper, userId } = options;
 
       let q = query(
-        collection(db, FIRESTORE_COLLECTIONS.WHISPERS),
+        collection(this.firestore, this.whispersCollection),
         orderBy("createdAt", "desc"),
         limit(limitCount)
       );
 
-      // Add filters
+      // Filter by user if specified
       if (userId) {
         q = query(q, where("userId", "==", userId));
       }
 
-      if (isPublic !== undefined) {
-        q = query(q, where("isPublic", "==", isPublic));
-      }
-
       // Add pagination
-      if (lastDoc) {
-        q = query(q, startAfter(lastDoc));
+      if (lastWhisper) {
+        q = query(q, startAfter(lastWhisper));
       }
 
       const querySnapshot = await getDocs(q);
@@ -133,224 +128,227 @@ export class FirestoreService {
         const data = doc.data();
         whispers.push({
           id: doc.id,
-          ...data,
-          createdAt: data.createdAt.toDate(),
-          updatedAt: data.updatedAt.toDate(),
-        } as Whisper);
+          userId: data.userId,
+          userDisplayName: data.userDisplayName,
+          userProfileColor: data.userProfileColor,
+          audioUrl: data.audioUrl,
+          duration: data.duration,
+          whisperPercentage: data.whisperPercentage,
+          averageLevel: data.averageLevel,
+          confidence: data.confidence,
+          likes: data.likes || 0,
+          replies: data.replies || 0,
+          createdAt: data.createdAt?.toDate() || new Date(),
+          transcription: data.transcription,
+          isTranscribed: data.isTranscribed || false,
+        });
       });
 
-      const lastVisible =
-        querySnapshot.docs[querySnapshot.docs.length - 1] || null;
-
-      return {
-        whispers,
-        lastDoc: lastVisible,
-      };
+      console.log(`✅ Fetched ${whispers.length} whispers`);
+      return whispers;
     } catch (error) {
-      console.error("Error getting whispers:", error);
-      throw new Error("Failed to get whispers");
+      console.error("❌ Error fetching whispers:", error);
+      throw new Error(
+        `Failed to fetch whispers: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   }
 
   /**
-   * Update a whisper
+   * Set up real-time listener for whispers
    */
-  static async updateWhisper(
-    whisperId: string,
-    updateData: Partial<Omit<Whisper, "id" | "createdAt" | "updatedAt">>
-  ): Promise<void> {
+  subscribeToWhispers(
+    callback: (whispers: Whisper[]) => void,
+    options: WhisperFeedOptions = {}
+  ): () => void {
     try {
-      const db = getFirestoreInstance();
-
-      const docRef = doc(db, FIRESTORE_COLLECTIONS.WHISPERS, whisperId);
-      await updateDoc(docRef, {
-        ...updateData,
-        updatedAt: Timestamp.now(),
-      });
-    } catch (error) {
-      console.error("Error updating whisper:", error);
-      throw new Error("Failed to update whisper");
-    }
-  }
-
-  /**
-   * Delete a whisper
-   */
-  static async deleteWhisper(whisperId: string): Promise<void> {
-    try {
-      const db = getFirestoreInstance();
-
-      const docRef = doc(db, FIRESTORE_COLLECTIONS.WHISPERS, whisperId);
-      await deleteDoc(docRef);
-    } catch (error) {
-      console.error("Error deleting whisper:", error);
-      throw new Error("Failed to delete whisper");
-    }
-  }
-
-  /**
-   * Like a whisper
-   */
-  static async likeWhisper(whisperId: string, userId: string): Promise<void> {
-    try {
-      const db = getFirestoreInstance();
-
-      const docRef = doc(db, FIRESTORE_COLLECTIONS.WHISPERS, whisperId);
-      await updateDoc(docRef, {
-        likes: {
-          [userId]: true,
-        },
-        updatedAt: Timestamp.now(),
-      });
-    } catch (error) {
-      console.error("Error liking whisper:", error);
-      throw new Error("Failed to like whisper");
-    }
-  }
-
-  /**
-   * Unlike a whisper
-   */
-  static async unlikeWhisper(whisperId: string, userId: string): Promise<void> {
-    try {
-      const db = getFirestoreInstance();
-
-      const docRef = doc(db, FIRESTORE_COLLECTIONS.WHISPERS, whisperId);
-      await updateDoc(docRef, {
-        [`likes.${userId}`]: null,
-        updatedAt: Timestamp.now(),
-      });
-    } catch (error) {
-      console.error("Error unliking whisper:", error);
-      throw new Error("Failed to unlike whisper");
-    }
-  }
-
-  /**
-   * Get user's whispers
-   */
-  static async getUserWhispers(
-    userId: string,
-    options: {
-      limit?: number;
-      lastDoc?: QueryDocumentSnapshot<DocumentData>;
-    } = {}
-  ): Promise<{
-    whispers: Whisper[];
-    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
-  }> {
-    return this.getWhispers({
-      ...options,
-      userId,
-    });
-  }
-
-  /**
-   * Get public whispers with pagination
-   */
-  static async getPublicWhispers(
-    options: {
-      limit?: number;
-      lastDoc?: QueryDocumentSnapshot<DocumentData>;
-    } = {}
-  ): Promise<{
-    whispers: Whisper[];
-    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
-  }> {
-    const { limit: limitCount = 10, lastDoc } = options;
-
-    try {
-      const db = getFirestoreInstance();
+      const { limit: limitCount = 20, userId } = options;
 
       let q = query(
-        collection(db, FIRESTORE_COLLECTIONS.WHISPERS),
-        where("isPublic", "==", true),
+        collection(this.firestore, this.whispersCollection),
         orderBy("createdAt", "desc"),
         limit(limitCount)
       );
 
-      // Add pagination
-      if (lastDoc) {
-        q = query(q, startAfter(lastDoc));
+      // Filter by user if specified
+      if (userId) {
+        q = query(q, where("userId", "==", userId));
       }
 
-      const querySnapshot = await getDocs(q);
-      const whispers: Whisper[] = [];
-
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        whispers.push({
-          id: doc.id,
-          ...data,
-          createdAt: data.createdAt.toDate(),
-          updatedAt: data.updatedAt.toDate(),
-        } as Whisper);
-      });
-
-      const lastVisible =
-        querySnapshot.docs[querySnapshot.docs.length - 1] || null;
-
-      return {
-        whispers,
-        lastDoc: lastVisible,
-      };
-    } catch (error) {
-      console.error("Error getting public whispers:", error);
-
-      // Check if it's an index error
-      if (
-        error instanceof Error &&
-        error.message.includes("requires an index")
-      ) {
-        console.error(
-          "Firestore index missing. Please create the required index:"
-        );
-        console.error("Collection: whispers");
-        console.error("Fields: isPublic (Ascending), createdAt (Descending)");
-        console.error(
-          "You can create it at: https://console.firebase.google.com/project/YOUR_PROJECT_ID/firestore/indexes"
-        );
-
-        // For now, try a simpler query without the index
-        try {
-          console.log("Attempting fallback query without index...");
-          const db = getFirestoreInstance();
-          const q = query(
-            collection(db, FIRESTORE_COLLECTIONS.WHISPERS),
-            where("isPublic", "==", true),
-            limit(limitCount)
-          );
-
-          const querySnapshot = await getDocs(q);
+      const unsubscribe = onSnapshot(
+        q,
+        (querySnapshot) => {
           const whispers: Whisper[] = [];
 
           querySnapshot.forEach((doc) => {
             const data = doc.data();
             whispers.push({
               id: doc.id,
-              ...data,
-              createdAt: data.createdAt.toDate(),
-              updatedAt: data.updatedAt.toDate(),
-            } as Whisper);
+              userId: data.userId,
+              userDisplayName: data.userDisplayName,
+              userProfileColor: data.userProfileColor,
+              audioUrl: data.audioUrl,
+              duration: data.duration,
+              whisperPercentage: data.whisperPercentage,
+              averageLevel: data.averageLevel,
+              confidence: data.confidence,
+              likes: data.likes || 0,
+              replies: data.replies || 0,
+              createdAt: data.createdAt?.toDate() || new Date(),
+              transcription: data.transcription,
+              isTranscribed: data.isTranscribed || false,
+            });
           });
 
-          // Sort in memory since we can't use the index
-          whispers.sort(
-            (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
-          );
-
-          return {
-            whispers: whispers.slice(0, limitCount),
-            lastDoc: null,
-          };
-        } catch (fallbackError) {
-          console.error("Fallback query also failed:", fallbackError);
+          console.log(`🔄 Real-time update: ${whispers.length} whispers`);
+          callback(whispers);
+        },
+        (error) => {
+          console.error("❌ Real-time listener error:", error);
         }
-      }
+      );
 
-      throw new Error("Failed to get public whispers");
+      return unsubscribe;
+    } catch (error) {
+      console.error("❌ Error setting up real-time listener:", error);
+      throw new Error(
+        `Failed to set up real-time listener: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Like a whisper
+   */
+  async likeWhisper(whisperId: string, userId: string): Promise<void> {
+    try {
+      const whisperRef = doc(
+        this.firestore,
+        this.whispersCollection,
+        whisperId
+      );
+
+      // For now, just increment likes
+      // In a more sophisticated implementation, you'd track individual likes
+      await updateDoc(whisperRef, {
+        likes: increment(1),
+      });
+
+      console.log("✅ Whisper liked successfully");
+    } catch (error) {
+      console.error("❌ Error liking whisper:", error);
+      throw new Error(
+        `Failed to like whisper: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Delete a whisper (only by the creator)
+   */
+  async deleteWhisper(whisperId: string, userId: string): Promise<void> {
+    try {
+      const whisperRef = doc(
+        this.firestore,
+        this.whispersCollection,
+        whisperId
+      );
+
+      // TODO: Add security rule to ensure only creator can delete
+      await deleteDoc(whisperRef);
+
+      console.log("✅ Whisper deleted successfully");
+    } catch (error) {
+      console.error("❌ Error deleting whisper:", error);
+      throw new Error(
+        `Failed to delete whisper: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Update whisper transcription
+   */
+  async updateTranscription(
+    whisperId: string,
+    transcription: string
+  ): Promise<void> {
+    try {
+      const whisperRef = doc(
+        this.firestore,
+        this.whispersCollection,
+        whisperId
+      );
+
+      await updateDoc(whisperRef, {
+        transcription,
+        isTranscribed: true,
+      });
+
+      console.log("✅ Transcription updated successfully");
+    } catch (error) {
+      console.error("❌ Error updating transcription:", error);
+      throw new Error(
+        `Failed to update transcription: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Get user's whispers
+   */
+  async getUserWhispers(userId: string): Promise<Whisper[]> {
+    return this.getWhispers({ userId });
+  }
+
+  /**
+   * Reset singleton instance
+   */
+  static resetInstance(): void {
+    if (FirestoreService.instance) {
+      FirestoreService.instance = new FirestoreService();
+      console.log("🔄 FirestoreService singleton reset successfully");
+    }
+  }
+
+  /**
+   * Destroy singleton instance
+   */
+  static destroyInstance(): void {
+    if (FirestoreService.instance) {
+      FirestoreService.instance = null as any;
+      console.log("🗑️ FirestoreService singleton destroyed");
     }
   }
 }
 
-export default FirestoreService;
+/**
+ * Factory function to get FirestoreService instance
+ */
+export const getFirestoreService = (): FirestoreService => {
+  return FirestoreService.getInstance();
+};
+
+/**
+ * Reset the FirestoreService singleton instance
+ */
+export const resetFirestoreService = (): void => {
+  FirestoreService.resetInstance();
+};
+
+/**
+ * Destroy the FirestoreService singleton instance
+ */
+export const destroyFirestoreService = (): void => {
+  FirestoreService.destroyInstance();
+};

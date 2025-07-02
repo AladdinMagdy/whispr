@@ -6,31 +6,29 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { PaperProvider } from "react-native-paper";
 import { View, Text, ActivityIndicator } from "react-native";
 
-// Import screens (we'll create these next)
+// Import screens
 import HomeScreen from "./screens/HomeScreen";
 import RecordScreen from "./screens/RecordScreen";
 import FeedScreen from "./screens/FeedScreen";
 
-// Import store
-import { useAppStore } from "./store/useAppStore";
+// Import providers
+import { AuthProvider } from "./providers/AuthProvider";
 
-// Import Firebase initialization and auth
+// Import Firebase initialization
 import { initializeFirebase } from "./config/firebase";
-import { AuthService } from "./services/authService";
+import { setupAuthServiceCallbacks } from "./store/useAuthStore";
 
 const Stack = createStackNavigator();
 
 export default function App() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { setUser, setLoading } = useAppStore();
 
   useEffect(() => {
     const initializeApp = async () => {
       try {
         // Initialize Firebase and other services
         console.log("Initializing Whispr app...");
-        setLoading(true);
 
         // Initialize Firebase with proper error handling
         await initializeFirebase();
@@ -38,11 +36,8 @@ export default function App() {
         // Add a small delay to ensure Firebase is ready
         await new Promise((resolve) => setTimeout(resolve, 500));
 
-        // Automatically sign in anonymously
-        console.log("Signing in anonymously...");
-        const user = await AuthService.signInAnonymously();
-        setUser(user);
-        console.log("User signed in anonymously:", user.anonymousId);
+        // Setup AuthService callbacks after Firebase is ready
+        setupAuthServiceCallbacks();
 
         setIsInitialized(true);
         console.log("Whispr app initialized successfully");
@@ -51,13 +46,11 @@ export default function App() {
         setError(
           err instanceof Error ? err.message : "Failed to initialize app"
         );
-      } finally {
-        setLoading(false);
       }
     };
 
     initializeApp();
-  }, [setUser, setLoading]);
+  }, []);
 
   if (error) {
     return (
@@ -98,37 +91,39 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <PaperProvider>
-        <NavigationContainer>
-          <StatusBar style="auto" />
-          <Stack.Navigator
-            initialRouteName="Home"
-            screenOptions={{
-              headerStyle: {
-                backgroundColor: "#f8f9fa",
-              },
-              headerTintColor: "#333",
-              headerTitleStyle: {
-                fontWeight: "bold",
-              },
-            }}
-          >
-            <Stack.Screen
-              name="Home"
-              component={HomeScreen}
-              options={{ title: "Whispr" }}
-            />
-            <Stack.Screen
-              name="Record"
-              component={RecordScreen}
-              options={{ title: "Record Whisper" }}
-            />
-            <Stack.Screen
-              name="Feed"
-              component={FeedScreen}
-              options={{ title: "Whispers" }}
-            />
-          </Stack.Navigator>
-        </NavigationContainer>
+        <AuthProvider>
+          <NavigationContainer>
+            <StatusBar style="auto" />
+            <Stack.Navigator
+              initialRouteName="Home"
+              screenOptions={{
+                headerStyle: {
+                  backgroundColor: "#f8f9fa",
+                },
+                headerTintColor: "#333",
+                headerTitleStyle: {
+                  fontWeight: "bold",
+                },
+              }}
+            >
+              <Stack.Screen
+                name="Home"
+                component={HomeScreen}
+                options={{ title: "Whispr" }}
+              />
+              <Stack.Screen
+                name="Record"
+                component={RecordScreen}
+                options={{ title: "Record Whisper" }}
+              />
+              <Stack.Screen
+                name="Feed"
+                component={FeedScreen}
+                options={{ title: "Whispers" }}
+              />
+            </Stack.Navigator>
+          </NavigationContainer>
+        </AuthProvider>
       </PaperProvider>
     </SafeAreaProvider>
   );

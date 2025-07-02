@@ -20,6 +20,10 @@ import {
   WHISPER_VALIDATION,
   WHISPER_ERROR_MESSAGES,
 } from "../constants/whisperValidation";
+import {
+  getFirestoreService,
+  WhisperUploadData as FirestoreWhisperUploadData,
+} from "./firestoreService";
 
 export interface UploadProgress {
   progress: number; // 0-100
@@ -149,31 +153,40 @@ export class UploadService {
       // Get current user
       const userId = await this.getCurrentUser();
 
-      // Get Firestore instance
-      const firestore = getFirestoreInstance();
+      // Get user profile data from auth context
+      const auth = getAuthInstance();
+      const user = auth.currentUser;
 
-      // Prepare document data
-      const whisperData = {
-        userId,
+      if (!user) {
+        throw new Error("User not authenticated");
+      }
+
+      // Get user display name and profile color (for now, use default values)
+      const userDisplayName =
+        user.displayName || `Whisperer_${userId.slice(-6)}`;
+      const userProfileColor =
+        "#" + Math.floor(Math.random() * 16777215).toString(16); // Random color
+
+      // Use the new Firestore service
+      const firestoreService = getFirestoreService();
+
+      const whisperUploadData: FirestoreWhisperUploadData = {
         audioUrl,
         duration: uploadData.duration,
         whisperPercentage: uploadData.whisperPercentage,
         averageLevel: uploadData.averageLevel,
         confidence: uploadData.confidence,
-        transcription: uploadData.transcription || null,
-        metadata: uploadData.metadata || {},
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
       };
 
-      // Add document to Firestore
-      const docRef = await addDoc(
-        collection(firestore, "whispers"),
-        whisperData
+      const documentId = await firestoreService.createWhisper(
+        userId,
+        userDisplayName,
+        userProfileColor,
+        whisperUploadData
       );
 
-      console.log("Whisper document created with ID:", docRef.id);
-      return docRef.id;
+      console.log("Whisper document created with ID:", documentId);
+      return documentId;
     } catch (error) {
       console.error("Error creating whisper document:", error);
       throw new Error(

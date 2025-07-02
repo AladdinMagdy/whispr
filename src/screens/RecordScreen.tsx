@@ -10,7 +10,7 @@ import {
 import { Button, Text, Card, ProgressBar } from "react-native-paper";
 import { useNavigation } from "@react-navigation/native";
 import { StackNavigationProp } from "@react-navigation/stack";
-import { useAppStore } from "../store/useAppStore";
+import { useAuth } from "../providers/AuthProvider";
 import {
   getRecordingService,
   RecordingUtils,
@@ -48,11 +48,15 @@ interface RecordingState {
 
 export default function RecordScreen() {
   const navigation = useNavigation<RecordScreenNavigationProp>();
-  const { setLoading, setError, isLoading } = useAppStore();
+  const { user, incrementWhisperCount } = useAuth();
 
   // Initialize recording service
   const recordingService = useRef(getRecordingService()).current;
   const uploadService = useRef(getUploadService()).current;
+
+  // Local state for loading and errors
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [recordingState, setRecordingState] = useState<RecordingState>({
     isRecording: false,
@@ -121,7 +125,7 @@ export default function RecordScreen() {
 
   const startRecording = async () => {
     try {
-      setLoading(true);
+      setIsLoading(true);
 
       await recordingService.startRecording();
 
@@ -139,17 +143,17 @@ export default function RecordScreen() {
       // Start pulse animation
       startPulseAnimation();
 
-      setLoading(false);
+      setIsLoading(false);
     } catch (error) {
       console.error("Error starting recording:", error);
       setError("Failed to start recording");
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   const stopRecording = async () => {
     try {
-      setLoading(true);
+      setIsLoading(true);
 
       const uri = await recordingService.stopRecording();
 
@@ -168,11 +172,11 @@ export default function RecordScreen() {
         }));
       }
 
-      setLoading(false);
+      setIsLoading(false);
     } catch (error) {
       console.error("Error stopping recording:", error);
       setError("Failed to stop recording");
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
@@ -283,7 +287,7 @@ export default function RecordScreen() {
     }
 
     try {
-      setLoading(true);
+      setIsLoading(true);
       setRecordingState((prev) => ({ ...prev, isUploading: true }));
 
       // Prepare upload data
@@ -316,10 +320,13 @@ export default function RecordScreen() {
         }
       );
 
+      // Increment user's whisper count
+      await incrementWhisperCount();
+
       // Show success message
       Alert.alert(
         "Success!",
-        `Your whisper has been uploaded successfully!\n\nWhisper Stats:\n• Duration: ${
+        `Your whisper has been uploaded successfully!\n\nIt will appear in the feed shortly.\n\nWhisper Stats:\n• Duration: ${
           recordingState.duration
         }s\n• Whisper Level: ${(stats.whisperPercentage * 100).toFixed(
           1
@@ -328,7 +335,7 @@ export default function RecordScreen() {
         )}%\n• Samples: ${stats.totalSamples}`,
         [
           {
-            text: "OK",
+            text: "View Feed",
             onPress: () => {
               // Reset recording state
               recordingService.reset();
@@ -347,12 +354,12 @@ export default function RecordScreen() {
         ]
       );
 
-      setLoading(false);
+      setIsLoading(false);
       setRecordingState((prev) => ({ ...prev, isUploading: false }));
     } catch (error) {
       console.error("Error uploading recording:", error);
       setError("Failed to upload recording");
-      setLoading(false);
+      setIsLoading(false);
       setRecordingState((prev) => ({ ...prev, isUploading: false }));
 
       // Reset recording state on upload error
