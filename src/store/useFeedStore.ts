@@ -9,6 +9,33 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Whisper } from "../types";
 import { QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
 
+// Custom storage wrapper that handles errors gracefully
+const createSafeAsyncStorage = () => ({
+  getItem: async (name: string): Promise<string | null> => {
+    try {
+      return await AsyncStorage.getItem(name);
+    } catch (error) {
+      console.warn(`❌ Failed to read from AsyncStorage (${name}):`, error);
+      return null;
+    }
+  },
+  setItem: async (name: string, value: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(name, value);
+    } catch (error) {
+      console.warn(`❌ Failed to write to AsyncStorage (${name}):`, error);
+      // Don't throw - let the app continue without persistence
+    }
+  },
+  removeItem: async (name: string): Promise<void> => {
+    try {
+      await AsyncStorage.removeItem(name);
+    } catch (error) {
+      console.warn(`❌ Failed to remove from AsyncStorage (${name}):`, error);
+    }
+  },
+});
+
 interface FeedState {
   // Cached whispers
   whispers: Whisper[];
@@ -114,7 +141,7 @@ export const useFeedStore = create<FeedState>()(
     }),
     {
       name: "feed-storage",
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: createJSONStorage(() => createSafeAsyncStorage()),
       // Only persist these fields
       partialize: (state) => ({
         whispers: state.whispers,
