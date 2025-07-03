@@ -23,6 +23,41 @@ export interface Whisper {
   isTranscribed: boolean;
 }
 
+// New types for comments/interactions
+export interface Comment {
+  id: string;
+  whisperId: string;
+  userId: string;
+  userDisplayName: string;
+  userProfileColor: string;
+  text: string;
+  likes: number;
+  createdAt: Date;
+  isEdited: boolean;
+  editedAt?: Date;
+}
+
+export interface Like {
+  id: string;
+  whisperId: string;
+  userId: string;
+  createdAt: Date;
+}
+
+export interface CommentLike {
+  id: string;
+  commentId: string;
+  userId: string;
+  createdAt: Date;
+}
+
+export interface WhisperInteractions {
+  isLiked: boolean;
+  likeCount: number;
+  commentCount: number;
+  comments: Comment[];
+}
+
 export interface AudioRecording {
   uri: string;
   duration: number;

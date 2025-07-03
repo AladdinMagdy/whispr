@@ -29,6 +29,7 @@ import { getPreloadService } from "../services/preloadService";
 import { Whisper } from "../types";
 import { useAuth } from "../providers/AuthProvider";
 import { QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
+import WhisperInteractions from "../components/WhisperInteractions";
 
 const { height, width } = Dimensions.get("window");
 
@@ -302,6 +303,7 @@ const FeedScreen = () => {
   // Handle app state changes (background/foreground)
   useEffect(() => {
     const handleAppStateChange = (nextAppState: string) => {
+      const wasActive = isAppActive;
       setIsAppActive(nextAppState === "active");
       console.log(`📱 App state changed: ${nextAppState}`);
 
@@ -313,6 +315,12 @@ const FeedScreen = () => {
           audioCacheService.clearCache().catch(console.error);
         }
       }
+
+      // Refresh whisper data when app becomes active (to get latest like/comment counts)
+      if (!wasActive && nextAppState === "active" && whispers.length > 0) {
+        console.log("🔄 App became active, refreshing whisper data...");
+        loadWhispers(true).catch(console.error);
+      }
     };
 
     const subscription = AppState.addEventListener(
@@ -320,7 +328,7 @@ const FeedScreen = () => {
       handleAppStateChange
     );
     return () => subscription?.remove();
-  }, [audioCacheService]);
+  }, [audioCacheService, isAppActive, whispers.length]);
 
   // Set up centralized auto-replay from the store
   useEffect(() => {
@@ -468,85 +476,116 @@ const FeedScreen = () => {
     }
   }, [isPlaying, pause, play]);
 
-  const renderItem = ({ item }: ListRenderItemInfo<AudioTrack>) => (
-    <View style={styles.page}>
-      <View style={styles.artworkContainer}>
-        <View style={styles.artworkShadow} />
-        <View style={styles.artworkWrapper}>
-          <View style={styles.artworkImage}>
-            {/* Replace with <Image> for real artwork */}
+  const renderItem = ({ item, index }: ListRenderItemInfo<AudioTrack>) => {
+    // Find the corresponding whisper for this item
+    const whisper = whispers.find((w) => w.id === item.id);
+
+    if (!whisper) {
+      console.warn(`Whisper not found for item ${item.id}`);
+      return null;
+    }
+
+    return (
+      <View style={styles.page}>
+        <View style={styles.artworkContainer}>
+          <View style={styles.artworkShadow} />
+          <View style={styles.artworkWrapper}>
+            <View style={styles.artworkImage}>
+              {/* Replace with <Image> for real artwork */}
+            </View>
           </View>
         </View>
-      </View>
-      <Text style={styles.title}>{item.title}</Text>
-      <Text style={styles.artist}>{item.artist}</Text>
-      <View style={styles.progressBarContainer}>
-        <View style={styles.progressBarBg}>
-          <View
-            style={[
-              styles.progressBarFill,
-              {
-                width: `${
-                  (progress.position / (progress.duration || 1)) * 100
-                }%`,
-              },
-            ]}
-          />
+        <Text style={styles.title}>{item.title}</Text>
+        <Text style={styles.artist}>{item.artist}</Text>
+        <View style={styles.progressBarContainer}>
+          <View style={styles.progressBarBg}>
+            <View
+              style={[
+                styles.progressBarFill,
+                {
+                  width: `${
+                    (progress.position / (progress.duration || 1)) * 100
+                  }%`,
+                },
+              ]}
+            />
+          </View>
+          <View style={styles.progressTimeRow}>
+            <Text style={styles.progressTime}>
+              {formatTime(progress.position)}
+            </Text>
+            <Text style={styles.progressTime}>
+              {formatTime(progress.duration)}
+            </Text>
+          </View>
         </View>
-        <View style={styles.progressTimeRow}>
-          <Text style={styles.progressTime}>
-            {formatTime(progress.position)}
+        <TouchableOpacity
+          style={styles.playPauseButton}
+          onPress={handlePlayPause}
+        >
+          <Text style={styles.playPauseText}>
+            {isPlaying ? "Pause" : "Play"}
           </Text>
-          <Text style={styles.progressTime}>
-            {formatTime(progress.duration)}
-          </Text>
-        </View>
+        </TouchableOpacity>
+
+        {/* Whisper Interactions */}
+        <WhisperInteractions
+          whisper={whisper}
+          onLikeChange={(isLiked, newLikeCount) => {
+            // Update the whisper in the feed store
+            const updatedWhispers = whispers.map((w) =>
+              w.id === whisper.id ? { ...w, likes: newLikeCount } : w
+            );
+            setWhispers(updatedWhispers);
+          }}
+          onCommentChange={(newCommentCount) => {
+            // Update the whisper in the feed store
+            const updatedWhispers = whispers.map((w) =>
+              w.id === whisper.id ? { ...w, replies: newCommentCount } : w
+            );
+            setWhispers(updatedWhispers);
+          }}
+        />
+
+        {/* Debug button */}
+        <TouchableOpacity
+          style={[
+            styles.playPauseButton,
+            { marginTop: 10, backgroundColor: "#666" },
+          ]}
+          onPress={() => {
+            const storeState = useAudioStore.getState();
+            const cacheStats = audioCacheService.getCacheStats();
+            console.log("Current state:", {
+              currentTrackIndex,
+              isPlaying,
+              currentPosition: progress.position,
+              duration: progress.duration,
+              lastPlayedTrack: lastPlayedTrackRef.current,
+              savedPosition: storeState.currentPosition,
+              savedTrackIndex: storeState.currentTrackIndex,
+              cacheStats,
+              cachedWhispers: whispers.length,
+              cacheValid: isCacheValid(),
+            });
+
+            // Test manual restoration
+            if (storeState.currentPosition > 0) {
+              console.log("Testing manual restoration...");
+              restorePlayerState().catch(console.error);
+            } else {
+              // Test manual track switching
+              const nextTrack = (currentTrackIndex + 1) % tracks.length;
+              console.log(`Manually switching to track ${nextTrack}`);
+              playTrack(nextTrack).catch(console.error);
+            }
+          }}
+        >
+          <Text style={styles.playPauseText}>Debug</Text>
+        </TouchableOpacity>
       </View>
-      <TouchableOpacity
-        style={styles.playPauseButton}
-        onPress={handlePlayPause}
-      >
-        <Text style={styles.playPauseText}>{isPlaying ? "Pause" : "Play"}</Text>
-      </TouchableOpacity>
-
-      {/* Debug button */}
-      <TouchableOpacity
-        style={[
-          styles.playPauseButton,
-          { marginTop: 10, backgroundColor: "#666" },
-        ]}
-        onPress={() => {
-          const storeState = useAudioStore.getState();
-          const cacheStats = audioCacheService.getCacheStats();
-          console.log("Current state:", {
-            currentTrackIndex,
-            isPlaying,
-            currentPosition: progress.position,
-            duration: progress.duration,
-            lastPlayedTrack: lastPlayedTrackRef.current,
-            savedPosition: storeState.currentPosition,
-            savedTrackIndex: storeState.currentTrackIndex,
-            cacheStats,
-            cachedWhispers: whispers.length,
-            cacheValid: isCacheValid(),
-          });
-
-          // Test manual restoration
-          if (storeState.currentPosition > 0) {
-            console.log("Testing manual restoration...");
-            restorePlayerState().catch(console.error);
-          } else {
-            // Test manual track switching
-            const nextTrack = (currentTrackIndex + 1) % tracks.length;
-            console.log(`Manually switching to track ${nextTrack}`);
-            playTrack(nextTrack).catch(console.error);
-          }
-        }}
-      >
-        <Text style={styles.playPauseText}>Debug</Text>
-      </TouchableOpacity>
-    </View>
-  );
+    );
+  };
 
   // Show loading state
   if (loading) {

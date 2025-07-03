@@ -24,7 +24,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { getFirestoreInstance } from "@/config/firebase";
-import { Whisper } from "@/types";
+import { Whisper, Comment, Like, CommentLike } from "@/types";
 import { FIRESTORE_COLLECTIONS } from "@/constants";
 
 export interface WhisperUploadData {
@@ -305,7 +305,7 @@ export class FirestoreService {
   }
 
   /**
-   * Like a whisper
+   * Like a whisper (enhanced with individual like tracking)
    */
   async likeWhisper(whisperId: string, userId: string): Promise<void> {
     try {
@@ -315,17 +315,303 @@ export class FirestoreService {
         whisperId
       );
 
-      // For now, just increment likes
-      // In a more sophisticated implementation, you'd track individual likes
+      // Check if user already liked this whisper
+      const likeQuery = query(
+        collection(this.firestore, FIRESTORE_COLLECTIONS.LIKES),
+        where("whisperId", "==", whisperId),
+        where("userId", "==", userId)
+      );
+
+      const likeSnapshot = await getDocs(likeQuery);
+
+      if (likeSnapshot.empty) {
+        // User hasn't liked this whisper yet - add like
+        await addDoc(collection(this.firestore, FIRESTORE_COLLECTIONS.LIKES), {
+          whisperId,
+          userId,
+          createdAt: serverTimestamp(),
+        });
+
+        // Increment whisper like count
+        await updateDoc(whisperRef, {
+          likes: increment(1),
+        });
+
+        console.log("✅ Whisper liked successfully");
+      } else {
+        // User already liked this whisper - remove like
+        const likeDoc = likeSnapshot.docs[0];
+        await deleteDoc(
+          doc(this.firestore, FIRESTORE_COLLECTIONS.LIKES, likeDoc.id)
+        );
+
+        // Decrement whisper like count
+        await updateDoc(whisperRef, {
+          likes: increment(-1),
+        });
+
+        console.log("✅ Whisper unliked successfully");
+      }
+    } catch (error) {
+      console.error("❌ Error liking/unliking whisper:", error);
+      throw new Error(
+        `Failed to like/unlike whisper: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Check if user has liked a whisper
+   */
+  async hasUserLikedWhisper(
+    whisperId: string,
+    userId: string
+  ): Promise<boolean> {
+    try {
+      const likeQuery = query(
+        collection(this.firestore, FIRESTORE_COLLECTIONS.LIKES),
+        where("whisperId", "==", whisperId),
+        where("userId", "==", userId)
+      );
+
+      const likeSnapshot = await getDocs(likeQuery);
+      return !likeSnapshot.empty;
+    } catch (error) {
+      console.error("❌ Error checking like status:", error);
+      return false;
+    }
+  }
+
+  /**
+   * Add a comment to a whisper
+   */
+  async addComment(
+    whisperId: string,
+    userId: string,
+    userDisplayName: string,
+    userProfileColor: string,
+    text: string
+  ): Promise<string> {
+    try {
+      // Add comment to comments collection
+      const commentData = {
+        whisperId,
+        userId,
+        userDisplayName,
+        userProfileColor,
+        text,
+        likes: 0,
+        createdAt: serverTimestamp(),
+        isEdited: false,
+      };
+
+      const commentRef = await addDoc(
+        collection(this.firestore, FIRESTORE_COLLECTIONS.REPLIES),
+        commentData
+      );
+
+      // Increment whisper reply count
+      const whisperRef = doc(
+        this.firestore,
+        this.whispersCollection,
+        whisperId
+      );
+
       await updateDoc(whisperRef, {
-        likes: increment(1),
+        replies: increment(1),
       });
 
-      console.log("✅ Whisper liked successfully");
+      console.log("✅ Comment added successfully:", commentRef.id);
+      return commentRef.id;
     } catch (error) {
-      console.error("❌ Error liking whisper:", error);
+      console.error("❌ Error adding comment:", error);
       throw new Error(
-        `Failed to like whisper: ${
+        `Failed to add comment: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Get a single whisper with updated data
+   */
+  async getWhisper(whisperId: string): Promise<Whisper | null> {
+    try {
+      const whisperDoc = await getDoc(
+        doc(this.firestore, this.whispersCollection, whisperId)
+      );
+
+      if (!whisperDoc.exists()) {
+        return null;
+      }
+
+      const data = whisperDoc.data();
+      return {
+        id: whisperDoc.id,
+        userId: data.userId,
+        userDisplayName: data.userDisplayName,
+        userProfileColor: data.userProfileColor,
+        audioUrl: data.audioUrl,
+        duration: data.duration,
+        whisperPercentage: data.whisperPercentage,
+        averageLevel: data.averageLevel,
+        confidence: data.confidence,
+        likes: data.likes || 0,
+        replies: data.replies || 0,
+        createdAt: data.createdAt?.toDate() || new Date(),
+        transcription: data.transcription,
+        isTranscribed: data.isTranscribed || false,
+      };
+    } catch (error) {
+      console.error("❌ Error fetching whisper:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Get comments for a whisper
+   */
+  async getComments(whisperId: string): Promise<Comment[]> {
+    try {
+      const commentsQuery = query(
+        collection(this.firestore, FIRESTORE_COLLECTIONS.REPLIES),
+        where("whisperId", "==", whisperId),
+        orderBy("createdAt", "desc")
+      );
+
+      const querySnapshot = await getDocs(commentsQuery);
+      const comments: Comment[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        comments.push({
+          id: doc.id,
+          whisperId: data.whisperId,
+          userId: data.userId,
+          userDisplayName: data.userDisplayName,
+          userProfileColor: data.userProfileColor,
+          text: data.text,
+          likes: data.likes || 0,
+          createdAt: data.createdAt?.toDate() || new Date(),
+          isEdited: data.isEdited || false,
+          editedAt: data.editedAt?.toDate(),
+        });
+      });
+
+      console.log(
+        `✅ Fetched ${comments.length} comments for whisper ${whisperId}`
+      );
+      return comments;
+    } catch (error) {
+      console.error("❌ Error fetching comments:", error);
+      throw new Error(
+        `Failed to fetch comments: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Like a comment
+   */
+  async likeComment(commentId: string, userId: string): Promise<void> {
+    try {
+      const commentRef = doc(
+        this.firestore,
+        FIRESTORE_COLLECTIONS.REPLIES,
+        commentId
+      );
+
+      // Check if user already liked this comment
+      const likeQuery = query(
+        collection(this.firestore, "commentLikes"),
+        where("commentId", "==", commentId),
+        where("userId", "==", userId)
+      );
+
+      const likeSnapshot = await getDocs(likeQuery);
+
+      if (likeSnapshot.empty) {
+        // User hasn't liked this comment yet - add like
+        await addDoc(collection(this.firestore, "commentLikes"), {
+          commentId,
+          userId,
+          createdAt: serverTimestamp(),
+        });
+
+        // Increment comment like count
+        await updateDoc(commentRef, {
+          likes: increment(1),
+        });
+
+        console.log("✅ Comment liked successfully");
+      } else {
+        // User already liked this comment - remove like
+        const likeDoc = likeSnapshot.docs[0];
+        await deleteDoc(doc(this.firestore, "commentLikes", likeDoc.id));
+
+        // Decrement comment like count
+        await updateDoc(commentRef, {
+          likes: increment(-1),
+        });
+
+        console.log("✅ Comment unliked successfully");
+      }
+    } catch (error) {
+      console.error("❌ Error liking/unliking comment:", error);
+      throw new Error(
+        `Failed to like/unlike comment: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Delete a comment (only by the creator)
+   */
+  async deleteComment(commentId: string, userId: string): Promise<void> {
+    try {
+      const commentRef = doc(
+        this.firestore,
+        FIRESTORE_COLLECTIONS.REPLIES,
+        commentId
+      );
+
+      // Get comment to check ownership and get whisperId
+      const commentDoc = await getDoc(commentRef);
+      if (!commentDoc.exists()) {
+        throw new Error("Comment not found");
+      }
+
+      const commentData = commentDoc.data();
+      if (commentData.userId !== userId) {
+        throw new Error("You can only delete your own comments");
+      }
+
+      // Delete the comment
+      await deleteDoc(commentRef);
+
+      // Decrement whisper reply count
+      const whisperRef = doc(
+        this.firestore,
+        this.whispersCollection,
+        commentData.whisperId
+      );
+
+      await updateDoc(whisperRef, {
+        replies: increment(-1),
+      });
+
+      console.log("✅ Comment deleted successfully");
+    } catch (error) {
+      console.error("❌ Error deleting comment:", error);
+      throw new Error(
+        `Failed to delete comment: ${
           error instanceof Error ? error.message : "Unknown error"
         }`
       );
