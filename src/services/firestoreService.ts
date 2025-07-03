@@ -307,7 +307,12 @@ export class FirestoreService {
   /**
    * Like a whisper (enhanced with individual like tracking)
    */
-  async likeWhisper(whisperId: string, userId: string): Promise<void> {
+  async likeWhisper(
+    whisperId: string,
+    userId: string,
+    userDisplayName?: string,
+    userProfileColor?: string
+  ): Promise<void> {
     try {
       const whisperRef = doc(
         this.firestore,
@@ -326,11 +331,24 @@ export class FirestoreService {
 
       if (likeSnapshot.empty) {
         // User hasn't liked this whisper yet - add like
-        await addDoc(collection(this.firestore, FIRESTORE_COLLECTIONS.LIKES), {
+        const likeData: any = {
           whisperId,
           userId,
           createdAt: serverTimestamp(),
-        });
+        };
+
+        // Add user display info if provided
+        if (userDisplayName) {
+          likeData.userDisplayName = userDisplayName;
+        }
+        if (userProfileColor) {
+          likeData.userProfileColor = userProfileColor;
+        }
+
+        await addDoc(
+          collection(this.firestore, FIRESTORE_COLLECTIONS.LIKES),
+          likeData
+        );
 
         // Increment whisper like count
         await updateDoc(whisperRef, {
@@ -381,6 +399,108 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error checking like status:", error);
       return false;
+    }
+  }
+
+  /**
+   * Get likes for a whisper (paginated)
+   */
+  async getWhisperLikes(
+    whisperId: string,
+    limitCount: number = 50,
+    startAfterDoc?: QueryDocumentSnapshot<DocumentData>
+  ): Promise<{
+    likes: Like[];
+    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
+    hasMore: boolean;
+  }> {
+    try {
+      const likesQuery = query(
+        collection(this.firestore, FIRESTORE_COLLECTIONS.LIKES),
+        where("whisperId", "==", whisperId),
+        orderBy("createdAt", "desc"),
+        ...(startAfterDoc ? [startAfter(startAfterDoc)] : []),
+        limit(limitCount)
+      );
+
+      const querySnapshot = await getDocs(likesQuery);
+      const likes: Like[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        likes.push({
+          id: doc.id,
+          whisperId: data.whisperId,
+          userId: data.userId,
+          userDisplayName: data.userDisplayName || "Anonymous",
+          userProfileColor: data.userProfileColor || "#9E9E9E",
+          createdAt: data.createdAt?.toDate() || new Date(),
+        });
+      });
+
+      const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
+      const hasMore = querySnapshot.docs.length === limitCount;
+
+      console.log(
+        `✅ Fetched ${likes.length} likes for whisper ${whisperId}, hasMore: ${hasMore}`
+      );
+      return { likes, lastDoc, hasMore };
+    } catch (error) {
+      console.error("❌ Error fetching whisper likes:", error);
+      throw new Error(
+        `Failed to fetch whisper likes: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Validate and fix like count for a whisper
+   */
+  async validateAndFixLikeCount(whisperId: string): Promise<number> {
+    try {
+      // Get all likes for this whisper
+      const likesQuery = query(
+        collection(this.firestore, FIRESTORE_COLLECTIONS.LIKES),
+        where("whisperId", "==", whisperId)
+      );
+
+      const querySnapshot = await getDocs(likesQuery);
+      const actualLikeCount = querySnapshot.size;
+
+      // Get current whisper like count
+      const whisper = await this.getWhisper(whisperId);
+      const currentLikeCount = whisper?.likes || 0;
+
+      // If counts don't match, fix the whisper's like count
+      if (actualLikeCount !== currentLikeCount) {
+        console.log(
+          `⚠️ Like count mismatch for whisper ${whisperId}: whisper says ${currentLikeCount}, but there are ${actualLikeCount} like documents`
+        );
+
+        const whisperRef = doc(
+          this.firestore,
+          this.whispersCollection,
+          whisperId
+        );
+        await updateDoc(whisperRef, {
+          likes: actualLikeCount,
+        });
+
+        console.log(
+          `✅ Fixed like count for whisper ${whisperId}: ${actualLikeCount}`
+        );
+      }
+
+      return actualLikeCount;
+    } catch (error) {
+      console.error("❌ Error validating like count:", error);
+      throw new Error(
+        `Failed to validate like count: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   }
 
@@ -472,14 +592,24 @@ export class FirestoreService {
   }
 
   /**
-   * Get comments for a whisper
+   * Get comments for a whisper (paginated)
    */
-  async getComments(whisperId: string): Promise<Comment[]> {
+  async getComments(
+    whisperId: string,
+    limitCount: number = 20,
+    startAfterDoc?: QueryDocumentSnapshot<DocumentData>
+  ): Promise<{
+    comments: Comment[];
+    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
+    hasMore: boolean;
+  }> {
     try {
       const commentsQuery = query(
         collection(this.firestore, FIRESTORE_COLLECTIONS.REPLIES),
         where("whisperId", "==", whisperId),
-        orderBy("createdAt", "desc")
+        orderBy("createdAt", "desc"),
+        ...(startAfterDoc ? [startAfter(startAfterDoc)] : []),
+        limit(limitCount)
       );
 
       const querySnapshot = await getDocs(commentsQuery);
@@ -501,10 +631,13 @@ export class FirestoreService {
         });
       });
 
+      const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
+      const hasMore = querySnapshot.docs.length === limitCount;
+
       console.log(
-        `✅ Fetched ${comments.length} comments for whisper ${whisperId}`
+        `✅ Fetched ${comments.length} comments for whisper ${whisperId}, hasMore: ${hasMore}`
       );
-      return comments;
+      return { comments, lastDoc, hasMore };
     } catch (error) {
       console.error("❌ Error fetching comments:", error);
       throw new Error(

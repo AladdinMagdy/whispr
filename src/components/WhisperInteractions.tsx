@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,9 +9,10 @@ import {
   TextInput,
   FlatList,
   ActivityIndicator,
+  SafeAreaView,
 } from "react-native";
 import { useAuth } from "../providers/AuthProvider";
-import { getFirestoreService } from "../services/firestoreService";
+import { getInteractionService } from "../services/interactionService";
 import { Whisper, Comment } from "../types";
 import { FIRESTORE_COLLECTIONS } from "../constants";
 
@@ -39,8 +40,8 @@ const CommentItem: React.FC<CommentItemProps> = ({
 
   const handleLike = async () => {
     try {
-      const firestoreService = getFirestoreService();
-      await firestoreService.likeComment(comment.id, currentUserId);
+      const interactionService = getInteractionService();
+      await interactionService.toggleLike(comment.id);
 
       const newLikeCount = isLiked ? likeCount - 1 : likeCount + 1;
       setLikeCount(newLikeCount);
@@ -77,10 +78,12 @@ const CommentItem: React.FC<CommentItemProps> = ({
             ]}
           >
             <Text style={styles.userInitial}>
-              {comment.userDisplayName.charAt(0).toUpperCase()}
+              {comment.userDisplayName?.charAt(0)?.toUpperCase() || "?"}
             </Text>
           </View>
-          <Text style={styles.userName}>{comment.userDisplayName}</Text>
+          <Text style={styles.userName}>
+            {comment.userDisplayName || "Anonymous"}
+          </Text>
         </View>
         <View style={styles.commentActions}>
           <TouchableOpacity onPress={handleLike} style={styles.likeButton}>
@@ -121,25 +124,41 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
   const [loadingComments, setLoadingComments] = useState(false);
   const [newComment, setNewComment] = useState("");
   const [submittingComment, setSubmittingComment] = useState(false);
+  const [showLikes, setShowLikes] = useState(false);
+  const [likes, setLikes] = useState<any[]>([]);
+  const [loadingLikes, setLoadingLikes] = useState(false);
+  const [likesHasMore, setLikesHasMore] = useState(true);
+  const [likesLastDoc, setLikesLastDoc] = useState<any>(null);
 
-  const firestoreService = getFirestoreService();
+  // Comments pagination
+  const [commentsHasMore, setCommentsHasMore] = useState(true);
+  const [commentsLastDoc, setCommentsLastDoc] = useState<any>(null);
+
+  const interactionService = getInteractionService();
 
   // Check if user has liked this whisper and update counts when whisper changes
   useEffect(() => {
-    // Update counts from whisper prop
-    setLikeCount(whisper.likes);
-    setCommentCount(whisper.replies);
+    const loadLikeState = async () => {
+      // Update counts from whisper prop
+      setLikeCount(whisper.likes);
+      setCommentCount(whisper.replies);
 
-    // Check if user has liked this whisper
-    if (user) {
-      firestoreService
-        .hasUserLikedWhisper(whisper.id, user.uid)
-        .then(setIsLiked)
-        .catch(console.error);
-    } else {
-      setIsLiked(false);
-    }
-  }, [whisper.id, whisper.likes, whisper.replies, user]);
+      // Check if user has liked this whisper (cached)
+      if (user) {
+        try {
+          const hasLiked = await interactionService.hasUserLiked(whisper.id);
+          setIsLiked(hasLiked);
+        } catch (error) {
+          console.error("Error loading like state:", error);
+          setIsLiked(false);
+        }
+      } else {
+        setIsLiked(false);
+      }
+    };
+
+    loadLikeState();
+  }, [whisper.id, whisper.likes, whisper.replies, user, interactionService]);
 
   const handleLike = async () => {
     if (!user) {
@@ -148,35 +167,27 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
     }
 
     try {
-      await firestoreService.likeWhisper(whisper.id, user.uid);
+      // Use optimized interaction service with caching and optimistic updates
+      const result = await interactionService.toggleLike(whisper.id);
 
-      // Refresh whisper data to get accurate counts
-      const updatedWhisper = await firestoreService.getWhisper(whisper.id);
-      if (updatedWhisper) {
-        setLikeCount(updatedWhisper.likes);
-        setCommentCount(updatedWhisper.replies);
-        onLikeChange?.(!isLiked, updatedWhisper.likes);
-      } else {
-        // Fallback to local calculation
-        const newLikeCount = isLiked ? likeCount - 1 : likeCount + 1;
-        setLikeCount(newLikeCount);
-        onLikeChange?.(!isLiked, newLikeCount);
-      }
-
-      setIsLiked(!isLiked);
+      setIsLiked(result.isLiked);
+      setLikeCount(result.count);
+      onLikeChange?.(result.isLiked, result.count);
     } catch (error) {
       console.error("Error liking whisper:", error);
       Alert.alert("Error", "Failed to like whisper");
     }
   };
 
-  const loadComments = async () => {
+  // Remove the old loadComments function and replace with proper pagination
+  const loadInitialComments = async () => {
     if (loadingComments) return;
-
     setLoadingComments(true);
     try {
-      const fetchedComments = await firestoreService.getComments(whisper.id);
-      setComments(fetchedComments);
+      const result = await interactionService.getComments(whisper.id, 20, null);
+      setComments(result.comments);
+      setCommentsHasMore(result.hasMore);
+      setCommentsLastDoc(result.lastDoc);
     } catch (error) {
       console.error("Error loading comments:", error);
       Alert.alert("Error", "Failed to load comments");
@@ -187,7 +198,11 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
 
   const handleShowComments = () => {
     setShowComments(true);
-    loadComments();
+    // Reset and load initial comments
+    setComments([]);
+    setCommentsHasMore(true);
+    setCommentsLastDoc(null);
+    loadInitialComments();
   };
 
   const handleSubmitComment = async () => {
@@ -203,31 +218,17 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
 
     setSubmittingComment(true);
     try {
-      await firestoreService.addComment(
+      const result = await interactionService.addComment(
         whisper.id,
-        user.uid,
-        user.displayName, // Using displayName from AnonymousUser
-        user.profileColor, // Using profileColor from AnonymousUser
         newComment.trim()
       );
 
       setNewComment("");
-
-      // Refresh whisper data to get accurate counts
-      const updatedWhisper = await firestoreService.getWhisper(whisper.id);
-      if (updatedWhisper) {
-        setLikeCount(updatedWhisper.likes);
-        setCommentCount(updatedWhisper.replies);
-        onCommentChange?.(updatedWhisper.replies);
-      } else {
-        // Fallback to local calculation
-        const newCommentCount = commentCount + 1;
-        setCommentCount(newCommentCount);
-        onCommentChange?.(newCommentCount);
-      }
+      setCommentCount(result.count);
+      onCommentChange?.(result.count);
 
       // Reload comments to show the new one
-      loadComments();
+      loadInitialComments();
     } catch (error) {
       console.error("Error adding comment:", error);
       Alert.alert("Error", "Failed to add comment");
@@ -240,22 +241,15 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
     if (!user) return;
 
     try {
-      await firestoreService.deleteComment(commentId, user.uid);
+      const result = await interactionService.deleteComment(
+        commentId,
+        whisper.id
+      );
 
-      // Refresh whisper data to get accurate counts
-      const updatedWhisper = await firestoreService.getWhisper(whisper.id);
-      if (updatedWhisper) {
-        setLikeCount(updatedWhisper.likes);
-        setCommentCount(updatedWhisper.replies);
-        onCommentChange?.(updatedWhisper.replies);
-      } else {
-        // Fallback to local calculation
-        const newCommentCount = commentCount - 1;
-        setCommentCount(newCommentCount);
-        onCommentChange?.(newCommentCount);
-      }
-
-      loadComments(); // Reload to remove the deleted comment
+      setCommentCount(result.count);
+      onCommentChange?.(result.count);
+      // Reload comments to remove the deleted comment
+      loadInitialComments();
     } catch (error) {
       console.error("Error deleting comment:", error);
       Alert.alert("Error", "Failed to delete comment");
@@ -266,6 +260,96 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
     // This will be handled by the CommentItem component
   };
 
+  const handleValidateLikeCount = async () => {
+    try {
+      const { getFirestoreService } = require("../services/firestoreService");
+      const firestoreService = getFirestoreService();
+
+      console.log("🔍 Validating like count for whisper:", whisper.id);
+      const actualCount = await firestoreService.validateAndFixLikeCount(
+        whisper.id
+      );
+
+      // Update local state
+      setLikeCount(actualCount);
+      onLikeChange?.(isLiked, actualCount);
+
+      Alert.alert(
+        "Like Count Validation",
+        `Whisper like count: ${actualCount}\nThis count has been validated and fixed if needed.`
+      );
+    } catch (error) {
+      console.error("Error validating like count:", error);
+      Alert.alert("Error", "Failed to validate like count");
+    }
+  };
+
+  // Load paginated likes with deduplication
+  const loadLikes = async (reset = false) => {
+    if (loadingLikes || (!likesHasMore && !reset)) return;
+    setLoadingLikes(true);
+    try {
+      const result = await interactionService.getLikes(
+        whisper.id,
+        20,
+        reset ? null : likesLastDoc
+      );
+
+      if (reset) {
+        setLikes(result.likes);
+      } else {
+        // Deduplicate likes by ID
+        const existingIds = new Set(likes.map((l) => l.id));
+        const newLikes = result.likes.filter((l) => !existingIds.has(l.id));
+        setLikes((prev) => [...prev, ...newLikes]);
+      }
+
+      setLikesHasMore(result.hasMore);
+      setLikesLastDoc(result.lastDoc);
+    } catch (error) {
+      console.error("Error loading likes:", error);
+      Alert.alert("Error", "Failed to load likes");
+    } finally {
+      setLoadingLikes(false);
+    }
+  };
+
+  // Load paginated comments with deduplication
+  const loadMoreComments = async () => {
+    if (loadingComments || !commentsHasMore) return;
+    setLoadingComments(true);
+    try {
+      const result = await interactionService.getComments(
+        whisper.id,
+        20,
+        commentsLastDoc
+      );
+
+      // Deduplicate comments by ID
+      const existingIds = new Set(comments.map((c) => c.id));
+      const newComments = result.comments.filter((c) => !existingIds.has(c.id));
+
+      setComments((prev) => [...prev, ...newComments]);
+      setCommentsHasMore(result.hasMore);
+      setCommentsLastDoc(result.lastDoc);
+    } catch (error) {
+      console.error("Error loading more comments:", error);
+      Alert.alert("Error", "Failed to load more comments");
+    } finally {
+      setLoadingComments(false);
+    }
+  };
+
+  // Reset likes/comments when modal opens
+  useEffect(() => {
+    if (showLikes) {
+      setLikes([]);
+      setLikesHasMore(true);
+      setLikesLastDoc(null);
+      loadLikes(true);
+    }
+  }, [showLikes, whisper.id]);
+
   return (
     <View style={styles.container}>
       {/* Main interaction buttons */}
@@ -274,64 +358,91 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
           <Text style={[styles.interactionIcon, isLiked && styles.likedIcon]}>
             {isLiked ? "❤️" : "🤍"}
           </Text>
-          <Text style={styles.interactionCount}>{likeCount}</Text>
+          <Text style={styles.countText}>{likeCount}</Text>
         </TouchableOpacity>
-
         <TouchableOpacity
           onPress={handleShowComments}
           style={styles.interactionButton}
         >
           <Text style={styles.interactionIcon}>💬</Text>
-          <Text style={styles.interactionCount}>{commentCount}</Text>
+          <Text style={styles.countText}>{commentCount}</Text>
+        </TouchableOpacity>
+        {/* View Likes Button */}
+        <TouchableOpacity
+          onPress={() => setShowLikes(true)}
+          style={styles.interactionButton}
+        >
+          <Text style={styles.interactionIcon}>👥</Text>
+        </TouchableOpacity>
+        {/* Debug: Validate Like Count Button */}
+        <TouchableOpacity
+          onPress={handleValidateLikeCount}
+          style={[styles.interactionButton, { backgroundColor: "#666" }]}
+        >
+          <Text style={styles.interactionIcon}>🔍</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Comments Modal */}
+      {/* Likes Modal */}
+      <Modal
+        visible={showLikes}
+        animationType="slide"
+        onRequestClose={() => setShowLikes(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Likes</Text>
+            <TouchableOpacity
+              onPress={() => setShowLikes(false)}
+              style={styles.closeButton}
+            >
+              <Text style={styles.closeButtonText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={likes}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <View style={styles.likeItem}>
+                <View
+                  style={[
+                    styles.userAvatar,
+                    { backgroundColor: item.userProfileColor },
+                  ]}
+                >
+                  <Text style={styles.userInitial}>
+                    {item.userDisplayName?.charAt(0)?.toUpperCase() || "?"}
+                  </Text>
+                </View>
+                <Text style={styles.userName}>
+                  {item.userDisplayName || "Anonymous"}
+                </Text>
+              </View>
+            )}
+            onEndReached={() => likesHasMore && loadLikes()}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={loadingLikes ? <ActivityIndicator /> : null}
+            contentContainerStyle={styles.listContentContainer}
+          />
+        </SafeAreaView>
+      </Modal>
+
+      {/* Comments Modal (update for pagination) */}
       <Modal
         visible={showComments}
         animationType="slide"
-        presentationStyle="pageSheet"
         onRequestClose={() => setShowComments(false)}
       >
-        <View style={styles.modalContainer}>
+        <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Comments ({commentCount})</Text>
+            <Text style={styles.modalTitle}>Comments</Text>
             <TouchableOpacity
               onPress={() => setShowComments(false)}
               style={styles.closeButton}
             >
-              <Text style={styles.closeIcon}>✕</Text>
+              <Text style={styles.closeButtonText}>✕</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Add comment section */}
-          <View style={styles.addCommentSection}>
-            <TextInput
-              style={styles.commentInput}
-              placeholder="Add a comment..."
-              value={newComment}
-              onChangeText={setNewComment}
-              multiline
-              maxLength={500}
-            />
-            <TouchableOpacity
-              onPress={handleSubmitComment}
-              disabled={submittingComment || !newComment.trim()}
-              style={[
-                styles.submitButton,
-                (!newComment.trim() || submittingComment) &&
-                  styles.submitButtonDisabled,
-              ]}
-            >
-              {submittingComment ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={styles.submitButtonText}>Post</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          {/* Comments list */}
           <FlatList
             data={comments}
             keyExtractor={(item) => item.id}
@@ -343,16 +454,30 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
                 onDeleteComment={handleDeleteComment}
               />
             )}
-            ListEmptyComponent={
-              <View style={styles.emptyComments}>
-                <Text style={styles.emptyCommentsText}>
-                  {loadingComments ? "Loading comments..." : "No comments yet"}
-                </Text>
-              </View>
-            }
-            style={styles.commentsList}
+            onEndReached={() => commentsHasMore && loadMoreComments()}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={loadingComments ? <ActivityIndicator /> : null}
+            contentContainerStyle={styles.listContentContainer}
           />
-        </View>
+          <View style={styles.commentInputRow}>
+            <TextInput
+              style={styles.commentInput}
+              value={newComment}
+              onChangeText={setNewComment}
+              placeholder="Add a comment..."
+              editable={!submittingComment}
+            />
+            <TouchableOpacity
+              onPress={handleSubmitComment}
+              style={styles.sendButton}
+              disabled={submittingComment}
+            >
+              <Text style={styles.sendButtonText}>
+                {submittingComment ? "..." : "Send"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
       </Modal>
     </View>
   );
@@ -392,7 +517,7 @@ const styles = StyleSheet.create({
   likedIcon: {
     color: "#e74c3c",
   },
-  interactionCount: {
+  countText: {
     fontSize: 16,
     fontWeight: "600",
     color: "#333",
@@ -405,10 +530,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#e1e8ed",
-    backgroundColor: "#f8f9fa",
+    backgroundColor: "#fff",
   },
   modalTitle: {
     fontSize: 18,
@@ -417,18 +543,30 @@ const styles = StyleSheet.create({
   },
   closeButton: {
     padding: 8,
+    borderRadius: 20,
+    backgroundColor: "#f8f9fa",
+    width: 32,
+    height: 32,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  closeIcon: {
-    fontSize: 20,
+  closeButtonText: {
+    fontSize: 16,
     color: "#666",
+    fontWeight: "bold",
   },
-  addCommentSection: {
+  listContentContainer: {
+    flexGrow: 1,
+    paddingBottom: 20,
+  },
+  commentInputRow: {
     flexDirection: "row",
     padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e1e8ed",
+    borderTopWidth: 1,
+    borderTopColor: "#e1e8ed",
     alignItems: "flex-end",
     backgroundColor: "#fff",
+    paddingBottom: 20, // Extra padding for safe area
   },
   commentInput: {
     flex: 1,
@@ -442,7 +580,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: "#f8f9fa",
   },
-  submitButton: {
+  sendButton: {
     backgroundColor: "#007AFF",
     borderRadius: 20,
     paddingHorizontal: 20,
@@ -450,10 +588,7 @@ const styles = StyleSheet.create({
     minWidth: 60,
     alignItems: "center",
   },
-  submitButtonDisabled: {
-    backgroundColor: "#ccc",
-  },
-  submitButtonText: {
+  sendButtonText: {
     color: "#fff",
     fontWeight: "600",
     fontSize: 16,
@@ -478,22 +613,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   userAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 8,
+    marginRight: 12,
   },
   userInitial: {
     color: "#fff",
     fontWeight: "bold",
-    fontSize: 14,
+    fontSize: 16,
   },
   userName: {
-    fontSize: 14,
-    fontWeight: "600",
+    fontSize: 16,
+    fontWeight: "500",
     color: "#333",
+    flex: 1,
   },
   commentActions: {
     flexDirection: "row",
@@ -537,6 +673,14 @@ const styles = StyleSheet.create({
   emptyCommentsText: {
     fontSize: 16,
     color: "#666",
+  },
+  likeItem: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+    backgroundColor: "#fff",
+    flexDirection: "row",
+    alignItems: "center",
   },
 });
 
