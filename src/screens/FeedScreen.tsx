@@ -1,4 +1,10 @@
-import React, { useEffect, useRef, useCallback, useState } from "react";
+import React, {
+  useEffect,
+  useRef,
+  useCallback,
+  useState,
+  useMemo,
+} from "react";
 import {
   View,
   Text,
@@ -29,7 +35,10 @@ import { getPreloadService } from "../services/preloadService";
 import { Whisper } from "../types";
 import { useAuth } from "../providers/AuthProvider";
 import { QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
-import WhisperInteractions from "../components/WhisperInteractions";
+// Lazy load heavy components for better performance
+const WhisperInteractions = React.lazy(
+  () => import("../components/WhisperInteractions")
+);
 
 const { height, width } = Dimensions.get("window");
 
@@ -40,6 +49,9 @@ const FeedScreen = () => {
   const [error, setError] = useState<string | null>(null);
   const [newWhispersCount, setNewWhispersCount] = useState(0);
   const [isAppActive, setIsAppActive] = useState(true);
+
+  // Performance monitoring
+  const startTime = useRef(Date.now());
 
   const { user } = useAuth();
   const firestoreService = getFirestoreService();
@@ -85,8 +97,8 @@ const FeedScreen = () => {
     updateCache,
   } = useFeedStore();
 
-  // Convert whispers to AudioTrack format (synchronous for FlatList)
-  const convertWhispersToAudioTracks = (whispers: Whisper[]): AudioTrack[] => {
+  // Memoized conversion for better performance
+  const convertWhispersToAudioTracks = useMemo(() => {
     return whispers.map((whisper) => ({
       id: whisper.id,
       title: whisper.userDisplayName,
@@ -101,7 +113,7 @@ const FeedScreen = () => {
       )}&color=fff&size=200`,
       url: whisper.audioUrl, // Keep original URL for FlatList display
     }));
-  };
+  }, [whispers]);
 
   // Convert whispers to AudioTrack format with cached URLs (async for audio player)
   const convertWhispersToAudioTracksWithCache = async (
@@ -300,6 +312,16 @@ const FeedScreen = () => {
     loadWhispers();
   }, []);
 
+  // Performance monitoring
+  useEffect(() => {
+    const loadTime = Date.now() - startTime.current;
+    console.log(`🚀 FeedScreen loaded in ${loadTime}ms`);
+
+    if (loadTime > 2000) {
+      console.warn(`⚠️ Slow load detected: ${loadTime}ms`);
+    }
+  }, [loading]);
+
   // Handle app state changes (background/foreground)
   useEffect(() => {
     const handleAppStateChange = (nextAppState: string) => {
@@ -422,8 +444,14 @@ const FeedScreen = () => {
       pause().catch(console.error);
       // Reset mount flag for next mount
       hasMountedRef.current = false;
+
+      // Clear any pending operations
+      cleanupAutoReplay();
+
+      // Clear any pending operations and timers
+      // Note: Timer cleanup is handled by individual services
     };
-  }, [pause]); // Remove progress.position dependency to prevent frequent pausing
+  }, [pause, cleanupAutoReplay]); // Remove progress.position dependency to prevent frequent pausing
 
   const onViewableItemsChanged = useRef(
     (params: { viewableItems: ViewToken[]; changed: ViewToken[] }) => {
@@ -476,116 +504,137 @@ const FeedScreen = () => {
     }
   }, [isPlaying, pause, play]);
 
-  const renderItem = ({ item, index }: ListRenderItemInfo<AudioTrack>) => {
-    // Find the corresponding whisper for this item
-    const whisper = whispers.find((w) => w.id === item.id);
+  // Memoized render function for better performance
+  const renderItem = useCallback(
+    ({ item, index }: ListRenderItemInfo<AudioTrack>) => {
+      // Find the corresponding whisper for this item
+      const whisper = whispers.find((w) => w.id === item.id);
 
-    if (!whisper) {
-      console.warn(`Whisper not found for item ${item.id}`);
-      return null;
-    }
+      if (!whisper) {
+        console.warn(`Whisper not found for item ${item.id}`);
+        return null;
+      }
 
-    return (
-      <View style={styles.page}>
-        <View style={styles.artworkContainer}>
-          <View style={styles.artworkShadow} />
-          <View style={styles.artworkWrapper}>
-            <View style={styles.artworkImage}>
-              {/* Replace with <Image> for real artwork */}
+      return (
+        <View style={styles.page}>
+          <View style={styles.artworkContainer}>
+            <View style={styles.artworkShadow} />
+            <View style={styles.artworkWrapper}>
+              <View style={styles.artworkImage}>
+                {/* Replace with <Image> for real artwork */}
+              </View>
             </View>
           </View>
-        </View>
-        <Text style={styles.title}>{item.title}</Text>
-        <Text style={styles.artist}>{item.artist}</Text>
-        <View style={styles.progressBarContainer}>
-          <View style={styles.progressBarBg}>
-            <View
-              style={[
-                styles.progressBarFill,
-                {
-                  width: `${
-                    (progress.position / (progress.duration || 1)) * 100
-                  }%`,
-                },
-              ]}
+          <Text style={styles.title}>{item.title}</Text>
+          <Text style={styles.artist}>{item.artist}</Text>
+          <View style={styles.progressBarContainer}>
+            <View style={styles.progressBarBg}>
+              <View
+                style={[
+                  styles.progressBarFill,
+                  {
+                    width: `${
+                      (progress.position / (progress.duration || 1)) * 100
+                    }%`,
+                  },
+                ]}
+              />
+            </View>
+            <View style={styles.progressTimeRow}>
+              <Text style={styles.progressTime}>
+                {formatTime(progress.position)}
+              </Text>
+              <Text style={styles.progressTime}>
+                {formatTime(progress.duration)}
+              </Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.playPauseButton}
+            onPress={handlePlayPause}
+          >
+            <Text style={styles.playPauseText}>
+              {isPlaying ? "Pause" : "Play"}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Whisper Interactions */}
+          <React.Suspense
+            fallback={<View style={styles.interactionsPlaceholder} />}
+          >
+            <WhisperInteractions
+              whisper={whisper}
+              onLikeChange={(isLiked, newLikeCount) => {
+                // Update the whisper in the feed store
+                const updatedWhispers = whispers.map((w) =>
+                  w.id === whisper.id ? { ...w, likes: newLikeCount } : w
+                );
+                setWhispers(updatedWhispers);
+              }}
+              onCommentChange={(newCommentCount) => {
+                // Update the whisper in the feed store
+                const updatedWhispers = whispers.map((w) =>
+                  w.id === whisper.id ? { ...w, replies: newCommentCount } : w
+                );
+                setWhispers(updatedWhispers);
+              }}
             />
-          </View>
-          <View style={styles.progressTimeRow}>
-            <Text style={styles.progressTime}>
-              {formatTime(progress.position)}
-            </Text>
-            <Text style={styles.progressTime}>
-              {formatTime(progress.duration)}
-            </Text>
-          </View>
+          </React.Suspense>
+
+          {/* Debug button */}
+          <TouchableOpacity
+            style={[
+              styles.playPauseButton,
+              { marginTop: 10, backgroundColor: "#666" },
+            ]}
+            onPress={() => {
+              const storeState = useAudioStore.getState();
+              const cacheStats = audioCacheService.getCacheStats();
+              console.log("Current state:", {
+                currentTrackIndex,
+                isPlaying,
+                currentPosition: progress.position,
+                duration: progress.duration,
+                lastPlayedTrack: lastPlayedTrackRef.current,
+                savedPosition: storeState.currentPosition,
+                savedTrackIndex: storeState.currentTrackIndex,
+                cacheStats,
+                cachedWhispers: whispers.length,
+                cacheValid: isCacheValid(),
+              });
+
+              // Test manual restoration
+              if (storeState.currentPosition > 0) {
+                console.log("Testing manual restoration...");
+                restorePlayerState().catch(console.error);
+              } else {
+                // Test manual track switching
+                const nextTrack = (currentTrackIndex + 1) % tracks.length;
+                console.log(`Manually switching to track ${nextTrack}`);
+                playTrack(nextTrack).catch(console.error);
+              }
+            }}
+          >
+            <Text style={styles.playPauseText}>Debug</Text>
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          style={styles.playPauseButton}
-          onPress={handlePlayPause}
-        >
-          <Text style={styles.playPauseText}>
-            {isPlaying ? "Pause" : "Play"}
-          </Text>
-        </TouchableOpacity>
-
-        {/* Whisper Interactions */}
-        <WhisperInteractions
-          whisper={whisper}
-          onLikeChange={(isLiked, newLikeCount) => {
-            // Update the whisper in the feed store
-            const updatedWhispers = whispers.map((w) =>
-              w.id === whisper.id ? { ...w, likes: newLikeCount } : w
-            );
-            setWhispers(updatedWhispers);
-          }}
-          onCommentChange={(newCommentCount) => {
-            // Update the whisper in the feed store
-            const updatedWhispers = whispers.map((w) =>
-              w.id === whisper.id ? { ...w, replies: newCommentCount } : w
-            );
-            setWhispers(updatedWhispers);
-          }}
-        />
-
-        {/* Debug button */}
-        <TouchableOpacity
-          style={[
-            styles.playPauseButton,
-            { marginTop: 10, backgroundColor: "#666" },
-          ]}
-          onPress={() => {
-            const storeState = useAudioStore.getState();
-            const cacheStats = audioCacheService.getCacheStats();
-            console.log("Current state:", {
-              currentTrackIndex,
-              isPlaying,
-              currentPosition: progress.position,
-              duration: progress.duration,
-              lastPlayedTrack: lastPlayedTrackRef.current,
-              savedPosition: storeState.currentPosition,
-              savedTrackIndex: storeState.currentTrackIndex,
-              cacheStats,
-              cachedWhispers: whispers.length,
-              cacheValid: isCacheValid(),
-            });
-
-            // Test manual restoration
-            if (storeState.currentPosition > 0) {
-              console.log("Testing manual restoration...");
-              restorePlayerState().catch(console.error);
-            } else {
-              // Test manual track switching
-              const nextTrack = (currentTrackIndex + 1) % tracks.length;
-              console.log(`Manually switching to track ${nextTrack}`);
-              playTrack(nextTrack).catch(console.error);
-            }
-          }}
-        >
-          <Text style={styles.playPauseText}>Debug</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  };
+      );
+    },
+    [
+      isPlaying,
+      progress.position,
+      progress.duration,
+      whispers,
+      setWhispers,
+      handlePlayPause,
+      currentTrackIndex,
+      tracks.length,
+      restorePlayerState,
+      playTrack,
+      audioCacheService,
+      isCacheValid,
+    ]
+  );
 
   // Show loading state
   if (loading) {
@@ -641,7 +690,7 @@ const FeedScreen = () => {
 
       <FlatList
         ref={flatListRef}
-        data={convertWhispersToAudioTracks(whispers)}
+        data={convertWhispersToAudioTracks}
         renderItem={renderItem}
         keyExtractor={(item) => item.id}
         pagingEnabled
@@ -672,6 +721,17 @@ const FeedScreen = () => {
             </View>
           ) : null
         }
+        // Performance optimizations
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={3}
+        windowSize={5}
+        initialNumToRender={1}
+        updateCellsBatchingPeriod={50}
+        disableVirtualization={false}
+        maintainVisibleContentPosition={{
+          minIndexForVisible: 0,
+          autoscrollToTopThreshold: 10,
+        }}
       />
     </View>
   );
@@ -865,6 +925,12 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 14,
     color: "#666",
+  },
+  interactionsPlaceholder: {
+    height: 60,
+    marginTop: 20,
+    backgroundColor: "#f5f5f5",
+    borderRadius: 8,
   },
 });
 
