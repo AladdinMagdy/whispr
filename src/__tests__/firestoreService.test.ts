@@ -175,7 +175,7 @@ describe("FirestoreService", () => {
 
     test("should have correct likeWhisper signature", () => {
       const service = getFirestoreService();
-      expect(service.likeWhisper).toHaveLength(2);
+      expect(service.likeWhisper).toHaveLength(4);
     });
 
     test("should have correct deleteWhisper signature", () => {

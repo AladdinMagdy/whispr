@@ -76,6 +76,14 @@ describe("InteractionService", () => {
       // Mock initial state
       mockFirestoreService.hasUserLikedWhisper.mockResolvedValue(false);
 
+      // Mock server responses for like operations
+      mockFirestoreService.likeWhisper.mockResolvedValue(undefined);
+
+      // Mock server whisper responses after like operations
+      mockFirestoreService.getWhisper
+        .mockResolvedValueOnce({ likes: 1 }) // After first like
+        .mockResolvedValueOnce({ likes: 0 }); // After second like (unlike)
+
       // First like
       const result1 = await interactionService.toggleLike(whisperId);
       expect(result1.isLiked).toBe(true);
@@ -321,6 +329,10 @@ describe("InteractionService", () => {
         "whispr_count_test-whisper-123",
       ]);
 
+      // Mock server responses for toggleLike
+      mockFirestoreService.likeWhisper.mockResolvedValue(undefined);
+      mockFirestoreService.getWhisper.mockResolvedValue({ likes: 1 });
+
       // Add some data to cache
       await interactionService.toggleLike(whisperId);
 
@@ -342,6 +354,10 @@ describe("InteractionService", () => {
         "whispr_comments_test-whisper-123_20_first",
         "whispr_count_test-whisper-123",
       ]);
+
+      // Mock server responses for toggleLike
+      mockFirestoreService.likeWhisper.mockResolvedValue(undefined);
+      mockFirestoreService.getWhisper.mockResolvedValue({ likes: 1 });
 
       // Add some data to cache
       await interactionService.toggleLike(whisperId);
@@ -369,6 +385,10 @@ describe("InteractionService", () => {
         JSON.stringify({ isLiked: true, count: 5, timestamp: Date.now() })
       );
 
+      // Mock server responses for toggleLike
+      mockFirestoreService.likeWhisper.mockResolvedValue(undefined);
+      mockFirestoreService.getWhisper.mockResolvedValue({ likes: 1 });
+
       // This should trigger AsyncStorage operations
       await interactionService.toggleLike(whisperId);
 
@@ -382,6 +402,10 @@ describe("InteractionService", () => {
       (AsyncStorage.setItem as jest.Mock).mockRejectedValue(
         new Error("Storage error")
       );
+
+      // Mock server responses for toggleLike
+      mockFirestoreService.likeWhisper.mockResolvedValue(undefined);
+      mockFirestoreService.getWhisper.mockResolvedValue({ likes: 1 });
 
       // Should not throw error
       await expect(
@@ -417,6 +441,7 @@ describe("InteractionService", () => {
       // Use a unique whisperId to avoid timer collisions
       const whisperId = `test-whisper-${Date.now()}-${Math.random()}`;
       mockFirestoreService.likeWhisper.mockResolvedValue(undefined);
+      mockFirestoreService.getWhisper.mockResolvedValue({ likes: 1 });
 
       // Call toggleLike once
       await interactionService.toggleLike(whisperId);
