@@ -25,6 +25,9 @@ const mockFirestoreService = {
   deleteComment: jest.fn(),
   likeWhisper: jest.fn(),
   likeComment: jest.fn(),
+  getComment: jest.fn(),
+  hasUserLikedComment: jest.fn(),
+  getCommentLikes: jest.fn(),
 };
 
 const mockAuthStore = {
@@ -279,10 +282,12 @@ describe("InteractionService", () => {
   });
 
   describe("toggleCommentLike", () => {
-    it("should toggle comment like", async () => {
+    it("should toggle comment like with optimistic updates", async () => {
       const commentId = "test-comment-123";
 
+      // Mock server responses
       mockFirestoreService.likeComment.mockResolvedValue(undefined);
+      mockFirestoreService.getComment.mockResolvedValue({ likes: 1 });
 
       const result = await interactionService.toggleCommentLike(commentId);
 
@@ -292,6 +297,22 @@ describe("InteractionService", () => {
         commentId,
         mockUser.uid
       );
+      expect(mockFirestoreService.getComment).toHaveBeenCalledWith(commentId);
+    });
+
+    it("should prevent rapid-fire comment likes", async () => {
+      const commentId = "test-comment-123";
+
+      // Start first like operation
+      const promise1 = interactionService.toggleCommentLike(commentId);
+
+      // Try to like again immediately
+      const promise2 = interactionService.toggleCommentLike(commentId);
+
+      await expect(promise2).rejects.toThrow(
+        "Comment like operation already in progress"
+      );
+      await promise1; // Wait for first operation to complete
     });
 
     it("should throw error if user not authenticated", async () => {

@@ -431,15 +431,159 @@ export class InteractionService {
       throw new Error("User must be authenticated to like comments");
     }
 
-    try {
-      // Call the FirestoreService method directly
-      await this.firestoreService.likeComment(commentId, user.uid);
+    const cacheKey = `comment_${commentId}_${user.uid}`;
 
-      // For now, return optimistic values since we don't have comment like caching
-      // In a full implementation, you'd want to add comment like caching similar to whisper likes
-      return { isLiked: true, count: 1 };
+    // Prevent rapid-fire likes
+    if (this.pendingLikes.has(cacheKey)) {
+      throw new Error("Comment like operation already in progress");
+    }
+
+    this.pendingLikes.add(cacheKey);
+
+    try {
+      // Get current state from cache
+      const currentState = this.likeCache[cacheKey] || {
+        isLiked: false,
+        count: 0,
+        timestamp: 0,
+      };
+
+      // Optimistic update
+      const newIsLiked = !currentState.isLiked;
+      const newCount = newIsLiked
+        ? currentState.count + 1
+        : currentState.count - 1;
+
+      // Update cache immediately
+      this.likeCache[cacheKey] = {
+        isLiked: newIsLiked,
+        count: newCount,
+        timestamp: Date.now(),
+      };
+
+      // Persist to AsyncStorage
+      await this.persistLikeCache(cacheKey, this.likeCache[cacheKey]);
+
+      // Update on server
+      try {
+        await this.firestoreService.likeComment(commentId, user.uid);
+
+        // Get updated comment from server to validate count
+        const updatedComment = await this.firestoreService.getComment(
+          commentId
+        );
+        const serverCount = updatedComment?.likes || 0;
+
+        // If server count differs from our optimistic count, update cache
+        if (serverCount !== newCount) {
+          console.log(
+            `⚠️ Comment count mismatch: optimistic=${newCount}, server=${serverCount}`
+          );
+          this.likeCache[cacheKey] = {
+            ...this.likeCache[cacheKey],
+            count: serverCount,
+            timestamp: Date.now(),
+          };
+          return { isLiked: newIsLiked, count: serverCount };
+        }
+      } catch (error) {
+        console.error(
+          "Server update failed, reverting optimistic update:",
+          error
+        );
+        // Revert optimistic update on server failure
+        this.likeCache[cacheKey] = currentState;
+        throw error;
+      }
+
+      return { isLiked: newIsLiked, count: newCount };
+    } finally {
+      this.pendingLikes.delete(cacheKey);
+    }
+  }
+
+  /**
+   * Check if user has liked a comment (cached)
+   */
+  async hasUserLikedComment(commentId: string): Promise<boolean> {
+    const { user } = useAuthStore.getState();
+    if (!user) return false;
+
+    const cacheKey = `comment_${commentId}_${user.uid}`;
+
+    // Check memory cache first
+    if (
+      this.likeCache[cacheKey] &&
+      Date.now() - this.likeCache[cacheKey].timestamp < CACHE_TTL
+    ) {
+      return this.likeCache[cacheKey].isLiked;
+    }
+
+    // Check AsyncStorage cache
+    const cached = await this.getLikeCache(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      this.likeCache[cacheKey] = cached;
+      return cached.isLiked;
+    }
+
+    // Fetch from server
+    try {
+      const isLiked = await this.firestoreService.hasUserLikedComment(
+        commentId,
+        user.uid
+      );
+
+      // Update cache
+      this.likeCache[cacheKey] = {
+        isLiked,
+        count: 0, // We'll get this from the comment data
+        timestamp: Date.now(),
+      };
+
+      await this.persistLikeCache(cacheKey, this.likeCache[cacheKey]);
+      return isLiked;
     } catch (error) {
-      console.error("Error toggling comment like:", error);
+      console.error("Error checking comment like state:", error);
+      return false;
+    }
+  }
+
+  /**
+   * Get comment likes with pagination
+   */
+  async getCommentLikes(
+    commentId: string,
+    limit: number = 50,
+    lastDoc?: any
+  ): Promise<{ likes: any[]; hasMore: boolean; lastDoc: any }> {
+    const cacheKey = `comment_likes_${commentId}`;
+
+    // Check cache for first page
+    if (!lastDoc && this.likeListCache[cacheKey]) {
+      const cached = this.likeListCache[cacheKey];
+      if (Date.now() - cached.timestamp < CACHE_TTL) {
+        return cached;
+      }
+    }
+
+    try {
+      const result = await this.firestoreService.getCommentLikes(
+        commentId,
+        limit,
+        lastDoc
+      );
+
+      // Cache first page
+      if (!lastDoc) {
+        this.likeListCache[cacheKey] = {
+          ...result,
+          timestamp: Date.now(),
+        };
+      }
+
+      return result;
+    } catch (error) {
+      console.error("Error getting comment likes:", error);
       throw error;
     }
   }
@@ -649,6 +793,18 @@ export class InteractionService {
       userDisplayName,
       userProfileColor
     );
+  }
+
+  /**
+   * Get a single comment by ID
+   */
+  async getComment(commentId: string): Promise<any> {
+    try {
+      return await this.firestoreService.getComment(commentId);
+    } catch (error) {
+      console.error("Error getting comment:", error);
+      throw error;
+    }
   }
 }
 

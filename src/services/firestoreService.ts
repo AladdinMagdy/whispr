@@ -832,6 +832,147 @@ export class FirestoreService {
       console.log("🗑️ FirestoreService singleton destroyed");
     }
   }
+
+  /**
+   * Get a single comment by ID
+   */
+  async getComment(commentId: string): Promise<Comment | null> {
+    try {
+      const commentRef = doc(
+        this.firestore,
+        FIRESTORE_COLLECTIONS.REPLIES,
+        commentId
+      );
+
+      const commentDoc = await getDoc(commentRef);
+      if (!commentDoc.exists()) {
+        return null;
+      }
+
+      const data = commentDoc.data();
+      return {
+        id: commentDoc.id,
+        whisperId: data.whisperId,
+        userId: data.userId,
+        userDisplayName: data.userDisplayName,
+        userProfileColor: data.userProfileColor,
+        text: data.text,
+        likes: data.likes || 0,
+        createdAt: data.createdAt?.toDate() || new Date(),
+        isEdited: data.isEdited || false,
+        editedAt: data.editedAt?.toDate(),
+      };
+    } catch (error) {
+      console.error("❌ Error fetching comment:", error);
+      throw new Error(
+        `Failed to fetch comment: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Check if user has liked a comment
+   */
+  async hasUserLikedComment(
+    commentId: string,
+    userId: string
+  ): Promise<boolean> {
+    try {
+      const likeQuery = query(
+        collection(this.firestore, "commentLikes"),
+        where("commentId", "==", commentId),
+        where("userId", "==", userId)
+      );
+
+      const likeSnapshot = await getDocs(likeQuery);
+      return !likeSnapshot.empty;
+    } catch (error) {
+      console.error("❌ Error checking comment like state:", error);
+      throw new Error(
+        `Failed to check comment like state: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Get likes for a comment (paginated)
+   */
+  async getCommentLikes(
+    commentId: string,
+    limitCount: number = 50,
+    startAfterDoc?: QueryDocumentSnapshot<DocumentData>
+  ): Promise<{
+    likes: any[];
+    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
+    hasMore: boolean;
+  }> {
+    try {
+      const likesQuery = query(
+        collection(this.firestore, "commentLikes"),
+        where("commentId", "==", commentId),
+        orderBy("createdAt", "desc"),
+        ...(startAfterDoc ? [startAfter(startAfterDoc)] : []),
+        limit(limitCount)
+      );
+
+      const querySnapshot = await getDocs(likesQuery);
+      const likes: any[] = [];
+
+      // Get user details for each like
+      for (const likeDoc of querySnapshot.docs) {
+        const likeData = likeDoc.data();
+
+        // Get user details
+        const userRef = doc(
+          this.firestore,
+          this.usersCollection,
+          likeData.userId
+        );
+        const userDoc = await getDoc(userRef);
+
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          likes.push({
+            id: likeDoc.id,
+            commentId: likeData.commentId,
+            userId: likeData.userId,
+            userDisplayName: userData.displayName || "Anonymous",
+            userProfileColor: userData.profileColor || "#007AFF",
+            createdAt: likeData.createdAt?.toDate() || new Date(),
+          });
+        } else {
+          // Fallback for deleted users
+          likes.push({
+            id: likeDoc.id,
+            commentId: likeData.commentId,
+            userId: likeData.userId,
+            userDisplayName: "Anonymous",
+            userProfileColor: "#999999",
+            createdAt: likeData.createdAt?.toDate() || new Date(),
+          });
+        }
+      }
+
+      const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
+      const hasMore = querySnapshot.docs.length === limitCount;
+
+      console.log(
+        `✅ Fetched ${likes.length} likes for comment ${commentId}, hasMore: ${hasMore}`
+      );
+      return { likes, lastDoc, hasMore };
+    } catch (error) {
+      console.error("❌ Error fetching comment likes:", error);
+      throw new Error(
+        `Failed to fetch comment likes: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
 }
 
 /**

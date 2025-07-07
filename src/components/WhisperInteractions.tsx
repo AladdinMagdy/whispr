@@ -37,16 +37,59 @@ const CommentItem: React.FC<CommentItemProps> = ({
 }) => {
   const [isLiked, setIsLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(comment.likes);
+  const [showCommentLikes, setShowCommentLikes] = useState(false);
+  const [commentLikes, setCommentLikes] = useState<any[]>([]);
+  const [loadingCommentLikes, setLoadingCommentLikes] = useState(false);
+  const [commentLikesHasMore, setCommentLikesHasMore] = useState(true);
+  const [commentLikesLastDoc, setCommentLikesLastDoc] = useState<any>(null);
+
+  const interactionService = getInteractionService();
+
+  // Load comment like state on mount
+  useEffect(() => {
+    const loadCommentLikeState = async () => {
+      try {
+        const hasLiked = await interactionService.hasUserLikedComment(
+          comment.id
+        );
+        setIsLiked(hasLiked);
+        // Get the current comment data to ensure we have the latest like count
+        const currentComment = await interactionService.getComment(comment.id);
+        if (currentComment) {
+          setLikeCount(currentComment.likes);
+        } else {
+          setLikeCount(comment.likes);
+        }
+      } catch (error) {
+        console.error("Error loading comment like state:", error);
+        setIsLiked(false);
+        setLikeCount(comment.likes);
+      }
+    };
+
+    loadCommentLikeState();
+  }, [comment.id, interactionService]);
 
   const handleLike = async () => {
     try {
-      const interactionService = getInteractionService();
-      await interactionService.toggleCommentLike(comment.id);
-
-      const newLikeCount = isLiked ? likeCount - 1 : likeCount + 1;
-      setLikeCount(newLikeCount);
-      setIsLiked(!isLiked);
+      const result = await interactionService.toggleCommentLike(comment.id);
+      setIsLiked(result.isLiked);
+      setLikeCount(result.count);
       onLikeComment(comment.id);
+
+      // Refresh the comment data to ensure we have the latest count
+      setTimeout(async () => {
+        try {
+          const currentComment = await interactionService.getComment(
+            comment.id
+          );
+          if (currentComment) {
+            setLikeCount(currentComment.likes);
+          }
+        } catch (error) {
+          console.error("Error refreshing comment like count:", error);
+        }
+      }, 1000); // Small delay to ensure server has updated
     } catch (error) {
       console.error("Error liking comment:", error);
     }
@@ -67,46 +110,132 @@ const CommentItem: React.FC<CommentItemProps> = ({
     );
   };
 
+  const loadCommentLikes = async (reset = false) => {
+    if (loadingCommentLikes) return;
+    setLoadingCommentLikes(true);
+
+    try {
+      const result = await interactionService.getCommentLikes(
+        comment.id,
+        20,
+        reset ? null : commentLikesLastDoc
+      );
+
+      if (reset) {
+        setCommentLikes(result.likes);
+      } else {
+        setCommentLikes([...commentLikes, ...result.likes]);
+      }
+
+      setCommentLikesHasMore(result.hasMore);
+      setCommentLikesLastDoc(result.lastDoc);
+    } catch (error) {
+      console.error("Error loading comment likes:", error);
+    } finally {
+      setLoadingCommentLikes(false);
+    }
+  };
+
+  const handleShowCommentLikes = () => {
+    setShowCommentLikes(true);
+    loadCommentLikes(true);
+  };
+
   return (
-    <View style={styles.commentItem}>
-      <View style={styles.commentHeader}>
-        <View style={styles.commentUserInfo}>
-          <View
-            style={[
-              styles.userAvatar,
-              { backgroundColor: comment.userProfileColor },
-            ]}
-          >
-            <Text style={styles.userInitial}>
-              {comment.userDisplayName?.charAt(0)?.toUpperCase() || "?"}
+    <>
+      <View style={styles.commentItem}>
+        <View style={styles.commentHeader}>
+          <View style={styles.commentUserInfo}>
+            <View
+              style={[
+                styles.userAvatar,
+                { backgroundColor: comment.userProfileColor },
+              ]}
+            >
+              <Text style={styles.userInitial}>
+                {comment.userDisplayName?.charAt(0)?.toUpperCase() || "?"}
+              </Text>
+            </View>
+            <Text style={styles.userName}>
+              {comment.userDisplayName || "Anonymous"}
             </Text>
           </View>
-          <Text style={styles.userName}>
-            {comment.userDisplayName || "Anonymous"}
+          <View style={styles.commentActions}>
+            <TouchableOpacity onPress={handleLike} style={styles.likeButton}>
+              <Text style={[styles.likeIcon, isLiked && styles.likedIcon]}>
+                {isLiked ? "❤️" : "🤍"}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleShowCommentLikes}
+              style={styles.likeCountButton}
+            >
+              <Text style={styles.likeCount}>{likeCount}</Text>
+            </TouchableOpacity>
+            {comment.userId === currentUserId && (
+              <TouchableOpacity
+                onPress={handleDelete}
+                style={styles.deleteButton}
+              >
+                <Text style={styles.deleteIcon}>🗑️</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+        <Text style={styles.commentText}>{comment.text}</Text>
+        <View style={styles.commentFooter}>
+          <Text style={styles.commentTime}>
+            {new Date(comment.createdAt).toLocaleDateString()}
           </Text>
         </View>
-        <View style={styles.commentActions}>
-          <TouchableOpacity onPress={handleLike} style={styles.likeButton}>
-            <Text style={[styles.likeIcon, isLiked && styles.likedIcon]}>
-              {isLiked ? "❤️" : "🤍"}
-            </Text>
-            <Text style={styles.likeCount}>{likeCount}</Text>
-          </TouchableOpacity>
-          {comment.userId === currentUserId && (
-            <TouchableOpacity
-              onPress={handleDelete}
-              style={styles.deleteButton}
-            >
-              <Text style={styles.deleteIcon}>🗑️</Text>
-            </TouchableOpacity>
-          )}
-        </View>
       </View>
-      <Text style={styles.commentText}>{comment.text}</Text>
-      <Text style={styles.commentTime}>
-        {new Date(comment.createdAt).toLocaleDateString()}
-      </Text>
-    </View>
+
+      {/* Comment Likes Modal */}
+      <Modal
+        visible={showCommentLikes}
+        animationType="slide"
+        onRequestClose={() => setShowCommentLikes(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Comment Likes</Text>
+            <TouchableOpacity
+              onPress={() => setShowCommentLikes(false)}
+              style={styles.closeButton}
+            >
+              <Text style={styles.closeButtonText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={commentLikes}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <View style={styles.likeItem}>
+                <View
+                  style={[
+                    styles.userAvatar,
+                    { backgroundColor: item.userProfileColor },
+                  ]}
+                >
+                  <Text style={styles.userInitial}>
+                    {item.userDisplayName?.charAt(0)?.toUpperCase() || "?"}
+                  </Text>
+                </View>
+                <Text style={styles.userName}>
+                  {item.userDisplayName || "Anonymous"}
+                </Text>
+              </View>
+            )}
+            onEndReached={() => commentLikesHasMore && loadCommentLikes()}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={
+              loadingCommentLikes ? <ActivityIndicator /> : null
+            }
+            contentContainerStyle={styles.listContentContainer}
+          />
+        </SafeAreaView>
+      </Modal>
+    </>
   );
 };
 
@@ -631,13 +760,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "500",
     color: "#333",
-    flex: 1,
+    marginRight: 8,
   },
   commentActions: {
     flexDirection: "row",
     alignItems: "center",
     flexShrink: 0,
     minWidth: 60,
+    marginLeft: 8,
   },
   likeButton: {
     flexDirection: "row",
@@ -647,6 +777,14 @@ const styles = StyleSheet.create({
   likeIcon: {
     fontSize: 16,
     marginRight: 4,
+  },
+  likeCountButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    marginLeft: 2,
+    borderRadius: 6,
+    justifyContent: "center",
+    alignItems: "center",
   },
   likeCount: {
     fontSize: 12,
@@ -667,6 +805,12 @@ const styles = StyleSheet.create({
   commentTime: {
     fontSize: 12,
     color: "#999",
+  },
+  commentFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 8,
   },
   emptyComments: {
     flex: 1,
