@@ -26,14 +26,13 @@ import {
 const { width, height } = Dimensions.get("window");
 
 type RootStackParamList = {
-  Home: undefined;
-  Record: undefined;
-  Feed: undefined;
+  MainTabs: undefined;
+  RecordModal: undefined;
 };
 
 type RecordScreenNavigationProp = StackNavigationProp<
   RootStackParamList,
-  "Record"
+  "RecordModal"
 >;
 
 interface RecordingState {
@@ -49,6 +48,38 @@ interface RecordingState {
 export default function RecordScreen() {
   const navigation = useNavigation<RecordScreenNavigationProp>();
   const { user, incrementWhisperCount } = useAuth();
+
+  // Check if we're in a modal context
+  const isModal = navigation
+    .getState()
+    .routes.some((route) => route.name === "RecordModal");
+
+  // If we're in the tab context, show a simple view with a button to open the modal
+  if (!isModal) {
+    return (
+      <View style={styles.tabContainer}>
+        <Card style={styles.tabCard}>
+          <Card.Content style={styles.tabContent}>
+            <Text variant="headlineSmall" style={styles.tabTitle}>
+              Record Your Whisper
+            </Text>
+            <Text variant="bodyMedium" style={styles.tabSubtitle}>
+              Tap the button below to start recording your whisper
+            </Text>
+            <Button
+              mode="contained"
+              onPress={() => navigation.navigate("RecordModal")}
+              style={styles.tabButton}
+              icon="microphone"
+              contentStyle={styles.buttonContent}
+            >
+              Open Recording Studio
+            </Button>
+          </Card.Content>
+        </Card>
+      </View>
+    );
+  }
 
   // Initialize recording service
   const recordingService = useRef(getRecordingService()).current;
@@ -348,7 +379,8 @@ export default function RecordScreen() {
                 uploadProgress: 0,
                 isUploading: false,
               });
-              navigation.navigate("Feed");
+              // Navigate back to the main tabs after successful upload
+              navigation.goBack();
             },
           },
         ]
@@ -912,5 +944,35 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 18,
     fontWeight: "bold",
+  },
+  tabContainer: {
+    flex: 1,
+    padding: 20,
+    justifyContent: "center",
+    backgroundColor: "#f5f5f5",
+  },
+  tabCard: {
+    marginBottom: 30,
+    elevation: 4,
+  },
+  tabContent: {
+    alignItems: "center",
+  },
+  tabTitle: {
+    textAlign: "center",
+    marginBottom: 10,
+    color: "#333",
+  },
+  tabSubtitle: {
+    textAlign: "center",
+    color: "#666",
+    marginBottom: 20,
+  },
+  tabButton: {
+    marginTop: 10,
+  },
+  buttonContent: {
+    paddingVertical: 20,
+    paddingHorizontal: 40,
   },
 });

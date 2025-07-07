@@ -1,80 +1,208 @@
 import React from "react";
-import { View, StyleSheet } from "react-native";
-import { Button, Text, Card } from "react-native-paper";
+import { View, StyleSheet, ScrollView } from "react-native";
+import { Button, Text, Card, Avatar, Divider } from "react-native-paper";
 import { useNavigation } from "@react-navigation/native";
 import { StackNavigationProp } from "@react-navigation/stack";
+import { useAuth } from "../providers/AuthProvider";
 
 type RootStackParamList = {
-  Home: undefined;
-  Record: undefined;
-  Feed: undefined;
+  MainTabs: undefined;
+  RecordModal: undefined;
 };
 
-type HomeScreenNavigationProp = StackNavigationProp<RootStackParamList, "Home">;
+type HomeScreenNavigationProp = StackNavigationProp<
+  RootStackParamList,
+  "MainTabs"
+>;
 
 export default function HomeScreen() {
   const navigation = useNavigation<HomeScreenNavigationProp>();
+  const { user, signOut, isAuthenticated } = useAuth();
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      console.error("Sign out error:", error);
+    }
+  };
 
   return (
-    <View style={styles.container}>
-      <Card style={styles.card}>
-        <Card.Content>
-          <Text variant="headlineMedium" style={styles.title}>
-            Welcome to Whispr
+    <ScrollView style={styles.container}>
+      <Card style={styles.profileCard}>
+        <Card.Content style={styles.profileContent}>
+          <Avatar.Text
+            size={80}
+            label={user?.displayName?.charAt(0) || "U"}
+            style={[
+              styles.avatar,
+              { backgroundColor: user?.profileColor || "#007AFF" },
+            ]}
+          />
+          <Text variant="headlineSmall" style={styles.displayName}>
+            {user?.displayName || "Anonymous User"}
           </Text>
           <Text variant="bodyMedium" style={styles.subtitle}>
-            Share your whispers anonymously
+            Whisper Enthusiast
           </Text>
         </Card.Content>
       </Card>
 
-      <View style={styles.buttonContainer}>
-        <Button
-          mode="contained"
-          onPress={() => navigation.navigate("Record")}
-          style={styles.button}
-          icon="microphone"
-        >
-          Record Whisper
-        </Button>
+      <Card style={styles.statsCard}>
+        <Card.Content>
+          <Text variant="titleMedium" style={styles.statsTitle}>
+            Your Stats
+          </Text>
+          <View style={styles.statsRow}>
+            <View style={styles.statItem}>
+              <Text variant="headlineSmall" style={styles.statNumber}>
+                {user?.whisperCount || 0}
+              </Text>
+              <Text variant="bodySmall" style={styles.statLabel}>
+                Whispers
+              </Text>
+            </View>
+            <Divider style={styles.divider} />
+            <View style={styles.statItem}>
+              <Text variant="headlineSmall" style={styles.statNumber}>
+                {user?.totalReactions || 0}
+              </Text>
+              <Text variant="bodySmall" style={styles.statLabel}>
+                Reactions
+              </Text>
+            </View>
+          </View>
+        </Card.Content>
+      </Card>
 
-        <Button
-          mode="outlined"
-          onPress={() => navigation.navigate("Feed")}
-          style={styles.button}
-          icon="format-list-bulleted"
-        >
-          View Whispers
-        </Button>
-      </View>
-    </View>
+      <Card style={styles.actionsCard}>
+        <Card.Content>
+          <Text variant="titleMedium" style={styles.actionsTitle}>
+            Quick Actions
+          </Text>
+
+          <Button
+            mode="contained"
+            onPress={() => navigation.navigate("RecordModal")}
+            style={styles.actionButton}
+            icon="microphone"
+            contentStyle={styles.buttonContent}
+          >
+            Record New Whisper
+          </Button>
+
+          <Button
+            mode="outlined"
+            onPress={() => navigation.navigate("MainTabs")}
+            style={styles.actionButton}
+            icon="format-list-bulleted"
+            contentStyle={styles.buttonContent}
+          >
+            Browse Whispers
+          </Button>
+        </Card.Content>
+      </Card>
+
+      {isAuthenticated && (
+        <Card style={styles.settingsCard}>
+          <Card.Content>
+            <Text variant="titleMedium" style={styles.settingsTitle}>
+              Account
+            </Text>
+
+            <Button
+              mode="outlined"
+              onPress={handleSignOut}
+              style={styles.actionButton}
+              icon="logout"
+              contentStyle={styles.buttonContent}
+              textColor="#FF3B30"
+            >
+              Sign Out
+            </Button>
+          </Card.Content>
+        </Card>
+      )}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
-    justifyContent: "center",
     backgroundColor: "#f5f5f5",
+    padding: 16,
   },
-  card: {
-    marginBottom: 30,
-    elevation: 4,
+  profileCard: {
+    marginBottom: 16,
+    elevation: 2,
   },
-  title: {
+  profileContent: {
+    alignItems: "center",
+    paddingVertical: 24,
+  },
+  avatar: {
+    marginBottom: 16,
+  },
+  displayName: {
+    fontWeight: "bold",
+    marginBottom: 4,
     textAlign: "center",
-    marginBottom: 10,
-    color: "#333",
   },
   subtitle: {
-    textAlign: "center",
     color: "#666",
+    textAlign: "center",
   },
-  buttonContainer: {
-    gap: 15,
+  statsCard: {
+    marginBottom: 16,
+    elevation: 2,
   },
-  button: {
-    marginVertical: 5,
+  statsTitle: {
+    fontWeight: "bold",
+    marginBottom: 16,
+  },
+  statsRow: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    alignItems: "center",
+  },
+  statItem: {
+    alignItems: "center",
+    flex: 1,
+  },
+  statNumber: {
+    fontWeight: "bold",
+    color: "#007AFF",
+  },
+  statLabel: {
+    color: "#666",
+    marginTop: 4,
+  },
+  divider: {
+    width: 1,
+    height: 40,
+    backgroundColor: "#E5E5EA",
+  },
+  actionsCard: {
+    marginBottom: 16,
+    elevation: 2,
+  },
+  actionsTitle: {
+    fontWeight: "bold",
+    marginBottom: 16,
+  },
+  actionButton: {
+    marginBottom: 12,
+  },
+  buttonContent: {
+    paddingVertical: 8,
+  },
+  settingsCard: {
+    marginBottom: 16,
+    elevation: 2,
+  },
+  settingsTitle: {
+    fontWeight: "bold",
+    marginBottom: 16,
   },
 });

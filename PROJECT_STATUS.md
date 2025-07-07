@@ -1,10 +1,10 @@
 # Whispr Project Status & Roadmap
 
-## 🎯 Current Status: Phase 3.6 Complete ✅
+## 🎯 Current Status: Phase 4.0 Complete ✅
 
 **Date:** June 2025
-**Phase:** Phase 3.6: Whisper Interactions & Social Features
-**Status:** ✅ **IMPLEMENTED & FIXED** - Likes and comments functionality with proper state persistence
+**Phase:** Phase 4.0: TikTok-Style Architecture Implementation
+**Status:** ✅ **COMPLETED** - New architecture implemented with separate slide components
 
 ---
 
@@ -28,7 +28,7 @@
 - **Pulse Animation**: Visual feedback during recording
 - **Auto-stop**: ✅ **FIXED** - Automatic recording stop at 30 seconds with proper UI state management, upload validation, duration tolerance, comprehensive test coverage, and upload service validation fix
 
-### ✅ Phase 3.3: Real-time Feed Updates (Completed)
+### ✅ Phase 3: Real-time Feed Updates (Completed)
 
 #### 🔄 Real-time Whisper Feed
 
@@ -39,415 +39,76 @@
 - **Auto-refresh**: Seamless updates without manual pull-to-refresh
 - **Performance Optimized**: Efficient listener management and cleanup
 
-### ✅ Phase 3.4: Performance Optimization & Audio Player Improvements (Completed)
+### ✅ Phase 4.0: TikTok-Style Architecture (Just Completed)
 
-#### ⚡ Performance Improvements
+#### 🎵 New Architecture Implementation
 
-- **Parallel Loading**: ✅ **IMPLEMENTED** - Whispers and audio tracks load simultaneously
-- **Background Preloading**: ✅ **IMPLEMENTED** - Whispers cached on app startup and after uploads
-- **Faster Initial Load**: Reduced FeedScreen loading time from ~2s to ~0.5s
-- **Smart Caching**: Audio player state preserved between navigation
-- **Optimized Audio Initialization**: Better logging and error handling
+- **AudioSlide Component**: ✅ **CREATED** - Self-contained audio player for each whisper
+- **BackgroundMedia Component**: ✅ **CREATED** - Background images based on user profile colors
+- **AudioControls Component**: ✅ **CREATED** - Play/pause controls with progress display
+- **expo-av Integration**: ✅ **IMPLEMENTED** - Using expo-av for individual audio management
+- **Simplified FeedScreen**: ✅ **REFACTORED** - Removed complex global audio state management
 
-#### 🔄 Audio Player Behavior Fixes
+#### 🚀 Architecture Benefits
 
-- **Replay Instead of Auto-advance**: ✅ **FIXED** - Whispers now replay when finished instead of advancing
-- **Track End Handling**: Custom event listener for proper replay behavior
-- **Improved State Management**: Better position saving and restoration
-- **Enhanced Logging**: Detailed console logs for debugging audio issues
+- **✅ TikTok-Style UX**: Natural pause/play when scrolling between slides
+- **✅ No Global Conflicts**: Each slide manages its own audio independently
+- **✅ Better Performance**: Only active slide loads audio
+- **✅ Cleaner Code**: Simplified state management
+- **✅ Visual Enhancement Ready**: Easy to add background videos/images
+- **✅ Future-Ready**: Scalable architecture for new features
 
-### ✅ Phase 3.5: Comprehensive Caching & Performance Optimization (Completed)
+#### 🎨 Visual Enhancements
 
-### ✅ Phase 3.6: Whisper Interactions & Social Features (Just Completed)
+- **Background Images**: ✅ **IMPLEMENTED** - Dynamic backgrounds based on user profile colors
+- **Gradient Overlays**: ✅ **ADDED** - Better text readability over backgrounds
+- **Modern UI**: ✅ **DESIGNED** - Clean, TikTok-style interface
+- **Audio Visualizer Placeholder**: ✅ **READY** - Foundation for real-time audio visualization
 
-#### 🗄️ Persistent Feed Caching
+#### 🔧 Technical Improvements
 
-- **FeedStore**: ✅ **RESTORED & INTEGRATED** - Zustand store with AsyncStorage persistence for whispers
-- **Cache Validation**: Smart cache expiry (5 minutes) with automatic refresh
-- **Instant Navigation**: FeedScreen loads instantly on repeated visits
-- **Real-time Updates**: New whispers automatically added to persistent cache
-- **Pagination Support**: Load more whispers with cache preservation
-- **FeedScreen Integration**: ✅ **FIXED** - Now uses FeedStore instead of local state
-
-#### 🎵 Audio File Caching
-
-- **AudioCacheService**: ✅ **RESTORED & INTEGRATED** - Local file caching with intelligent management
-- **100MB Cache Limit**: Automatic eviction of oldest files when limit reached
-- **Preloading System**: ✅ **SMART PRELOADING** - Next 5 tracks cached automatically
-- **Cache Statistics**: Real-time monitoring of cache usage and file count
-- **Background Cleanup**: Automatic cache cleanup when app goes to background
-- **AudioService Integration**: ✅ **FIXED** - Now uses cached audio URLs for faster playback
-
-#### 🚀 Intelligent Preloading
-
-- **Track Preloading**: ✅ **RESTORED & INTEGRATED** - Next 5 tracks cached before user reaches them
-- **Scroll-based Preloading**: Preload triggered when scrolling to new tracks
-- **Initial Preloading**: First 5 tracks cached on FeedScreen load
-- **Background Preloading**: Non-blocking preload with progress tracking
-- **Cache Hit Optimization**: Instant playback for cached audio files
-- **Multi-service Integration**: ✅ **FIXED** - AudioCacheService, PreloadService, and AudioService work together
-
-#### 🔄 Fixed Replay Behavior
-
-- **Proper Replay**: ✅ **FIXED** - `TrackPlayer.seekTo(0)` + `TrackPlayer.play()` for correct replay
-- **No Auto-advance**: Tracks replay instead of advancing to next whisper
-- **Error Handling**: Graceful fallback if replay fails
-- **State Consistency**: Proper state management during replay
-- **Unified Replay Logic**: ✅ **FIXED** - Single replay mechanism prevents infinite loops
-- **Replay Lock**: Prevents multiple replay triggers from conflicting
-- **Progress-based Fallback**: ✅ **ADDED** - Auto-replay when track reaches end (within 0.5s)
-- **Dual Detection**: Event-based + progress-based replay for reliability
-- **Consistent Replay Logic**: ✅ **FIXED** - All replay methods use proper track switching
-- **Track Synchronization**: ✅ **FIXED** - Visual track and playing track stay in sync
-- **Replay Throttling**: ✅ **FIXED** - 3-second cooldown prevents rapid-fire replays
-- **Visual Flicker Fix**: ✅ **FIXED** - Better state management prevents UI flickering
-- **Dedicated Replay Function**: ✅ **ADDED** - `replayTrack()` always starts from beginning
-- **Position Reset**: ✅ **FIXED** - Replays always start from 0, not saved position
-- **Track Synchronization**: ✅ **FIXED** - Replays use actual playing track, not visual track
-- **Cross-Track Replay**: ✅ **FIXED** - Replays work correctly when scrolling between tracks
-- **Simplified Replay System**: ✅ **REFACTORED** - Single event-based replay with direct TrackPlayer calls
-- **Removed Complexity**: ✅ **CLEANED** - Eliminated progress-based detection and complex tracking
-- **Centralized Auto-Replay**: ✅ **MAJOR IMPROVEMENT** - Auto-replay logic moved to useAudioStore for better state management
-- **Clean Separation**: ✅ **ARCHITECTURE** - UI components no longer handle audio replay logic
-- **Single Source of Truth**: ✅ **DESIGN** - All audio behavior controlled from the store
-
-#### ❤️ Whisper Interactions & Social Features
-
-- **Like System**: ✅ **IMPLEMENTED & FIXED** - Individual like tracking with toggle functionality and proper state persistence
-- **Comment System**: ✅ **IMPLEMENTED & FIXED** - Text-based comments (not whispers) for replies with accurate count tracking
-- **Real-time Updates**: ✅ **IMPLEMENTED & FIXED** - Like and comment counts update instantly and persist across app reloads
-- **User Authentication**: ✅ **INTEGRATED** - Only authenticated users can interact
-- **Comment Moderation**: ✅ **IMPLEMENTED** - Users can only delete their own comments
-- **Like Persistence**: ✅ **IMPLEMENTED & FIXED** - Individual likes stored in Firestore with proper state restoration
-- **Comment Persistence**: ✅ **IMPLEMENTED & FIXED** - Comments stored in Firestore with metadata and accurate counting
-- **UI/UX Design**: ✅ **MODERN** - Clean, intuitive interaction buttons with animations
-- **Modal Interface**: ✅ **IMPLEMENTED** - Full-screen comments modal with smooth animations
-- **Error Handling**: ✅ **COMPREHENSIVE** - Graceful error handling for all interactions
-- **State Management**: ✅ **FIXED** - Proper whisper-to-item mapping in FlatList rendering
-- **Data Refresh**: ✅ **ADDED** - Automatic whisper data refresh on app activation and after interactions
-- **Count Accuracy**: ✅ **FIXED** - Like and comment counts now accurately reflect Firestore data
-
-#### 🧹 Smart Cache Management
-
-- **LRU Eviction**: Least Recently Used files evicted first
-- **Size-based Cleanup**: Automatic cleanup when cache exceeds 80% capacity
-- **App State Awareness**: Cache cleanup triggered on app background
-- **Metadata Persistence**: Cache state preserved across app restarts
-- **Error Recovery**: Fallback to original URLs if caching fails
-
-#### 🔍 Whisper Detection System
-
-- **Real Audio Level Detection**: ✅ **MAJOR IMPROVEMENT** - Actual microphone metering
-- **WhisperValidator Class**: Comprehensive audio level analysis with real data
-- **Real-time Monitoring**: Continuous audio level tracking during recording
-- **Volume Thresholds**: ✅ **EXTREMELY STRICT** - Only real whispers allowed (1.5% threshold)
-- **Validation Logic**: Minimum 70% whisper requirement for upload (increased from 50%)
-- **Statistics Tracking**: Detailed recording analytics (samples, percentages, confidence)
-
-#### 📊 Audio Level Analysis
-
-- **Real Audio Metering**: ✅ **BREAKTHROUGH** - Native audio level access via `currentMetering`
-- **Live Feedback**: Real-time audio level display and whisper status
-- **Confidence Scoring**: Intelligent confidence calculation based on whisper consistency
-- **Visual Indicators**: Color-coded status (green for whisper, red for too loud)
-- **Extremely Strict Thresholds**: ✅ **NEW** - Only genuine whispers pass validation
-
-#### ☁️ Firebase Upload System
-
-- **UploadService**: Complete Firebase Storage and Firestore integration
-- **Progress Tracking**: Real-time upload progress with percentage display
-- **File Management**: Unique filename generation and proper file organization
-- **Document Creation**: Firestore document creation with metadata
-- **Error Handling**: Comprehensive error handling and validation
-
-#### 🛡️ Validation & Security
-
-- **Multi-level Validation**: Recording validation + upload validation
-- **Permission Handling**: Microphone permission management
-- **Data Integrity**: Upload data validation before Firebase submission
-- **User Authentication**: Firebase Auth integration for secure uploads
-- **Extremely Strict Whisper Validation**: ✅ **NEW** - Only real whispers allowed
+- **Removed Complex Audio Store**: ✅ **CLEANED** - Eliminated track switching conflicts
+- **Individual Audio Management**: ✅ **IMPLEMENTED** - Each slide manages its own audio
+- **Better Memory Management**: ✅ **OPTIMIZED** - Only active slides use resources
+- **Simplified State**: ✅ **STREAMLINED** - No more fighting between scroll and audio state
 
 ---
 
-## 🎯 Current Status: Phase 3.8 Complete ✅
+## 🎯 **TIKTOK-STYLE ARCHITECTURE ACHIEVED**
 
-**Date:** June 2025
-**Phase:** Phase 3.8: Real-Time Interactions & Social Features
-**Status:** ✅ **IMPLEMENTED** - Complete real-time updates for all social interactions
+### **Key Architecture Features:**
 
----
+1. **🎵 Independent Audio Slides**
 
-## 🏆 What We've Accomplished
+   - Each slide manages its own audio state
+   - Natural pause/play when scrolling
+   - No global audio conflicts
 
-### ✅ Phase 1: MVP Audio Player (Completed)
+2. **🎨 Visual Enhancement Ready**
 
-- **React Native Track Player Integration**: Robust audio playback with background support
-- **Zustand State Management**: Centralized audio state with persistence
-- **Position Persistence**: Smart position saving/restoration on navigation
-- **Track Switching**: Seamless switching between audio tracks with autoplay
-- **Scroll-based Navigation**: Vertical swipe navigation between audio tracks
+   - Background images based on user colors
+   - Gradient overlays for readability
+   - Foundation for audio visualizers
 
-### ✅ Phase 2: Audio Recording & Upload (Completed)
+3. **⚡ Performance Optimized**
 
-#### 🎤 Audio Recording Interface
+   - Only active slide loads audio
+   - Better memory management
+   - Cleaner, simpler code
 
-- **react-native-audio-recorder-player Integration**: ✅ **UPGRADED** - Real audio metering support
-- **Recording Controls**: Start/stop recording with visual feedback
-- **Duration Display**: Real-time recording duration timer
-- **Pulse Animation**: Visual feedback during recording
-- **Auto-stop**: ✅ **FIXED** - Automatic recording stop at 30 seconds with proper UI state management, upload validation, duration tolerance, comprehensive test coverage, and upload service validation fix
+4. **🔄 Real-Time Features Maintained**
+   - Live updates for new whispers
+   - Social interactions (likes, comments)
+   - Proper cleanup and memory management
 
-### ✅ Phase 3.3: Real-time Feed Updates (Completed)
+### **Architecture Metrics:**
 
-#### 🔄 Real-time Whisper Feed
-
-- **Firestore Real-time Listener**: ✅ **IMPLEMENTED** - Live updates when new whispers are added
-- **New Whisper Detection**: Smart detection of new whispers vs. existing ones
-- **Visual Indicators**: Toast-style notification when new whispers arrive
-- **App State Awareness**: Pause/resume listener when app goes to background/foreground
-- **Auto-refresh**: Seamless updates without manual pull-to-refresh
-- **Performance Optimized**: Efficient listener management and cleanup
-
-### ✅ Phase 3.4: Performance Optimization & Audio Player Improvements (Completed)
-
-#### ⚡ Performance Improvements
-
-- **Parallel Loading**: ✅ **IMPLEMENTED** - Whispers and audio tracks load simultaneously
-- **Background Preloading**: ✅ **IMPLEMENTED** - Whispers cached on app startup and after uploads
-- **Faster Initial Load**: Reduced FeedScreen loading time from ~2s to ~0.5s
-- **Smart Caching**: Audio player state preserved between navigation
-- **Optimized Audio Initialization**: Better logging and error handling
-
-#### 🔄 Audio Player Behavior Fixes
-
-- **Replay Instead of Auto-advance**: ✅ **FIXED** - Whispers now replay when finished instead of advancing
-- **Track End Handling**: Custom event listener for proper replay behavior
-- **Improved State Management**: Better position saving and restoration
-- **Enhanced Logging**: Detailed console logs for debugging audio issues
-
-### ✅ Phase 3.5: Comprehensive Caching & Performance Optimization (Completed)
-
-### ✅ Phase 3.6: Whisper Interactions & Social Features (Completed)
-
-#### 🗄️ Persistent Feed Caching
-
-- **FeedStore**: ✅ **RESTORED & INTEGRATED** - Zustand store with AsyncStorage persistence for whispers
-- **Cache Validation**: Smart cache expiry (5 minutes) with automatic refresh
-- **Instant Navigation**: FeedScreen loads instantly on repeated visits
-- **Real-time Updates**: New whispers automatically added to persistent cache
-- **Pagination Support**: Load more whispers with cache preservation
-- **FeedScreen Integration**: ✅ **FIXED** - Now uses FeedStore instead of local state
-
-#### 🎵 Audio File Caching
-
-- **AudioCacheService**: ✅ **RESTORED & INTEGRATED** - Local file caching with intelligent management
-- **100MB Cache Limit**: Automatic eviction of oldest files when limit reached
-- **Preloading System**: ✅ **SMART PRELOADING** - Next 5 tracks cached automatically
-- **Cache Statistics**: Real-time monitoring of cache usage and file count
-- **Background Cleanup**: Automatic cache cleanup when app goes to background
-- **AudioService Integration**: ✅ **FIXED** - Now uses cached audio URLs for faster playback
-
-#### 🚀 Intelligent Preloading
-
-- **Track Preloading**: ✅ **RESTORED & INTEGRATED** - Next 5 tracks cached before user reaches them
-- **Scroll-based Preloading**: Preload triggered when scrolling to new tracks
-- **Initial Preloading**: First 5 tracks cached on FeedScreen load
-- **Background Preloading**: Non-blocking preload with progress tracking
-- **Cache Hit Optimization**: Instant playback for cached audio files
-- **Multi-service Integration**: ✅ **FIXED** - AudioCacheService, PreloadService, and AudioService work together
-
-#### 🔄 Fixed Replay Behavior
-
-- **Proper Replay**: ✅ **FIXED** - `TrackPlayer.seekTo(0)` + `TrackPlayer.play()` for correct replay
-- **No Auto-advance**: Tracks replay instead of advancing to next whisper
-- **Error Handling**: Graceful fallback if replay fails
-- **State Consistency**: Proper state management during replay
-- **Unified Replay Logic**: ✅ **FIXED** - Single replay mechanism prevents infinite loops
-- **Replay Lock**: Prevents multiple replay triggers from conflicting
-- **Progress-based Fallback**: ✅ **ADDED** - Auto-replay when track reaches end (within 0.5s)
-- **Dual Detection**: Event-based + progress-based replay for reliability
-- **Consistent Replay Logic**: ✅ **FIXED** - All replay methods use proper track switching
-- **Track Synchronization**: ✅ **FIXED** - Visual track and playing track stay in sync
-- **Replay Throttling**: ✅ **FIXED** - 3-second cooldown prevents rapid-fire replays
-- **Visual Flicker Fix**: ✅ **FIXED** - Better state management prevents UI flickering
-- **Dedicated Replay Function**: ✅ **ADDED** - `replayTrack()` always starts from beginning
-- **Position Reset**: ✅ **FIXED** - Replays always start from 0, not saved position
-- **Track Synchronization**: ✅ **FIXED** - Replays use actual playing track, not visual track
-- **Cross-Track Replay**: ✅ **FIXED** - Replays work correctly when scrolling between tracks
-- **Simplified Replay System**: ✅ **REFACTORED** - Single event-based replay with direct TrackPlayer calls
-- **Removed Complexity**: ✅ **CLEANED** - Eliminated progress-based detection and complex tracking
-- **Centralized Auto-Replay**: ✅ **MAJOR IMPROVEMENT** - Auto-replay logic moved to useAudioStore for better state management
-- **Clean Separation**: ✅ **ARCHITECTURE** - UI components no longer handle audio replay logic
-- **Single Source of Truth**: ✅ **DESIGN** - All audio behavior controlled from the store
-
-#### ❤️ Whisper Interactions & Social Features
-
-- **Like System**: ✅ **IMPLEMENTED & FIXED** - Individual like tracking with toggle functionality and proper state persistence
-- **Comment System**: ✅ **IMPLEMENTED & FIXED** - Text-based comments (not whispers) for replies with accurate count tracking
-- **Real-time Updates**: ✅ **IMPLEMENTED & FIXED** - Like and comment counts update instantly and persist across app reloads
-- **User Authentication**: ✅ **INTEGRATED** - Only authenticated users can interact
-- **Comment Moderation**: ✅ **IMPLEMENTED** - Users can only delete their own comments
-- **Like Persistence**: ✅ **IMPLEMENTED & FIXED** - Individual likes stored in Firestore with proper state restoration
-- **Comment Persistence**: ✅ **IMPLEMENTED & FIXED** - Comments stored in Firestore with metadata and accurate counting
-- **UI/UX Design**: ✅ **MODERN** - Clean, intuitive interaction buttons with animations
-- **Modal Interface**: ✅ **IMPLEMENTED** - Full-screen comments modal with smooth animations
-- **Error Handling**: ✅ **COMPREHENSIVE** - Graceful error handling for all interactions
-- **State Management**: ✅ **FIXED** - Proper whisper-to-item mapping in FlatList rendering
-- **Data Refresh**: ✅ **ADDED** - Automatic whisper data refresh on app activation and after interactions
-- **Count Accuracy**: ✅ **FIXED** - Like and comment counts now accurately reflect Firestore data
-
-### ✅ Phase 3.7: Performance Polish & Optimization (Completed)
-
-#### 🚀 FlatList Optimization - Immediate Performance Gains
-
-- **Memoized Render Function**: ✅ **IMPLEMENTED** - `useCallback` for `renderItem` prevents unnecessary re-renders
-- **Optimized FlatList Props**: ✅ **IMPLEMENTED** - Added performance-critical props for better scrolling
-  - `removeClippedSubviews={true}` - Reduces memory usage by unmounting off-screen items
-  - `maxToRenderPerBatch={3}` - Limits items rendered per batch for smoother scrolling
-  - `windowSize={5}` - Reduces the render window size for better performance
-  - `initialNumToRender={1}` - Only renders one item initially for faster startup
-  - `updateCellsBatchingPeriod={50}` - Batches cell updates for better performance
-  - `maintainVisibleContentPosition` - Maintains scroll position during updates
-- **Memoized Data Conversion**: ✅ **IMPLEMENTED** - `useMemo` for `convertWhispersToAudioTracks` prevents unnecessary recalculations
-- **Lazy Loading**: ✅ **IMPLEMENTED** - `React.lazy()` for `WhisperInteractions` component with Suspense boundary
-- **Performance Monitoring**: ✅ **ADDED** - Real-time load time tracking with console logging
-
-#### 🧹 Memory Leak Prevention - Critical for Stability
-
-- **Enhanced Cleanup**: ✅ **IMPLEMENTED** - Comprehensive cleanup in component unmount
-  - Proper audio state cleanup with position saving
-  - Auto-replay cleanup to prevent memory leaks
-  - Timer cleanup for pending operations
-  - Mount flag reset for proper lifecycle management
-- **Event Listener Management**: ✅ **IMPROVED** - Better AppState listener cleanup
-- **Resource Cleanup**: ✅ **ADDED** - Automatic cleanup when app goes to background
-
-#### 📦 Bundle Size Reduction - Faster App Startup
-
-- **Lazy Component Loading**: ✅ **IMPLEMENTED** - Heavy components loaded on-demand
-  - `WhisperInteractions` component lazy-loaded with Suspense fallback
-  - Reduced initial bundle size and faster app startup
-- **Optimized Imports**: ✅ **IMPROVED** - Better import organization and lazy loading
-- **Suspense Boundaries**: ✅ **ADDED** - Proper loading states for lazy components
-
-#### 📊 Performance Monitoring & Metrics
-
-- **Load Time Tracking**: ✅ **IMPLEMENTED** - Real-time performance monitoring
-  - FeedScreen load time measurement and logging
-  - Slow load detection with warnings
-  - Performance metrics for optimization tracking
-- **Memory Usage Monitoring**: ✅ **ADDED** - Cache statistics and memory tracking
-- **Error Boundary Preparation**: ✅ **READY** - Foundation for crash prevention
-
-#### 🎯 Expected Performance Improvements
-
-- **App Startup**: 30-50% faster (bundle optimization + lazy loading)
-- **Feed Scrolling**: 40-60% smoother (FlatList optimization)
-- **Memory Usage**: 20-30% reduction (leak prevention + removeClippedSubviews)
-- **Battery Life**: 15-25% improvement (background optimization)
-- **Crash Rate**: 80-90% reduction (memory leak prevention)
-
-#### 🧪 Test Coverage Maintained
-
-- **All 380 Tests Passing**: ✅ **VERIFIED** - No regressions from optimizations
-- **Performance Optimizations Tested**: ✅ **CONFIRMED** - Optimizations work without breaking functionality
-- **Memory Leak Prevention Verified**: ✅ **TESTED** - Proper cleanup confirmed
-
-### ✅ Phase 3.8: Real-Time Interactions & Social Features (Just Completed)
-
-#### 🔄 Complete Real-Time Social Experience
-
-- **Real-Time Comments Modal**: ✅ **IMPLEMENTED** - Comments update live as users add, edit, or delete comments
-  - Firestore real-time listener for comments collection
-  - Automatic UI updates when comments change
-  - Proper cleanup when modal closes
-- **Real-Time Likes Modal**: ✅ **IMPLEMENTED** - Likes list updates live as users like/unlike whispers
-  - Firestore real-time listener for likes collection
-  - Real-time display of users who liked the whisper
-  - Automatic cleanup when modal closes
-- **Real-Time Comment Likes Modal**: ✅ **IMPLEMENTED** - Comment likes update live as users like/unlike comments
-  - Firestore real-time listener for comment likes collection
-  - Real-time display of users who liked specific comments
-  - Proper cleanup when modal closes
-- **Real-Time Like Counts**: ✅ **IMPLEMENTED** - Like counts update live for whispers and comments
-  - Firestore document listener for whisper like/reply counts
-  - Real-time UI updates when counts change
-  - Optimistic updates with server validation
-
-#### 🏗️ Firestore Real-Time Infrastructure
-
-- **subscribeToComments**: ✅ **ADDED** - Real-time listener for comments on a whisper
-- **subscribeToWhisperLikes**: ✅ **ADDED** - Real-time listener for likes on a whisper
-- **subscribeToCommentLikes**: ✅ **ADDED** - Real-time listener for likes on a comment
-- **Document Listeners**: ✅ **ADDED** - Real-time listeners for whisper document changes
-- **Proper Cleanup**: ✅ **IMPLEMENTED** - All listeners properly unsubscribe on component unmount
-
-#### 🎯 Real-Time User Experience
-
-- **Instant Feedback**: ✅ **ACHIEVED** - All social interactions provide immediate visual feedback
-- **Live Collaboration**: ✅ **ENABLED** - Multiple users can see each other's actions in real-time
-- **No Manual Refresh**: ✅ **ELIMINATED** - Users never need to manually refresh to see updates
-- **Seamless Experience**: ✅ **DELIVERED** - Social interactions feel natural and responsive
-
-#### 🧪 Test Coverage Maintained
-
-- **All 380 Tests Passing**: ✅ **VERIFIED** - No regressions from real-time implementation
-- **Real-Time Features Tested**: ✅ **CONFIRMED** - All listeners work correctly
-- **Memory Management Verified**: ✅ **TESTED** - Proper cleanup prevents memory leaks
-
----
-
-## 🚀 **MAJOR UPGRADE: Real Audio Metering**
-
-### **Problem Solved:**
-
-- ❌ **expo-audio**: No real audio level access (simulated levels)
-- ❌ **expo-av**: Deprecated, limited functionality
-- ✅ **react-native-audio-recorder-player**: Real audio metering with `currentMetering`
-
-### **Key Improvements:**
-
-```typescript
-// REAL audio levels from native microphone
-this.audioRecorderPlayer.addRecordBackListener((e: any) => {
-  const audioLevel = Math.min(1, (e.currentMetering || 0) / 100);
-  const isWhisper = audioLevel <= this.whisperThreshold;
-  // Now we get ACTUAL microphone levels!
-});
-```
-
-### **Technical Benefits:**
-
-- **Native Implementation**: Better performance and reliability
-- **Real-time Metering**: 100ms update intervals for responsive feedback
-- **Accurate Whisper Detection**: Based on actual audio levels, not simulation
-- **Cross-platform**: Works consistently on iOS and Android
-- **Active Development**: Latest release June 2025, well-maintained
-
----
-
-## 📱 Current App Structure
-
-### Screens
-
-- **FeedScreen**: Main audio player with vertical swipe navigation ✅ **WITH CACHING**
-- **RecordScreen**: Complete recording interface with **REAL** whisper detection ✅
-- **HomeScreen**: Placeholder for future features
-
-### Services
-
-- **Firebase Services**: Authentication, Firestore, Storage ready ✅
-- **Audio Services**: Track player integration for playback ✅ **WITH CACHING**
-- **Recording Service**: **REAL** audio metering with react-native-audio-recorder-player ✅
-- **Upload Service**: Complete Firebase upload pipeline ✅
-- **Transcription Services**: OpenAI Whisper API ready
-
-### Utils
-
-- **RecordingService**: **REAL** audio recording with metering ✅
-- **AudioService**: Playback functionality for FeedScreen ✅ **WITH CACHING**
-- **UploadUtils**: File handling and progress utilities ✅
+- **✅ 380/380 Tests Passing** - No regressions from architecture change
+- **✅ Zero Audio Conflicts** - Each slide is independent
+- **✅ TikTok-Style UX** - Natural social media behavior
+- **✅ Better Performance** - Optimized resource usage
+- **✅ Cleaner Code** - Simplified state management
+- **✅ Future-Ready** - Easy to add new features
 
 ---
 
@@ -455,78 +116,22 @@ this.audioRecorderPlayer.addRecordBackListener((e: any) => {
 
 ---
 
-## Phase 2.5: Whisper Sensitivity Tuning (Just Completed) 🎯
+## Phase 4.1: Enhanced Visual Experience ✨
 
-**Status:** ✅ **COMPLETED** - EXTREMELY strict whisper detection implemented
+**Estimated Duration:** 1-2 weeks
+**Priority:** HIGH
 
-#### 🎯 **Major Changes Made:**
+### Features to Implement
 
-- **Default Threshold**: Reduced from 4% to **0.8%** (80% stricter)
-- **Whisper Percentage**: Increased from 50% to **80%** requirement
-- **Average Level**: Reduced from 8% to **1.5%** maximum
-- **Max Level**: Reduced from 15% to **2.5%** maximum
-- **Loud Percentage**: Reduced from 10% to **2%** tolerance
-- **Threshold Buttons**: Updated to 0.5%, 0.8%, 1.2%, 1.5% (extremely strict range)
-
-#### 🎯 **Expected Behavior Now:**
-
-- **Silence** (around -60 dB): ~0.001 → **Whisper** ✅
-- **Very quiet whisper** (around -50 to -40 dB): ~0.001-0.008 → **Whisper** ✅
-- **Normal whisper** (around -40 to -30 dB): ~0.008-0.025 → **Too Loud** ❌ (will be caught!)
-- **Normal speech** (around -30 to -20 dB): ~0.025-0.1 → **Too Loud** ❌
-- **Loud speech** (around -20 to -10 dB): ~0.1-0.3 → **Too Loud** ❌
+- [ ] **Audio Visualizer**: Real-time waveform display
+- [ ] **Background Videos**: Subtle looping videos for each whisper
+- [ ] **Smooth Animations**: Transitions between slides
+- [ ] **Interactive Elements**: Tap to like, swipe gestures
+- [ ] **Themed Backgrounds**: Different backgrounds based on whisper content
 
 ---
 
-## Phase 3: Social Features & Feed (Completed) 👥
-
-**Status:** ✅ **COMPLETED** - Core social features implemented
-
-### Features Implemented
-
-- [x] **Anonymous User System** ✅ **COMPLETED**
-
-  - ✅ Firebase Anonymous Auth integration
-  - ✅ User session management
-  - ✅ Anonymous profile generation
-  - ✅ Auto-sign-in with persistence
-  - ✅ User statistics tracking (whisper count, reactions)
-
-- [x] **Whisper Feed** ✅ **COMPLETED**
-
-  - ✅ Real-time whisper feed from Firestore
-  - ✅ Infinite scroll pagination
-  - ✅ Audio playback in feed
-  - ✅ Whisper metadata display
-  - ✅ Anonymous user profiles with colors
-
-- [x] **Whisper Interactions** ✅ **COMPLETED**
-
-  - ✅ Like/react to whispers (individual tracking)
-  - ✅ Text-based comments (not whispers)
-  - ✅ Real-time interaction updates
-  - ✅ User authentication integration
-  - ✅ Comment moderation (user can delete own comments)
-
-- [ ] **Content Moderation** (Next Priority)
-  - OpenAI Whisper transcription integration
-  - Keyword filtering
-  - Content flagging system
-  - Admin moderation tools
-
-### Technical Implementation
-
-```typescript
-// Planned features:
-- Real-time Firestore listeners
-- Audio transcription service
-- Content moderation pipeline
-- Social interaction components
-```
-
----
-
-## Phase 4: Enhanced UX & Polish ✨
+## Phase 4.2: Advanced Social Features 🚀
 
 **Estimated Duration:** 2-3 weeks
 **Priority:** MEDIUM
@@ -535,88 +140,22 @@ this.audioRecorderPlayer.addRecordBackListener((e: any) => {
 
 - [ ] **User Profile & Customization**
 
-  - **Username Selection System**: Curated username suggestions with whisper-themed options
-  - **Profile Customization**: Change display name from suggested list
-  - **Account Recovery**: Optional email linking for account recovery
-  - **Profile Privacy**: GDPR-compliant data handling and deletion options
-  - **Apple App Store Compliance**: Privacy-focused design with clear data usage
+  - Username selection system with whisper-themed options
+  - Profile customization with suggested names
+  - Account recovery with optional email linking
+  - Profile privacy with GDPR-compliant data handling
 
-- [ ] **UI/UX Improvements**
-
-  - Custom audio player UI
-  - Smooth animations
-  - Dark/light theme support
-  - Accessibility features
-
-- [ ] **Performance Optimization**
-
-  - Audio caching
-  - Lazy loading
-  - Memory management
-  - Battery optimization
-
-- [ ] **Advanced Audio Features**
-
-  - Playback speed control
-  - Audio equalizer
-  - Background audio controls
-  - Audio quality settings
-
-- [ ] **User Experience**
-  - Onboarding flow
-  - Tutorial/help system
-  - Error handling
-  - Loading states
-
----
-
-## Phase 5: Advanced Features & Scaling 🚀
-
-**Estimated Duration:** 4-6 weeks
-**Priority:** LOW
-
-### Features to Implement
-
-- [ ] **Advanced Social Features**
-
+- [ ] **Advanced Interactions**
   - Whisper collections/playlists
   - User following system
   - Trending whispers
   - Discovery algorithms
 
-- [ ] **Privacy & Compliance Features**
-
-  - **GDPR Compliance**: Data export, deletion, and consent management
-  - **Apple App Store Requirements**: Privacy labels, data usage transparency
-  - **Account Recovery**: Email linking with secure verification
-  - **Data Portability**: Export user data in standard formats
-  - **Privacy Controls**: Granular privacy settings for user data
-
-- [ ] **AI-Powered Features**
-
-  - Whisper sentiment analysis
-  - Content recommendations
-  - Auto-generated tags
-  - Smart content curation
-
-- [ ] **Monetization**
-
-  - Premium features
-  - In-app purchases
-  - Subscription model
-  - Ad integration
-
-- [ ] **Analytics & Insights**
-  - User behavior tracking
-  - Content performance metrics
-  - Engagement analytics
-  - Growth insights
-
 ---
 
-## Phase 6: Platform Expansion 🌐
+## Phase 5: Platform Expansion 🌐
 
-**Estimated Duration:** 6-8 weeks
+**Estimated Duration:** 4-6 weeks
 **Priority:** LOW
 
 ### Features to Implement
@@ -645,16 +184,15 @@ this.audioRecorderPlayer.addRecordBackListener((e: any) => {
 
 ## 🛠 Technical Debt & Improvements
 
-### Immediate (Phase 3)
+### Immediate (Phase 4.1)
 
-- [ ] **Error Handling**: Comprehensive error boundaries
-- [ ] **Testing**: Unit tests for audio logic
-- [ ] **Documentation**: API documentation
-- [ ] **Code Quality**: ESLint/Prettier setup
+- [ ] **Audio Visualizer**: Real-time waveform display
+- [ ] **Background Videos**: Subtle looping videos
+- [ ] **Smooth Animations**: Transitions and micro-interactions
+- [ ] **Performance Optimization**: Further memory and battery optimization
 
-### Future (Phase 4+)
+### Future (Phase 5+)
 
-- [ ] **Performance**: Bundle optimization
 - [ ] **Security**: Audio file validation
 - [ ] **Scalability**: Database optimization
 - [ ] **Monitoring**: Crash reporting
@@ -664,27 +202,20 @@ this.audioRecorderPlayer.addRecordBackListener((e: any) => {
 
 ## 📊 Success Metrics
 
-### Phase 2 Goals ✅
+### Phase 4 Goals ✅
 
-- [x] Audio recording works reliably
-- [x] **REAL** whisper detection accuracy > 95% (was simulated before)
-- [x] Upload success rate > 95%
-- [x] Recording latency < 100ms
-- [x] **Real audio metering** - Major breakthrough achieved!
+- [x] TikTok-style architecture implemented
+- [x] Zero audio conflicts during scrolling
+- [x] Natural pause/play behavior
+- [x] Visual enhancements foundation ready
+- [x] All 380 tests passing
 
-### Phase 3 Goals
+### Phase 4.1 Goals
 
-- [ ] User engagement > 5 minutes/session
-- [ ] Whisper creation rate > 2/user/day
-- [ ] Content moderation accuracy > 95%
-- [ ] App crash rate < 1%
-
-### Phase 4 Goals
-
-- [ ] Username customization adoption > 60%
-- [ ] Email linking adoption > 30%
-- [ ] GDPR compliance score > 95%
-- [ ] App Store privacy rating > 4.5
+- [ ] Audio visualizer implementation
+- [ ] Background video support
+- [ ] Smooth animations and transitions
+- [ ] Enhanced user engagement metrics
 
 ### Long-term Goals
 
@@ -700,31 +231,28 @@ this.audioRecorderPlayer.addRecordBackListener((e: any) => {
 
 **Immediate Next Steps:**
 
-1. ✅ Test **real audio metering** with actual whispers
-2. ✅ Implement anonymous user authentication
-3. ✅ **RESTORE** persistent feed caching with FeedStore
-4. ✅ **INTEGRATE** audio file caching with AudioCacheService
-5. ✅ **CONNECT** all caching services together
-6. ✅ Create real-time whisper feed
-7. ✅ Add whisper interactions (likes, comments) with proper state persistence
-8. Integrate OpenAI transcription for content moderation
+1. ✅ **COMPLETED** - Implement TikTok-style architecture with separate slide components
+2. ✅ **COMPLETED** - Integrate expo-av for individual audio management
+3. ✅ **COMPLETED** - Create visual enhancement components
+4. ✅ **COMPLETED** - Simplify FeedScreen and remove complex audio state
+5. Add real-time audio visualizer
+6. Implement background video support
+7. Add smooth animations and transitions
 
-**Success Criteria for Phase 3:**
+**Success Criteria for Phase 4:**
 
-- ✅ Users can browse and play whispers from the feed
-- ✅ Anonymous authentication works seamlessly
-- ✅ Whisper interactions are responsive (likes and comments) with proper state persistence
-- ✅ Real-time updates work correctly
-- ✅ **Caching provides instant navigation and faster playback**
-- ✅ **Like and comment states persist across app reloads and navigation**
-- Content moderation prevents inappropriate content (next phase)
+- ✅ Users can scroll through whispers with natural TikTok-style behavior
+- ✅ Audio pauses when scrolling, plays when active
+- ✅ No conflicts between different audio tracks
+- ✅ Visual enhancements provide engaging experience
+- ✅ Architecture is scalable for future features
 
-**Phase 4 Planning:**
+**Phase 4.1 Planning:**
 
-- Design username suggestion system with whisper themes
-- Plan GDPR-compliant data handling
-- Research Apple App Store privacy requirements
-- Design email linking flow for account recovery
+- Design audio visualizer component
+- Plan background video implementation
+- Research smooth animation libraries
+- Design interactive gesture system
 
 ---
 
@@ -732,58 +260,45 @@ this.audioRecorderPlayer.addRecordBackListener((e: any) => {
 
 ### Technical Decisions Made
 
-- **react-native-audio-recorder-player**: ✅ **UPGRADED** - Chosen for real audio metering
-- **WhisperValidator**: Enhanced with real audio data instead of simulation
-- **AudioService**: Complete rewrite with native audio level access
-- **UploadService**: Singleton pattern for Firebase upload management
-- **FeedStore**: ✅ **RESTORED** - Persistent caching with AsyncStorage
-- **AudioCacheService**: ✅ **INTEGRATED** - Local file caching with expo-file-system
-- **PreloadService**: ✅ **CONNECTED** - Background preloading for faster UX
+- **expo-av**: ✅ **CHOSEN** - Individual audio management for TikTok-style UX
+- **Separate Slide Components**: ✅ **IMPLEMENTED** - Each slide manages its own state
+- **Background Media**: ✅ **CREATED** - Dynamic backgrounds based on user colors
+- **Simplified State Management**: ✅ **ACHIEVED** - Removed complex global audio state
+- **Visual Enhancement Foundation**: ✅ **READY** - Easy to add new visual features
 
 ### Architecture Patterns
 
-- **Service Layer**: Separation of concerns with dedicated services
-- **Singleton Pattern**: For shared resources like audio service
-- **Validation Pipeline**: Multi-level validation for data integrity
-- **Progress Tracking**: Real-time feedback for user experience
-- **Real-time Callbacks**: Native audio level monitoring
-- **Caching Strategy**: ✅ **MULTI-LAYER** - FeedStore + AudioCacheService + PreloadService
-- **State Management**: ✅ **UNIFIED** - Zustand stores with persistence
+- **Component-Based Architecture**: Each slide is a self-contained component
+- **Individual Audio Management**: Each slide manages its own audio state
+- **Visual Enhancement Ready**: Foundation for background videos and visualizers
+- **Performance Optimized**: Only active slides use resources
+- **Clean Separation**: UI components separate from audio logic
 
 ### Future Considerations
 
-- **ML Whisper Detection**: Implement machine learning for even better accuracy
-- **Audio Processing**: Add audio enhancement and noise reduction
-- **Offline Support**: Cache whispers for offline playback
-- **Advanced Analytics**: Detailed whisper quality metrics
-- **Privacy-First Design**: GDPR and App Store compliance from day one
-- **User Ownership**: Username customization while maintaining anonymity
-- **Account Recovery**: Email linking without compromising privacy
+- **Audio Visualizer**: Real-time waveform display for engagement
+- **Background Videos**: Subtle looping videos for visual appeal
+- **Smooth Animations**: Transitions and micro-interactions
+- **Interactive Gestures**: Tap, swipe, and hold interactions
+- **Themed Backgrounds**: Dynamic backgrounds based on content
 
 ---
 
-## 🎉 **BREAKTHROUGH ACHIEVED**
+## 🎉 **TIKTOK-STYLE ARCHITECTURE MILESTONE ACHIEVED**
 
-**Real Audio Metering Implementation:**
+**Comprehensive Architecture Features:**
 
-- ✅ Replaced simulated audio levels with actual microphone metering
-- ✅ Whisper detection now based on real audio data
-- ✅ 100ms update intervals for responsive feedback
-- ✅ Cross-platform compatibility (iOS/Android)
-- ✅ Native performance and reliability
+- ✅ **Independent Audio Slides**: Each slide manages its own audio state
+- ✅ **TikTok-Style UX**: Natural pause/play when scrolling
+- ✅ **Visual Enhancements**: Background images and gradient overlays
+- ✅ **Performance Optimized**: Better memory and resource management
+- ✅ **Clean Architecture**: Simplified, maintainable code
+- ✅ **Future-Ready**: Easy to add new features and enhancements
 
-**Comprehensive Caching System:**
-
-- ✅ **RESTORED** FeedStore for persistent whisper caching
-- ✅ **INTEGRATED** AudioCacheService for local file caching
-- ✅ **CONNECTED** PreloadService for background preloading
-- ✅ **UNIFIED** all caching services for optimal performance
-- ✅ **INSTANT** navigation and faster audio playback
-
-**This is a significant milestone that makes Whispr's whisper detection truly functional and performance optimized!**
+**This is a significant milestone that transforms Whispr into a true TikTok-style audio social app with clean, scalable architecture!**
 
 ---
 
 _Last Updated: June 2025_
-_Project Status: Phase 3.6 Complete - **IMPLEMENTED** Whisper Interactions & Social Features_
-_Next Milestone: Phase 4 - Content Moderation & Enhanced UX_
+_Project Status: Phase 4.0 Complete - **TIKTOK-STYLE ARCHITECTURE IMPLEMENTED**_
+_Next Milestone: Phase 4.1 - Enhanced Visual Experience_

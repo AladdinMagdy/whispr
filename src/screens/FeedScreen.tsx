@@ -7,7 +7,6 @@ import React, {
 } from "react";
 import {
   View,
-  Text,
   StyleSheet,
   Dimensions,
   FlatList,
@@ -17,77 +16,34 @@ import {
   ActivityIndicator,
   RefreshControl,
   AppState,
-  Image,
+  Text,
 } from "react-native";
-import TrackPlayer, {
-  State,
-  usePlaybackState,
-  useProgress,
-  Event,
-} from "react-native-track-player";
-import { useAudioStore, AudioTrack } from "../store/useAudioStore";
 import { useFeedStore } from "../store/useFeedStore";
 import {
   getFirestoreService,
   PaginatedWhispersResult,
 } from "../services/firestoreService";
-import { getAudioCacheService } from "../services/audioCacheService";
-import { getPreloadService } from "../services/preloadService";
 import { Whisper } from "../types";
 import { useAuth } from "../providers/AuthProvider";
-import { QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
 import ErrorBoundary from "../components/ErrorBoundary";
-import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
-// Lazy load heavy components for better performance
-const WhisperInteractions = React.lazy(
-  () => import("../components/WhisperInteractions")
-);
+import LoadingSpinner from "../components/LoadingSpinner";
+import AudioSlide from "../components/AudioSlide";
 
 const { height, width } = Dimensions.get("window");
 
 const FeedScreen = () => {
-  // Performance monitoring
-  usePerformanceMonitor("FeedScreen");
-
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newWhispersCount, setNewWhispersCount] = useState(0);
   const [isAppActive, setIsAppActive] = useState(true);
-
-  // Performance monitoring
-  const startTime = useRef(Date.now());
+  const [retryCount, setRetryCount] = useState(0);
+  const [currentIndex, setCurrentIndex] = useState(0);
 
   const { user } = useAuth();
   const firestoreService = getFirestoreService();
-  const audioCacheService = getAudioCacheService();
-  const preloadService = getPreloadService();
-  const flatListRef = useRef<FlatList<AudioTrack>>(null);
-  const playbackState = usePlaybackState();
-  const progress = useProgress();
-  const lastPlayedTrackRef = useRef<number>(-1);
-  const hasMountedRef = useRef<boolean>(false);
-
-  // Zustand stores
-  const {
-    tracks,
-    currentTrackIndex,
-    scrollPosition,
-    isPlaying,
-    isInitialized,
-    initializePlayer,
-    restorePlayerState,
-    setCurrentTrackIndex,
-    setScrollPosition,
-    playTrack,
-    replayTrack,
-    switchTrack,
-    pause,
-    play,
-    setupAutoReplay,
-    cleanupAutoReplay,
-  } = useAudioStore();
+  const flatListRef = useRef<FlatList<Whisper>>(null);
 
   // FeedStore for persistent caching
   const {
@@ -103,79 +59,8 @@ const FeedScreen = () => {
     updateCache,
   } = useFeedStore();
 
-  // Memoized conversion for better performance
-  const convertWhispersToAudioTracks = useMemo(() => {
-    return whispers.map((whisper) => ({
-      id: whisper.id,
-      title: whisper.userDisplayName,
-      artist: `${whisper.whisperPercentage.toFixed(1)}% whisper • ${formatTime(
-        whisper.duration
-      )}`,
-      artwork: `https://ui-avatars.com/api/?name=${encodeURIComponent(
-        whisper.userDisplayName
-      )}&background=${whisper.userProfileColor.replace(
-        "#",
-        ""
-      )}&color=fff&size=200`,
-      url: whisper.audioUrl, // Keep original URL for FlatList display
-    }));
-  }, [whispers]);
-
-  // Convert whispers to AudioTrack format with cached URLs (async for audio player)
-  const convertWhispersToAudioTracksWithCache = async (
-    whispers: Whisper[]
-  ): Promise<AudioTrack[]> => {
-    const audioTracks: AudioTrack[] = [];
-
-    for (const whisper of whispers) {
-      try {
-        // Get cached URL (downloads if not cached)
-        const cachedUrl = await audioCacheService.getCachedAudioUrl(
-          whisper.audioUrl
-        );
-
-        audioTracks.push({
-          id: whisper.id,
-          title: whisper.userDisplayName,
-          artist: `${whisper.whisperPercentage.toFixed(
-            1
-          )}% whisper • ${formatTime(whisper.duration)}`,
-          artwork: `https://ui-avatars.com/api/?name=${encodeURIComponent(
-            whisper.userDisplayName
-          )}&background=${whisper.userProfileColor.replace(
-            "#",
-            ""
-          )}&color=fff&size=200`,
-          url: cachedUrl, // Use cached URL for audio player
-        });
-      } catch (error) {
-        console.warn(
-          `⚠️ Failed to cache audio for whisper ${whisper.id}:`,
-          error
-        );
-        // Fallback to original URL if caching fails
-        audioTracks.push({
-          id: whisper.id,
-          title: whisper.userDisplayName,
-          artist: `${whisper.whisperPercentage.toFixed(
-            1
-          )}% whisper • ${formatTime(whisper.duration)}`,
-          artwork: `https://ui-avatars.com/api/?name=${encodeURIComponent(
-            whisper.userDisplayName
-          )}&background=${whisper.userProfileColor.replace(
-            "#",
-            ""
-          )}&color=fff&size=200`,
-          url: whisper.audioUrl, // Fallback to original URL
-        });
-      }
-    }
-
-    return audioTracks;
-  };
-
-  // Load whispers with caching
-  const loadWhispers = async (forceRefresh = false) => {
+  // Load whispers with caching and retry mechanism
+  const loadWhispers = async (forceRefresh = false, retryAttempt = 0) => {
     try {
       setLoading(true);
       setError(null);
@@ -183,18 +68,8 @@ const FeedScreen = () => {
       // Check if we have valid cached data and don't need to force refresh
       if (!forceRefresh && isCacheValid()) {
         console.log("✅ Using cached whispers:", whispers.length);
-
-        // Convert to audio tracks and initialize player
-        const audioTracks = await convertWhispersToAudioTracksWithCache(
-          whispers
-        );
-        await initializePlayer(audioTracks);
-        lastPlayedTrackRef.current = -1;
-
-        // Preload audio files in background
-        audioCacheService.preloadTracks(audioTracks, 0, 5).catch(console.error);
-
         setLoading(false);
+        setRetryCount(0);
         return;
       }
 
@@ -205,18 +80,23 @@ const FeedScreen = () => {
       // Update cache
       updateCache(result.whispers, result.lastDoc, result.hasMore);
 
-      // Convert to audio tracks and initialize player
-      const audioTracks = await convertWhispersToAudioTracksWithCache(
-        result.whispers
-      );
-      await initializePlayer(audioTracks);
-      lastPlayedTrackRef.current = -1;
-
-      // Preload audio files in background
-      audioCacheService.preloadTracks(audioTracks, 0, 5).catch(console.error);
+      setRetryCount(0);
     } catch (err) {
       console.error("Error loading whispers:", err);
-      setError(err instanceof Error ? err.message : "Failed to load whispers");
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to load whispers";
+      setError(errorMessage);
+
+      // Implement exponential backoff retry (max 3 attempts)
+      if (retryAttempt < 3) {
+        const delay = Math.pow(2, retryAttempt) * 1000; // 1s, 2s, 4s
+        console.log(`Retrying in ${delay}ms (attempt ${retryAttempt + 1}/3)`);
+        setTimeout(() => {
+          loadWhispers(forceRefresh, retryAttempt + 1);
+        }, delay);
+      } else {
+        setRetryCount(retryAttempt);
+      }
     } finally {
       setLoading(false);
     }
@@ -224,53 +104,42 @@ const FeedScreen = () => {
 
   // Set up real-time listener for whispers
   useEffect(() => {
-    if (!user || !isAppActive) return; // Don't set up listener if not authenticated or app is in background
+    if (!user || !isAppActive) return;
 
     console.log("🔄 Setting up real-time whisper listener...");
 
     const unsubscribe = firestoreService.subscribeToNewWhispers(
       (newWhisper) => {
-        console.log(`🆕 New whisper detected: ${newWhisper.id}`);
+        try {
+          if (!newWhisper || !newWhisper.id || !newWhisper.audioUrl) {
+            console.warn("⚠️ Invalid new whisper data:", newWhisper);
+            return;
+          }
 
-        // Add new whisper to cache
-        addNewWhisper(newWhisper);
+          console.log(`🆕 New whisper detected: ${newWhisper.id}`);
 
-        // Update audio player with new track at the beginning
-        const updatedWhispers = [newWhisper, ...whispers.slice(0, 19)];
-        convertWhispersToAudioTracksWithCache(updatedWhispers)
-          .then((audioTracks) => initializePlayer(audioTracks))
-          .catch(console.error);
+          // Add new whisper to cache
+          addNewWhisper(newWhisper);
 
-        // Preload the new audio file
-        audioCacheService
-          .getCachedAudioUrl(newWhisper.audioUrl)
-          .catch(console.error);
+          // Show new whisper indicator
+          setNewWhispersCount(1);
 
-        // Show new whisper indicator
-        setNewWhispersCount(1);
-
-        // Auto-hide the indicator after 5 seconds
-        setTimeout(() => {
-          setNewWhispersCount(0);
-        }, 5000);
+          // Auto-hide the indicator after 5 seconds
+          setTimeout(() => {
+            setNewWhispersCount(0);
+          }, 5000);
+        } catch (error) {
+          console.error("❌ Error processing new whisper:", error);
+        }
       },
       new Date(Date.now() - 60000) // Listen to whispers from the last minute
     );
 
-    // Cleanup listener on unmount
     return () => {
       console.log("🔄 Cleaning up real-time whisper listener");
       unsubscribe();
     };
-  }, [
-    user,
-    firestoreService,
-    isAppActive,
-    whispers,
-    addNewWhisper,
-    initializePlayer,
-    audioCacheService,
-  ]);
+  }, [user, firestoreService, isAppActive, addNewWhisper]);
 
   // Load more whispers (pagination)
   const loadMoreWhispers = async () => {
@@ -287,18 +156,6 @@ const FeedScreen = () => {
       // Update cache with new whispers
       const allWhispers = [...whispers, ...result.whispers];
       updateCache(allWhispers, result.lastDoc, result.hasMore);
-
-      // Update audio player with new tracks
-      const audioTracks = await convertWhispersToAudioTracksWithCache(
-        allWhispers
-      );
-      await initializePlayer(audioTracks);
-
-      // Preload new audio files
-      const newTracks = audioTracks.slice(whispers.length);
-      for (const track of newTracks) {
-        audioCacheService.getCachedAudioUrl(track.url).catch(console.error);
-      }
     } catch (err) {
       console.error("Error loading more whispers:", err);
     } finally {
@@ -309,46 +166,20 @@ const FeedScreen = () => {
   // Refresh whispers
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadWhispers(true); // Force refresh
+    await loadWhispers(true);
     setRefreshing(false);
   };
 
-  // Initialize audio player and load whispers
+  // Initialize and load whispers
   useEffect(() => {
     loadWhispers();
   }, []);
 
-  // Performance monitoring
-  useEffect(() => {
-    const loadTime = Date.now() - startTime.current;
-    console.log(`🚀 FeedScreen loaded in ${loadTime}ms`);
-
-    if (loadTime > 2000) {
-      console.warn(`⚠️ Slow load detected: ${loadTime}ms`);
-    }
-  }, [loading]);
-
-  // Handle app state changes (background/foreground)
+  // Handle app state changes
   useEffect(() => {
     const handleAppStateChange = (nextAppState: string) => {
-      const wasActive = isAppActive;
       setIsAppActive(nextAppState === "active");
-      console.log(`📱 App state changed: ${nextAppState}`);
-
-      // Clean up cache when app goes to background
-      if (nextAppState === "background" || nextAppState === "inactive") {
-        const stats = audioCacheService.getCacheStats();
-        if (stats.usagePercentage > 80) {
-          console.log("🧹 Cleaning up audio cache due to high usage...");
-          audioCacheService.clearCache().catch(console.error);
-        }
-      }
-
-      // Refresh whisper data when app becomes active (to get latest like/comment counts)
-      if (!wasActive && nextAppState === "active" && whispers.length > 0) {
-        console.log("🔄 App became active, refreshing whisper data...");
-        loadWhispers(true).catch(console.error);
-      }
+      console.log(`App state changed: ${nextAppState}`);
     };
 
     const subscription = AppState.addEventListener(
@@ -356,300 +187,37 @@ const FeedScreen = () => {
       handleAppStateChange
     );
     return () => subscription?.remove();
-  }, [audioCacheService, isAppActive, whispers.length]);
+  }, []);
 
-  // Set up centralized auto-replay from the store
-  useEffect(() => {
-    if (isInitialized) {
-      setupAutoReplay();
-      return () => {
-        cleanupAutoReplay();
-      };
-    }
-  }, [isInitialized, setupAutoReplay, cleanupAutoReplay]);
-
-  // Reset last played track ref when tracks change
-  useEffect(() => {
-    lastPlayedTrackRef.current = -1;
-  }, [tracks.length]);
-
-  // Sync playback state with Zustand
-  useEffect(() => {
-    const newPlayingState = playbackState.state === State.Playing;
-    if (newPlayingState !== isPlaying) {
-      console.log(`Playback state changed: ${isPlaying} -> ${newPlayingState}`);
-      useAudioStore.getState().setPlaybackState(newPlayingState);
-    }
-  }, [playbackState.state, isPlaying]);
-
-  // Sync progress with Zustand
-  useEffect(() => {
-    useAudioStore.getState().setPosition(progress.position);
-    useAudioStore.getState().setDuration(progress.duration);
-  }, [progress.position, progress.duration]);
-
-  // Save position periodically during playback
-  useEffect(() => {
-    if (isPlaying && progress.position > 0) {
-      const interval = setInterval(() => {
-        const currentPos = progress.position;
-        useAudioStore.getState().setPosition(currentPos);
-        console.log(`Periodic save: position ${currentPos}`);
-      }, 2000); // Save position every 2 seconds during playback
-
-      return () => clearInterval(interval);
-    }
-  }, [isPlaying, progress.position]);
-
-  // Restore scroll position when component mounts
-  useEffect(() => {
-    if (isInitialized && scrollPosition > 0 && flatListRef.current) {
-      setTimeout(() => {
-        flatListRef.current?.scrollToIndex({
-          index: scrollPosition,
-          animated: false,
-        });
-      }, 100);
-    }
-  }, [isInitialized, scrollPosition]);
-
-  // Restore player state when initialized (but don't auto-play)
-  useEffect(() => {
-    if (isInitialized && tracks.length > 0 && !hasMountedRef.current) {
-      // Only restore once when the component first mounts
-      hasMountedRef.current = true;
-      const { currentTrackIndex, lastPlayedTrackId, lastPlayedPosition } =
-        useAudioStore.getState();
-      const currentTrack = tracks[currentTrackIndex];
-      const hasSavedPosition =
-        currentTrack &&
-        lastPlayedTrackId === currentTrack.id &&
-        lastPlayedPosition > 0;
-
-      if (hasSavedPosition) {
-        console.log("Restoring player state on first mount");
-        restorePlayerState().catch(console.error);
-
-        // If we're restoring to the current track index, update the last played ref
-        if (currentTrackIndex >= 0 && currentTrackIndex < tracks.length) {
-          lastPlayedTrackRef.current = currentTrackIndex;
-        }
+  // Handle viewable items changed
+  const onViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      if (viewableItems.length > 0 && viewableItems[0].index !== null) {
+        const newIndex = viewableItems[0].index;
+        console.log(`Scrolling to slide ${newIndex}`);
+        setCurrentIndex(newIndex);
       }
-    }
-  }, [isInitialized, tracks.length, restorePlayerState]);
+    },
+    []
+  );
 
-  // Cleanup: pause audio when leaving the screen
-  useEffect(() => {
-    return () => {
-      // Save the current position before pausing (only on unmount)
-      const currentPos = progress.position;
-      if (currentPos > 0) {
-        useAudioStore.getState().setPosition(currentPos);
-        console.log(`Saving position ${currentPos} before leaving screen`);
-      }
-      pause().catch(console.error);
-      // Reset mount flag for next mount
-      hasMountedRef.current = false;
-
-      // Clear any pending operations
-      cleanupAutoReplay();
-
-      // Clear any pending operations and timers
-      // Note: Timer cleanup is handled by individual services
-    };
-  }, [pause, cleanupAutoReplay]); // Remove progress.position dependency to prevent frequent pausing
-
-  const onViewableItemsChanged = useRef(
-    (params: { viewableItems: ViewToken[]; changed: ViewToken[] }) => {
-      if (
-        params.viewableItems.length > 0 &&
-        params.viewableItems[0].index !== null
-      ) {
-        const newIndex = params.viewableItems[0].index;
-
-        console.log(
-          `onViewableItemsChanged: newIndex=${newIndex}, currentTrackIndex=${currentTrackIndex}, lastPlayed=${lastPlayedTrackRef.current}`
-        );
-
-        // Only proceed if this is actually a new track
-        if (newIndex !== lastPlayedTrackRef.current) {
-          console.log(`Scrolling to new track: ${newIndex}`);
-
-          // Update the last played track ref immediately to prevent duplicate calls
-          lastPlayedTrackRef.current = newIndex;
-
-          setCurrentTrackIndex(newIndex);
-          setScrollPosition(newIndex);
-
-          // Always switch to the new track when scrolling
-          setTimeout(() => {
-            console.log(`Calling playTrack for index ${newIndex}`);
-            playTrack(newIndex).catch(console.error);
-          }, 100); // Small delay to ensure scroll is complete
-
-          // Preload next tracks when scrolling
-          audioCacheService
-            .preloadTracks(tracks, newIndex, 5)
-            .catch(console.error);
-        } else {
-          console.log(`Skipping duplicate call for track ${newIndex}`);
-        }
-      }
-    }
-  ).current;
-
-  const handlePlayPause = useCallback(async () => {
-    try {
-      if (isPlaying) {
-        await pause();
-      } else {
-        await play();
-      }
-    } catch (error) {
-      console.error("Play/pause error:", error);
-    }
-  }, [isPlaying, pause, play]);
-
-  // Memoized render function for better performance
+  // Render item function
   const renderItem = useCallback(
-    ({ item, index }: ListRenderItemInfo<AudioTrack>) => {
-      // Find the corresponding whisper for this item
-      const whisper = whispers.find((w) => w.id === item.id);
-
-      if (!whisper) {
-        console.warn(`Whisper not found for item ${item.id}`);
-        return null;
-      }
-
+    ({ item, index }: ListRenderItemInfo<Whisper>) => {
       return (
-        <View style={styles.page}>
-          <View style={styles.artworkContainer}>
-            <View style={styles.artworkShadow} />
-            <View style={styles.artworkWrapper}>
-              <View style={styles.artworkImage}>
-                {/* Replace with <Image> for real artwork */}
-              </View>
-            </View>
-          </View>
-          <Text style={styles.title}>{item.title}</Text>
-          <Text style={styles.artist}>{item.artist}</Text>
-          <View style={styles.progressBarContainer}>
-            <View style={styles.progressBarBg}>
-              <View
-                style={[
-                  styles.progressBarFill,
-                  {
-                    width: `${
-                      (progress.position / (progress.duration || 1)) * 100
-                    }%`,
-                  },
-                ]}
-              />
-            </View>
-            <View style={styles.progressTimeRow}>
-              <Text style={styles.progressTime}>
-                {formatTime(progress.position)}
-              </Text>
-              <Text style={styles.progressTime}>
-                {formatTime(progress.duration)}
-              </Text>
-            </View>
-          </View>
-          <TouchableOpacity
-            style={styles.playPauseButton}
-            onPress={handlePlayPause}
-          >
-            <Text style={styles.playPauseText}>
-              {isPlaying ? "Pause" : "Play"}
-            </Text>
-          </TouchableOpacity>
-
-          {/* Whisper Interactions */}
-          <React.Suspense
-            fallback={<View style={styles.interactionsPlaceholder} />}
-          >
-            <WhisperInteractions
-              whisper={whisper}
-              onLikeChange={(isLiked, newLikeCount) => {
-                // Update the whisper in the feed store
-                const updatedWhispers = whispers.map((w) =>
-                  w.id === whisper.id ? { ...w, likes: newLikeCount } : w
-                );
-                setWhispers(updatedWhispers);
-              }}
-              onCommentChange={(newCommentCount) => {
-                // Update the whisper in the feed store
-                const updatedWhispers = whispers.map((w) =>
-                  w.id === whisper.id ? { ...w, replies: newCommentCount } : w
-                );
-                setWhispers(updatedWhispers);
-              }}
-            />
-          </React.Suspense>
-
-          {/* Debug button */}
-          <TouchableOpacity
-            style={[
-              styles.playPauseButton,
-              { marginTop: 10, backgroundColor: "#666" },
-            ]}
-            onPress={() => {
-              const storeState = useAudioStore.getState();
-              const cacheStats = audioCacheService.getCacheStats();
-              console.log("Current state:", {
-                currentTrackIndex,
-                isPlaying,
-                currentPosition: progress.position,
-                duration: progress.duration,
-                lastPlayedTrack: lastPlayedTrackRef.current,
-                savedPosition: storeState.currentPosition,
-                savedTrackIndex: storeState.currentTrackIndex,
-                cacheStats,
-                cachedWhispers: whispers.length,
-                cacheValid: isCacheValid(),
-              });
-
-              // Test manual restoration
-              if (storeState.currentPosition > 0) {
-                console.log("Testing manual restoration...");
-                restorePlayerState().catch(console.error);
-              } else {
-                // Test manual track switching
-                const nextTrack = (currentTrackIndex + 1) % tracks.length;
-                console.log(`Manually switching to track ${nextTrack}`);
-                playTrack(nextTrack).catch(console.error);
-              }
-            }}
-          >
-            <Text style={styles.playPauseText}>Debug</Text>
-          </TouchableOpacity>
-        </View>
+        <AudioSlide
+          whisper={item}
+          isVisible={true}
+          isActive={currentIndex === index}
+        />
       );
     },
-    [
-      isPlaying,
-      progress.position,
-      progress.duration,
-      whispers,
-      setWhispers,
-      handlePlayPause,
-      currentTrackIndex,
-      tracks.length,
-      restorePlayerState,
-      playTrack,
-      audioCacheService,
-      isCacheValid,
-    ]
+    [currentIndex]
   );
 
   // Show loading state
   if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={styles.loadingText}>Loading whispers...</Text>
-      </View>
-    );
+    return <LoadingSpinner message="Loading whispers..." />;
   }
 
   // Show error state
@@ -657,6 +225,11 @@ const FeedScreen = () => {
     return (
       <View style={styles.errorContainer}>
         <Text style={styles.errorText}>Error: {error}</Text>
+        {retryCount > 0 && (
+          <Text style={styles.retryInfo}>
+            Retried {retryCount} times. Please check your connection.
+          </Text>
+        )}
         <TouchableOpacity
           style={styles.retryButton}
           onPress={() => loadWhispers(true)}
@@ -690,15 +263,15 @@ const FeedScreen = () => {
         {newWhispersCount > 0 && (
           <View style={styles.newWhispersIndicator}>
             <Text style={styles.newWhispersText}>
-              🎉 {newWhispersCount} new whisper{newWhispersCount > 1 ? "s" : ""}
-              !
+              🎉 {newWhispersCount} new whisper
+              {newWhispersCount > 1 ? "s" : ""}!
             </Text>
           </View>
         )}
 
         <FlatList
           ref={flatListRef}
-          data={convertWhispersToAudioTracks}
+          data={whispers}
           renderItem={renderItem}
           keyExtractor={(item) => item.id}
           pagingEnabled
@@ -713,7 +286,6 @@ const FeedScreen = () => {
             offset: height * index,
             index,
           })}
-          initialScrollIndex={scrollPosition}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
@@ -746,111 +318,12 @@ const FeedScreen = () => {
   );
 };
 
-function formatTime(seconds: number = 0): string {
-  const m = Math.floor(seconds / 60)
-    .toString()
-    .padStart(2, "0");
-  const s = Math.floor(seconds % 60)
-    .toString()
-    .padStart(2, "0");
-  return `${m}:${s}`;
-}
-
 const styles = StyleSheet.create({
-  page: {
-    height,
-    width,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#fff",
-  },
-  artworkContainer: {
-    marginTop: 60,
-    marginBottom: 40,
-    alignItems: "center",
-  },
-  artworkShadow: {
-    position: "absolute",
-    width: 220,
-    height: 220,
-    backgroundColor: "#eee",
-    borderRadius: 110,
-    top: 10,
-    left: 10,
-    zIndex: 0,
-  },
-  artworkWrapper: {
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: "#ddd",
-    overflow: "hidden",
-    zIndex: 1,
-  },
-  artworkImage: {
+  container: {
     flex: 1,
-    backgroundColor: "#bbb",
-    borderRadius: 100,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    marginTop: 24,
-    color: "#222",
-  },
-  artist: {
-    fontSize: 18,
-    color: "#666",
-    marginBottom: 32,
-  },
-  progressBarContainer: {
-    width: "80%",
-    marginBottom: 16,
-  },
-  progressBarBg: {
-    height: 4,
-    backgroundColor: "#eee",
-    borderRadius: 2,
-    overflow: "hidden",
-  },
-  progressBarFill: {
-    height: 4,
-    backgroundColor: "#007AFF",
-    borderRadius: 2,
-  },
-  progressTimeRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 4,
-  },
-  progressTime: {
-    fontSize: 12,
-    color: "#888",
-  },
-  playPauseButton: {
-    marginTop: 32,
-    backgroundColor: "#007AFF",
-    borderRadius: 24,
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-  },
-  playPauseText: {
-    color: "#fff",
-    fontSize: 20,
-    fontWeight: "bold",
+    backgroundColor: "#fff",
   },
   // Loading, error, and empty states
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#fff",
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: "#666",
-  },
   errorContainer: {
     flex: 1,
     justifyContent: "center",
@@ -895,10 +368,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
   // Real-time update styles
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
   newWhispersIndicator: {
     position: "absolute",
     top: 50,
@@ -935,11 +404,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#666",
   },
-  interactionsPlaceholder: {
-    height: 60,
-    marginTop: 20,
-    backgroundColor: "#f5f5f5",
-    borderRadius: 8,
+  retryInfo: {
+    fontSize: 12,
+    color: "#666",
+    textAlign: "center",
+    marginBottom: 20,
   },
 });
 

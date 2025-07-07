@@ -118,23 +118,52 @@ export class AudioCacheService {
    * Get cached audio URL or download if not cached
    */
   async getCachedAudioUrl(originalUrl: string): Promise<string> {
-    const cached = this.state.cachedFiles.get(originalUrl);
-
-    if (cached) {
-      // Check if file still exists
-      const fileInfo = await FileSystem.getInfoAsync(cached.localPath);
-      if (fileInfo.exists) {
-        console.log(`✅ Using cached audio: ${originalUrl}`);
-        return cached.localPath;
-      } else {
-        // File was deleted, remove from cache
-        this.state.cachedFiles.delete(originalUrl);
-        this.state.currentCacheSize -= cached.fileSize;
-      }
+    // Validate input
+    if (!originalUrl || typeof originalUrl !== "string") {
+      console.warn(
+        "❌ Invalid URL provided to getCachedAudioUrl:",
+        originalUrl
+      );
+      return originalUrl;
     }
 
-    // Download and cache the file
-    return await this.downloadAndCache(originalUrl);
+    try {
+      const cached = this.state.cachedFiles.get(originalUrl);
+
+      if (cached) {
+        // Check if file still exists
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(cached.localPath);
+          if (fileInfo.exists) {
+            console.log(`✅ Using cached audio: ${originalUrl}`);
+            return cached.localPath;
+          } else {
+            // File was deleted, remove from cache
+            console.log(
+              `🗑️ Cached file not found, removing from cache: ${originalUrl}`
+            );
+            this.state.cachedFiles.delete(originalUrl);
+            this.state.currentCacheSize -= cached.fileSize;
+            await this.saveCacheMetadata();
+          }
+        } catch (fileError) {
+          console.warn(
+            `⚠️ Error checking cached file ${originalUrl}:`,
+            fileError
+          );
+          // Remove from cache if we can't access the file
+          this.state.cachedFiles.delete(originalUrl);
+          this.state.currentCacheSize -= cached.fileSize;
+          await this.saveCacheMetadata();
+        }
+      }
+
+      // Download and cache the file
+      return await this.downloadAndCache(originalUrl);
+    } catch (error) {
+      console.error(`❌ Error in getCachedAudioUrl for ${originalUrl}:`, error);
+      return originalUrl;
+    }
   }
 
   /**
@@ -142,6 +171,23 @@ export class AudioCacheService {
    */
   private async downloadAndCache(originalUrl: string): Promise<string> {
     try {
+      // Validate URL before attempting download
+      if (!originalUrl || typeof originalUrl !== "string") {
+        console.warn(
+          "❌ Invalid URL provided to downloadAndCache:",
+          originalUrl
+        );
+        return originalUrl;
+      }
+
+      // Check if URL is properly formatted
+      try {
+        new URL(originalUrl);
+      } catch (error) {
+        console.warn("❌ Malformed URL:", originalUrl);
+        return originalUrl;
+      }
+
       console.log(`⬇️ Downloading audio: ${originalUrl}`);
 
       // Generate unique filename
@@ -177,47 +223,54 @@ export class AudioCacheService {
         );
         return localPath;
       } else {
-        // Remote file, download as before
-        const downloadResult = await FileSystem.downloadAsync(
-          originalUrl,
-          localPath
-        );
-        if (downloadResult.status === 200) {
-          // Get file size
-          const fileInfo = await FileSystem.getInfoAsync(localPath, {
-            size: true,
-          });
-          const fileSize = (fileInfo as any).size || 0;
-
-          // Check cache size and evict if necessary
-          await this.manageCacheSize(fileSize);
-
-          // Add to cache
-          const cachedAudio: CachedAudio = {
+        // Remote file, download with better error handling
+        try {
+          const downloadResult = await FileSystem.downloadAsync(
             originalUrl,
-            localPath,
-            downloadTime: Date.now(),
-            fileSize,
-          };
-
-          this.state.cachedFiles.set(originalUrl, cachedAudio);
-          this.state.currentCacheSize += fileSize;
-
-          // Save metadata
-          await this.saveCacheMetadata();
-
-          console.log(
-            `✅ Audio cached: ${originalUrl} (${(
-              fileSize /
-              1024 /
-              1024
-            ).toFixed(2)}MB)`
+            localPath
           );
-          return localPath;
-        } else {
-          throw new Error(
-            `Download failed with status ${downloadResult.status}`
-          );
+
+          if (downloadResult.status === 200) {
+            // Get file size
+            const fileInfo = await FileSystem.getInfoAsync(localPath, {
+              size: true,
+            });
+            const fileSize = (fileInfo as any).size || 0;
+
+            // Check cache size and evict if necessary
+            await this.manageCacheSize(fileSize);
+
+            // Add to cache
+            const cachedAudio: CachedAudio = {
+              originalUrl,
+              localPath,
+              downloadTime: Date.now(),
+              fileSize,
+            };
+
+            this.state.cachedFiles.set(originalUrl, cachedAudio);
+            this.state.currentCacheSize += fileSize;
+
+            // Save metadata
+            await this.saveCacheMetadata();
+
+            console.log(
+              `✅ Audio cached: ${originalUrl} (${(
+                fileSize /
+                1024 /
+                1024
+              ).toFixed(2)}MB)`
+            );
+            return localPath;
+          } else {
+            console.warn(
+              `❌ Download failed with status ${downloadResult.status} for ${originalUrl}`
+            );
+            return originalUrl;
+          }
+        } catch (downloadError) {
+          console.error(`❌ Download error for ${originalUrl}:`, downloadError);
+          return originalUrl;
         }
       }
     } catch (error) {
@@ -240,6 +293,20 @@ export class AudioCacheService {
       return;
     }
 
+    // Validate inputs
+    if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
+      console.warn("❌ Invalid tracks array provided to preloadTracks");
+      return;
+    }
+
+    if (typeof currentIndex !== "number" || currentIndex < 0) {
+      console.warn(
+        "❌ Invalid currentIndex provided to preloadTracks:",
+        currentIndex
+      );
+      return;
+    }
+
     this.state.isPreloading = true;
     console.log(
       `🚀 Starting preload of ${preloadCount} tracks from index ${currentIndex}`
@@ -253,11 +320,22 @@ export class AudioCacheService {
         const trackIndex = currentIndex + i;
         if (trackIndex < tracks.length) {
           const track = tracks[trackIndex];
-          preloadPromises.push(
-            this.getCachedAudioUrl(track.url).then(() => {
-              console.log(`✅ Preloaded track ${trackIndex}: ${track.title}`);
-            })
-          );
+          if (track && track.url) {
+            preloadPromises.push(
+              this.getCachedAudioUrl(track.url)
+                .then(() => {
+                  console.log(
+                    `✅ Preloaded track ${trackIndex}: ${track.title}`
+                  );
+                })
+                .catch((error) => {
+                  console.warn(
+                    `⚠️ Failed to preload track ${trackIndex}:`,
+                    error
+                  );
+                })
+            );
+          }
         }
       }
 
@@ -266,11 +344,17 @@ export class AudioCacheService {
         for (let i = 0; i < preloadCount && i < tracks.length; i++) {
           if (i !== currentIndex) {
             const track = tracks[i];
-            preloadPromises.push(
-              this.getCachedAudioUrl(track.url).then(() => {
-                console.log(`✅ Preloaded track ${i}: ${track.title}`);
-              })
-            );
+            if (track && track.url) {
+              preloadPromises.push(
+                this.getCachedAudioUrl(track.url)
+                  .then(() => {
+                    console.log(`✅ Preloaded track ${i}: ${track.title}`);
+                  })
+                  .catch((error) => {
+                    console.warn(`⚠️ Failed to preload track ${i}:`, error);
+                  })
+              );
+            }
           }
         }
       }

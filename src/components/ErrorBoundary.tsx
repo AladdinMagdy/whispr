@@ -4,7 +4,6 @@ import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
-  onError?: (error: Error, errorInfo: ErrorInfo) => void;
 }
 
 interface State {
@@ -19,17 +18,16 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   static getDerivedStateFromError(error: Error): State {
+    // Update state so the next render will show the fallback UI
     return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    // Log error to console for debugging
     console.error("ErrorBoundary caught an error:", error, errorInfo);
 
-    // Call the onError callback if provided
-    this.props.onError?.(error, errorInfo);
-
-    // In a real app, you might want to send this to a crash reporting service
-    // like Crashlytics, Sentry, etc.
+    // In production, you would send this to your error reporting service
+    // Example: Sentry.captureException(error, { extra: errorInfo });
   }
 
   handleRetry = () => {
@@ -38,21 +36,23 @@ class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      // Custom fallback UI
       if (this.props.fallback) {
         return this.props.fallback;
       }
 
+      // Default fallback UI
       return (
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorTitle}>Something went wrong</Text>
-          <Text style={styles.errorMessage}>
+        <View style={styles.container}>
+          <Text style={styles.title}>Something went wrong</Text>
+          <Text style={styles.message}>
             {this.state.error?.message || "An unexpected error occurred"}
           </Text>
           <TouchableOpacity
             style={styles.retryButton}
             onPress={this.handleRetry}
           >
-            <Text style={styles.retryButtonText}>Try Again</Text>
+            <Text style={styles.retryText}>Try Again</Text>
           </TouchableOpacity>
         </View>
       );
@@ -63,34 +63,34 @@ class ErrorBoundary extends Component<Props, State> {
 }
 
 const styles = StyleSheet.create({
-  errorContainer: {
+  container: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
     backgroundColor: "#fff",
   },
-  errorTitle: {
-    fontSize: 18,
+  title: {
+    fontSize: 24,
     fontWeight: "bold",
     color: "#333",
-    marginBottom: 10,
+    marginBottom: 16,
     textAlign: "center",
   },
-  errorMessage: {
-    fontSize: 14,
+  message: {
+    fontSize: 16,
     color: "#666",
     textAlign: "center",
-    marginBottom: 20,
-    lineHeight: 20,
+    marginBottom: 24,
+    lineHeight: 24,
   },
   retryButton: {
     backgroundColor: "#007AFF",
-    paddingHorizontal: 20,
-    paddingVertical: 10,
     borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
   },
-  retryButtonText: {
+  retryText: {
     color: "#fff",
     fontSize: 16,
     fontWeight: "600",

@@ -20,6 +20,9 @@ import { setupAuthServiceCallbacks } from "./store/useAuthStore";
 import { getAudioCacheService } from "./services/audioCacheService";
 import { AppState } from "react-native";
 
+// Import MainTabs properly
+import MainTabs from "./navigation/MainTabs";
+
 const Stack = createStackNavigator();
 
 export default function App() {
@@ -121,7 +124,7 @@ export default function App() {
           <NavigationContainer>
             <StatusBar style="auto" />
             <Stack.Navigator
-              initialRouteName="Home"
+              initialRouteName="MainTabs"
               screenOptions={{
                 headerStyle: {
                   backgroundColor: "#f8f9fa",
@@ -133,19 +136,18 @@ export default function App() {
               }}
             >
               <Stack.Screen
-                name="Home"
-                component={HomeScreen}
-                options={{ title: "Whispr" }}
+                name="MainTabs"
+                component={MainTabs}
+                options={{ headerShown: false }}
               />
               <Stack.Screen
-                name="Record"
+                name="RecordModal"
                 component={RecordScreen}
-                options={{ title: "Record Whisper" }}
-              />
-              <Stack.Screen
-                name="Feed"
-                component={FeedScreen}
-                options={{ title: "Whispers" }}
+                options={{
+                  title: "Record Whisper",
+                  presentation: "modal",
+                  headerShown: true,
+                }}
               />
             </Stack.Navigator>
           </NavigationContainer>
