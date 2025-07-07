@@ -41,7 +41,7 @@ const CommentItem: React.FC<CommentItemProps> = ({
   const handleLike = async () => {
     try {
       const interactionService = getInteractionService();
-      await interactionService.toggleLike(comment.id);
+      await interactionService.toggleCommentLike(comment.id);
 
       const newLikeCount = isLiked ? likeCount - 1 : likeCount + 1;
       setLikeCount(newLikeCount);
@@ -490,15 +490,15 @@ const styles = StyleSheet.create({
   },
   interactionRow: {
     flexDirection: "row",
-    justifyContent: "space-around",
+    justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 20,
   },
   interactionButton: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 12,
-    paddingHorizontal: 20,
+    paddingHorizontal: 12,
+    marginHorizontal: 8,
     borderRadius: 25,
     backgroundColor: "#f8f9fa",
     shadowColor: "#000",
@@ -525,6 +525,7 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     backgroundColor: "#fff",
+    paddingTop: 0, // SafeAreaView handles top padding
   },
   modalHeader: {
     flexDirection: "row",
@@ -562,11 +563,11 @@ const styles = StyleSheet.create({
   commentInputRow: {
     flexDirection: "row",
     padding: 16,
+    paddingBottom: 34, // Extra padding for safe area on devices with home indicator
     borderTopWidth: 1,
     borderTopColor: "#e1e8ed",
     alignItems: "flex-end",
     backgroundColor: "#fff",
-    paddingBottom: 20, // Extra padding for safe area
   },
   commentInput: {
     flex: 1,
@@ -598,6 +599,7 @@ const styles = StyleSheet.create({
   },
   commentItem: {
     padding: 16,
+    paddingHorizontal: 20, // Extra horizontal padding to prevent edge-to-edge
     borderBottomWidth: 1,
     borderBottomColor: "#f0f0f0",
     backgroundColor: "#fff",
@@ -634,11 +636,13 @@ const styles = StyleSheet.create({
   commentActions: {
     flexDirection: "row",
     alignItems: "center",
+    flexShrink: 0,
+    minWidth: 60,
   },
   likeButton: {
     flexDirection: "row",
     alignItems: "center",
-    marginRight: 12,
+    marginRight: 4,
   },
   likeIcon: {
     fontSize: 16,
@@ -676,6 +680,7 @@ const styles = StyleSheet.create({
   },
   likeItem: {
     padding: 16,
+    paddingHorizontal: 20, // Extra horizontal padding to prevent edge-to-edge
     borderBottomWidth: 1,
     borderBottomColor: "#f0f0f0",
     backgroundColor: "#fff",

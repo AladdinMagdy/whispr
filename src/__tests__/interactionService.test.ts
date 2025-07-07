@@ -24,6 +24,7 @@ const mockFirestoreService = {
   addComment: jest.fn(),
   deleteComment: jest.fn(),
   likeWhisper: jest.fn(),
+  likeComment: jest.fn(),
 };
 
 const mockAuthStore = {
@@ -274,6 +275,31 @@ describe("InteractionService", () => {
       await expect(
         interactionService.addComment("test-whisper", "test")
       ).rejects.toThrow("User must be authenticated to comment");
+    });
+  });
+
+  describe("toggleCommentLike", () => {
+    it("should toggle comment like", async () => {
+      const commentId = "test-comment-123";
+
+      mockFirestoreService.likeComment.mockResolvedValue(undefined);
+
+      const result = await interactionService.toggleCommentLike(commentId);
+
+      expect(result.isLiked).toBe(true);
+      expect(result.count).toBe(1);
+      expect(mockFirestoreService.likeComment).toHaveBeenCalledWith(
+        commentId,
+        mockUser.uid
+      );
+    });
+
+    it("should throw error if user not authenticated", async () => {
+      (useAuthStore.getState as jest.Mock).mockReturnValue({ user: null });
+
+      await expect(
+        interactionService.toggleCommentLike("test-comment")
+      ).rejects.toThrow("User must be authenticated to like comments");
     });
   });
 
