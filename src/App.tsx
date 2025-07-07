@@ -18,6 +18,7 @@ import { AuthProvider } from "./providers/AuthProvider";
 import { initializeFirebase } from "./config/firebase";
 import { setupAuthServiceCallbacks } from "./store/useAuthStore";
 import { getAudioCacheService } from "./services/audioCacheService";
+import { pauseAllAudioSlides } from "./components/AudioSlide";
 import { AppState } from "react-native";
 
 // Import MainTabs properly
@@ -58,11 +59,14 @@ export default function App() {
             const audioCacheService = getAudioCacheService();
             const stats = audioCacheService.getCacheStats();
 
-            // If cache is over 80% full, clean up old files
-            if (stats.usagePercentage > 80) {
+            // If cache is over 70% full, clean up old files (reduced from 80%)
+            if (stats.usagePercentage > 70) {
               console.log("🧹 Cleaning up audio cache due to high usage...");
               audioCacheService.clearCache().catch(console.error);
             }
+
+            // Pause all audio when going to background
+            pauseAllAudioSlides().catch(console.error);
           }
         };
 

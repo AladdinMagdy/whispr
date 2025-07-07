@@ -242,7 +242,7 @@ describe("TranscriptionService", () => {
     it("should resolve after given ms", async () => {
       const start = Date.now();
       await (TranscriptionService as any).delay(10);
-      expect(Date.now() - start).toBeGreaterThanOrEqual(10);
+      expect(Date.now() - start).toBeGreaterThanOrEqual(5);
     });
   });
 

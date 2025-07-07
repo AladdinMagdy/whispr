@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   StyleSheet,
@@ -6,6 +6,7 @@ import {
   Dimensions,
   Animated,
   TouchableOpacity,
+  AppState,
 } from "react-native";
 import { Button, Text, Card, ProgressBar } from "react-native-paper";
 import { useNavigation } from "@react-navigation/native";
@@ -22,6 +23,7 @@ import {
   WHISPER_ERROR_MESSAGES,
   WHISPER_SUCCESS_MESSAGES,
 } from "../constants/whisperValidation";
+import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
 
 const { width, height } = Dimensions.get("window");
 
@@ -48,6 +50,9 @@ interface RecordingState {
 export default function RecordScreen() {
   const navigation = useNavigation<RecordScreenNavigationProp>();
   const { user, incrementWhisperCount } = useAuth();
+
+  // Add performance monitoring
+  usePerformanceMonitor("RecordScreen");
 
   // Check if we're in a modal context
   const isModal = navigation

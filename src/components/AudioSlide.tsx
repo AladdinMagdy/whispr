@@ -6,6 +6,7 @@ import AudioControls from "./AudioControls";
 import WhisperInteractions from "./WhisperInteractions";
 import { Whisper } from "../types";
 import { getAudioCacheService } from "../services/audioCacheService";
+import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
 
 const { height, width } = Dimensions.get("window");
 
@@ -37,6 +38,9 @@ const AudioSlide: React.FC<AudioSlideProps> = ({
   isVisible,
   isActive,
 }) => {
+  // Add performance monitoring
+  usePerformanceMonitor("AudioSlide");
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);

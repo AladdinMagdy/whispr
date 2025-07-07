@@ -3,7 +3,7 @@
  * Downloads and caches audio files locally for faster playback
  */
 
-import * as FileSystem from "expo-file-system";
+import * as DefaultFileSystem from "expo-file-system";
 
 // Local type definition for audio tracks
 export interface AudioTrack {
@@ -29,12 +29,32 @@ interface AudioCacheState {
   isPreloading: boolean;
 }
 
+// Utility: Hash string for filename
+export function hashString(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
+
+// Utility: Get file extension from URL
+export function getFileExtension(url: string): string {
+  const match = url.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
+  return match ? `.${match[1]}` : ".mp3";
+}
+
 export class AudioCacheService {
   private static instance: AudioCacheService;
   private state: AudioCacheState;
   private cacheDir: string;
+  private fileSystem: typeof DefaultFileSystem;
 
-  private constructor() {
+  private constructor(
+    fileSystem: typeof DefaultFileSystem = DefaultFileSystem
+  ) {
     this.state = {
       cachedFiles: new Map(),
       maxCacheSize: 100 * 1024 * 1024, // 100MB
@@ -42,13 +62,14 @@ export class AudioCacheService {
       preloadQueue: [],
       isPreloading: false,
     };
-    this.cacheDir = `${FileSystem.cacheDirectory}whispr-audio/`;
+    this.cacheDir = `${fileSystem.cacheDirectory}whispr-audio/`;
+    this.fileSystem = fileSystem;
     this.initializeCache();
   }
 
-  static getInstance(): AudioCacheService {
+  static getInstance(fileSystem?: typeof DefaultFileSystem): AudioCacheService {
     if (!AudioCacheService.instance) {
-      AudioCacheService.instance = new AudioCacheService();
+      AudioCacheService.instance = new AudioCacheService(fileSystem);
     }
     return AudioCacheService.instance;
   }
@@ -59,9 +80,9 @@ export class AudioCacheService {
   private async initializeCache(): Promise<void> {
     try {
       // Create cache directory if it doesn't exist
-      const dirInfo = await FileSystem.getInfoAsync(this.cacheDir);
+      const dirInfo = await this.fileSystem.getInfoAsync(this.cacheDir);
       if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(this.cacheDir, {
+        await this.fileSystem.makeDirectoryAsync(this.cacheDir, {
           intermediates: true,
         });
         console.log("📁 Created audio cache directory");
@@ -81,10 +102,10 @@ export class AudioCacheService {
   private async loadCacheMetadata(): Promise<void> {
     try {
       const metadataPath = `${this.cacheDir}metadata.json`;
-      const metadataInfo = await FileSystem.getInfoAsync(metadataPath);
+      const metadataInfo = await this.fileSystem.getInfoAsync(metadataPath);
 
       if (metadataInfo.exists) {
-        const metadataContent = await FileSystem.readAsStringAsync(
+        const metadataContent = await this.fileSystem.readAsStringAsync(
           metadataPath
         );
         const metadata = JSON.parse(metadataContent);
@@ -113,7 +134,7 @@ export class AudioCacheService {
         timestamp: Date.now(),
       };
 
-      await FileSystem.writeAsStringAsync(
+      await this.fileSystem.writeAsStringAsync(
         metadataPath,
         JSON.stringify(metadata)
       );
@@ -141,7 +162,7 @@ export class AudioCacheService {
       if (cached) {
         // Check if file still exists
         try {
-          const fileInfo = await FileSystem.getInfoAsync(cached.localPath);
+          const fileInfo = await this.fileSystem.getInfoAsync(cached.localPath);
           if (fileInfo.exists) {
             console.log(`✅ Using cached audio: ${originalUrl}`);
             return cached.localPath;
@@ -170,45 +191,29 @@ export class AudioCacheService {
       return await this.downloadAndCache(originalUrl);
     } catch (error) {
       console.error(`❌ Error in getCachedAudioUrl for ${originalUrl}:`, error);
+      // Return original URL as fallback
       return originalUrl;
     }
   }
 
   /**
-   * Download and cache an audio file
+   * Download and cache audio file
    */
   private async downloadAndCache(originalUrl: string): Promise<string> {
     try {
-      // Validate URL before attempting download
-      if (!originalUrl || typeof originalUrl !== "string") {
-        console.warn(
-          "❌ Invalid URL provided to downloadAndCache:",
-          originalUrl
-        );
-        return originalUrl;
-      }
-
-      // Check if URL is properly formatted
-      try {
-        new URL(originalUrl);
-      } catch (error) {
-        console.warn("❌ Malformed URL:", originalUrl);
-        return originalUrl;
-      }
-
-      console.log(`⬇️ Downloading audio: ${originalUrl}`);
+      console.log(`📥 Downloading audio: ${originalUrl}`);
 
       // Generate unique filename
-      const urlHash = this.hashString(originalUrl);
-      const fileExtension = this.getFileExtension(originalUrl);
-      const localPath = `${this.cacheDir}${urlHash}${fileExtension}`;
+      const fileHash = hashString(originalUrl);
+      const fileExtension = getFileExtension(originalUrl);
+      const localPath = `${this.cacheDir}${fileHash}${fileExtension}`;
 
       if (originalUrl.startsWith("file://")) {
         // Local file, just copy it to cache if not already there
         if (originalUrl !== localPath) {
-          await FileSystem.copyAsync({ from: originalUrl, to: localPath });
+          await this.fileSystem.copyAsync({ from: originalUrl, to: localPath });
         }
-        const fileInfo = await FileSystem.getInfoAsync(localPath, {
+        const fileInfo = await this.fileSystem.getInfoAsync(localPath, {
           size: true,
         });
         const fileSize = (fileInfo as any).size || 0;
@@ -231,59 +236,54 @@ export class AudioCacheService {
         );
         return localPath;
       } else {
-        // Remote file, download with better error handling
-        try {
-          const downloadResult = await FileSystem.downloadAsync(
-            originalUrl,
-            localPath
-          );
+        // Remote file, download
+        const result = await this.fileSystem.downloadAsync(
+          originalUrl,
+          localPath
+        );
 
-          if (downloadResult.status === 200) {
-            // Get file size
-            const fileInfo = await FileSystem.getInfoAsync(localPath, {
-              size: true,
-            });
-            const fileSize = (fileInfo as any).size || 0;
-
-            // Check cache size and evict if necessary
-            await this.manageCacheSize(fileSize);
-
-            // Add to cache
-            const cachedAudio: CachedAudio = {
-              originalUrl,
-              localPath,
-              downloadTime: Date.now(),
-              fileSize,
-            };
-
-            this.state.cachedFiles.set(originalUrl, cachedAudio);
-            this.state.currentCacheSize += fileSize;
-
-            // Save metadata
-            await this.saveCacheMetadata();
-
-            console.log(
-              `✅ Audio cached: ${originalUrl} (${(
-                fileSize /
-                1024 /
-                1024
-              ).toFixed(2)}MB)`
-            );
-            return localPath;
-          } else {
-            console.warn(
-              `❌ Download failed with status ${downloadResult.status} for ${originalUrl}`
-            );
-            return originalUrl;
-          }
-        } catch (downloadError) {
-          console.error(`❌ Download error for ${originalUrl}:`, downloadError);
+        if (result.status !== 200) {
+          console.error(`❌ Download failed with status: ${result.status}`);
           return originalUrl;
         }
+
+        // Get file info for size calculation
+        const fileInfo = await this.fileSystem.getInfoAsync(localPath, {
+          size: true,
+        });
+        if (!fileInfo.exists) {
+          console.error("❌ Downloaded file not found");
+          return originalUrl;
+        }
+
+        const fileSize = (fileInfo as any).size || 0;
+
+        // Manage cache size before adding new file
+        await this.manageCacheSize(fileSize);
+
+        // Add to cache
+        const cachedAudio: CachedAudio = {
+          originalUrl,
+          localPath,
+          downloadTime: Date.now(),
+          fileSize,
+        };
+
+        this.state.cachedFiles.set(originalUrl, cachedAudio);
+        this.state.currentCacheSize += fileSize;
+
+        // Save metadata
+        await this.saveCacheMetadata();
+
+        console.log(
+          `✅ Audio cached: ${originalUrl} (${(fileSize / 1024 / 1024).toFixed(
+            2
+          )}MB)`
+        );
+        return localPath;
       }
     } catch (error) {
-      console.error(`❌ Error caching audio ${originalUrl}:`, error);
-      // Return original URL as fallback
+      console.error(`❌ Error downloading audio ${originalUrl}:`, error);
       return originalUrl;
     }
   }
@@ -394,7 +394,7 @@ export class AudioCacheService {
     // Evict files until we have enough space
     for (const [url, cached] of sortedFiles) {
       try {
-        await FileSystem.deleteAsync(cached.localPath);
+        await this.fileSystem.deleteAsync(cached.localPath);
         this.state.cachedFiles.delete(url);
         this.state.currentCacheSize -= cached.fileSize;
 
@@ -424,7 +424,7 @@ export class AudioCacheService {
       // Delete all cached files
       for (const [url, cached] of this.state.cachedFiles) {
         try {
-          await FileSystem.deleteAsync(cached.localPath);
+          await this.fileSystem.deleteAsync(cached.localPath);
         } catch (error) {
           console.error(`❌ Error deleting ${url}:`, error);
         }
@@ -466,27 +466,6 @@ export class AudioCacheService {
   }
 
   /**
-   * Utility: Hash string for filename
-   */
-  private hashString(str: string): string {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    return Math.abs(hash).toString(36);
-  }
-
-  /**
-   * Utility: Get file extension from URL
-   */
-  private getFileExtension(url: string): string {
-    const match = url.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
-    return match ? `.${match[1]}` : ".mp3";
-  }
-
-  /**
    * Reset singleton instance
    */
   static resetInstance(): void {
@@ -510,8 +489,10 @@ export class AudioCacheService {
 /**
  * Factory function to get AudioCacheService instance
  */
-export const getAudioCacheService = (): AudioCacheService => {
-  return AudioCacheService.getInstance();
+export const getAudioCacheService = (
+  fileSystem?: typeof DefaultFileSystem
+): AudioCacheService => {
+  return AudioCacheService.getInstance(fileSystem);
 };
 
 /**

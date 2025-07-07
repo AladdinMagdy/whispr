@@ -3,14 +3,7 @@
  * Tests for local audio file caching functionality
  */
 
-import {
-  AudioCacheService,
-  getAudioCacheService,
-  resetAudioCacheService,
-} from "../services/audioCacheService";
-import * as FileSystem from "expo-file-system";
-
-// Mock expo-file-system
+// Mock expo-file-system BEFORE any imports
 jest.mock("expo-file-system", () => ({
   cacheDirectory: "/mock/cache/",
   getInfoAsync: jest.fn(),
@@ -21,6 +14,15 @@ jest.mock("expo-file-system", () => ({
   copyAsync: jest.fn(),
   deleteAsync: jest.fn(),
 }));
+
+import {
+  AudioCacheService,
+  getAudioCacheService,
+  resetAudioCacheService,
+  hashString,
+  getFileExtension,
+} from "../services/audioCacheService";
+import * as FileSystem from "expo-file-system";
 
 const mockFileSystem = FileSystem as jest.Mocked<typeof FileSystem>;
 
@@ -189,33 +191,44 @@ describe("AudioCacheService", () => {
 
     test("should download and cache remote file if not cached", async () => {
       const originalUrl = "https://example.com/audio.mp3";
+      const tempHash = hashString(originalUrl);
+      const tempExt = getFileExtension(originalUrl);
+      const cachedPath = `/mock/cache/whispr-audio/${tempHash}${tempExt}`;
 
-      // Mock that the file doesn't exist in cache (first call for getCachedAudioUrl)
+      // Reset singleton and mocks before running
+      resetAudioCacheService();
+      jest.clearAllMocks();
+
+      // 1. First getInfoAsync: cache miss
       mockFileSystem.getInfoAsync.mockResolvedValueOnce({
         exists: false,
-        uri: "/mock/cache/whispr-audio/hash.mp3",
+        uri: cachedPath,
         isDirectory: false,
       });
 
-      // Mock successful download
+      // 2. downloadAsync: download success
       mockFileSystem.downloadAsync.mockResolvedValue({
         status: 200,
         headers: {},
-        uri: "/mock/cache/whispr-audio/actual-hash.mp3",
+        uri: cachedPath,
         mimeType: "audio/mpeg",
       });
 
-      // Mock file info for downloaded file (second call for getCachedAudioUrl)
+      // 3. Second getInfoAsync: file exists after download
       mockFileSystem.getInfoAsync.mockResolvedValueOnce({
         exists: true,
-        uri: "/mock/cache/whispr-audio/actual-hash.mp3",
+        uri: cachedPath,
         size: 1024 * 1024,
         isDirectory: false,
         modificationTime: Date.now(),
       });
 
-      const result = await audioCacheService.getCachedAudioUrl(originalUrl);
-      expect(result).toContain("/mock/cache/whispr-audio/");
+      // Use a fresh instance after resetting
+      const freshService = getAudioCacheService();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const result = await freshService.getCachedAudioUrl(originalUrl);
+      expect(result).toBe(cachedPath);
       expect(result).toContain(".mp3");
       expect(mockFileSystem.downloadAsync).toHaveBeenCalledWith(
         originalUrl,

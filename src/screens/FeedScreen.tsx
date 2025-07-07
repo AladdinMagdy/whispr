@@ -30,10 +30,14 @@ import LoadingSpinner from "../components/LoadingSpinner";
 import AudioSlide, { pauseAllAudioSlides } from "../components/AudioSlide";
 import { useFocusEffect } from "@react-navigation/native";
 import { getAudioCacheService } from "../services/audioCacheService";
+import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
 
 const { height, width } = Dimensions.get("window");
 
 const FeedScreen = () => {
+  // Add performance monitoring
+  usePerformanceMonitor("FeedScreen");
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -89,8 +93,8 @@ const FeedScreen = () => {
           console.warn("Failed to preload tracks:", error);
         });
 
-      // Log cache statistics periodically (every 10 index changes)
-      if (currentIndex % 10 === 0) {
+      // Log cache statistics periodically (every 20 index changes to reduce logging)
+      if (currentIndex % 20 === 0 && currentIndex > 0) {
         const stats = audioCacheService.getCacheStats();
         console.log("📊 Audio Cache Stats:", {
           fileCount: stats.fileCount,

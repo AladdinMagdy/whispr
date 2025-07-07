@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import {
   View,
   Text,
@@ -12,6 +18,7 @@ import {
   SafeAreaView,
   Image,
   Animated,
+  Dimensions,
 } from "react-native";
 import { useAuth } from "../providers/AuthProvider";
 import { getInteractionService } from "../services/interactionService";
@@ -20,6 +27,7 @@ import { FIRESTORE_COLLECTIONS } from "../constants";
 import ErrorBoundary from "./ErrorBoundary";
 import { getFirestoreService } from "../services/firestoreService";
 import { onSnapshot, doc } from "firebase/firestore";
+import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
 
 interface WhisperInteractionsProps {
   whisper: Whisper;
@@ -403,6 +411,9 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
   onLikeChange,
   onCommentChange,
 }) => {
+  // Add performance monitoring
+  usePerformanceMonitor("WhisperInteractions");
+
   const { user } = useAuth();
   const [isLiked, setIsLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(whisper.likes);
