@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -10,11 +10,14 @@ import {
   FlatList,
   ActivityIndicator,
   SafeAreaView,
+  Image,
+  Animated,
 } from "react-native";
 import { useAuth } from "../providers/AuthProvider";
 import { getInteractionService } from "../services/interactionService";
 import { Whisper, Comment } from "../types";
 import { FIRESTORE_COLLECTIONS } from "../constants";
+import ErrorBoundary from "./ErrorBoundary";
 
 interface WhisperInteractionsProps {
   whisper: Whisper;
@@ -28,6 +31,86 @@ interface CommentItemProps {
   onLikeComment: (commentId: string) => void;
   onDeleteComment: (commentId: string) => void;
 }
+
+// Optimized Avatar Component with lazy loading and caching
+const OptimizedAvatar: React.FC<{
+  displayName: string;
+  profileColor: string;
+  size?: number;
+}> = ({ displayName, profileColor, size = 40 }) => {
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageError, setImageError] = useState(false);
+
+  const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(
+    displayName
+  )}&background=${profileColor.replace("#", "")}&color=fff&size=${size * 2}`;
+
+  const handleImageLoad = () => {
+    setImageLoaded(true);
+  };
+
+  const handleImageError = () => {
+    setImageError(true);
+  };
+
+  if (imageError) {
+    // Fallback to colored circle with initial
+    return (
+      <View
+        style={[
+          styles.userAvatar,
+          {
+            backgroundColor: profileColor,
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+          },
+        ]}
+      >
+        <Text style={[styles.userInitial, { fontSize: size * 0.4 }]}>
+          {displayName?.charAt(0)?.toUpperCase() || "?"}
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.avatarContainer, { width: size, height: size }]}>
+      {!imageLoaded && (
+        <View
+          style={[
+            styles.avatarPlaceholder,
+            {
+              backgroundColor: profileColor,
+              width: size,
+              height: size,
+              borderRadius: size / 2,
+            },
+          ]}
+        >
+          <Text style={[styles.userInitial, { fontSize: size * 0.4 }]}>
+            {displayName?.charAt(0)?.toUpperCase() || "?"}
+          </Text>
+        </View>
+      )}
+      <Image
+        source={{ uri: avatarUrl }}
+        style={[
+          styles.avatarImage,
+          { width: size, height: size, borderRadius: size / 2 },
+          { opacity: imageLoaded ? 1 : 0 },
+        ]}
+        onLoad={handleImageLoad}
+        onError={handleImageError}
+        // Performance optimizations
+        fadeDuration={200}
+        resizeMode="cover"
+        // Prevent unnecessary re-renders
+        key={avatarUrl}
+      />
+    </View>
+  );
+};
 
 const CommentItem: React.FC<CommentItemProps> = ({
   comment,
@@ -146,26 +229,20 @@ const CommentItem: React.FC<CommentItemProps> = ({
       <View style={styles.commentItem}>
         <View style={styles.commentHeader}>
           <View style={styles.commentUserInfo}>
-            <View
-              style={[
-                styles.userAvatar,
-                { backgroundColor: comment.userProfileColor },
-              ]}
-            >
-              <Text style={styles.userInitial}>
-                {comment.userDisplayName?.charAt(0)?.toUpperCase() || "?"}
-              </Text>
-            </View>
+            <OptimizedAvatar
+              displayName={comment.userDisplayName || "Anonymous"}
+              profileColor={comment.userProfileColor}
+            />
             <Text style={styles.userName}>
               {comment.userDisplayName || "Anonymous"}
             </Text>
           </View>
           <View style={styles.commentActions}>
-            <TouchableOpacity onPress={handleLike} style={styles.likeButton}>
-              <Text style={[styles.likeIcon, isLiked && styles.likedIcon]}>
-                {isLiked ? "❤️" : "🤍"}
-              </Text>
-            </TouchableOpacity>
+            <AnimatedLikeButton
+              isLiked={isLiked}
+              onPress={handleLike}
+              count={likeCount}
+            />
             <TouchableOpacity
               onPress={handleShowCommentLikes}
               style={styles.likeCountButton}
@@ -211,16 +288,10 @@ const CommentItem: React.FC<CommentItemProps> = ({
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
               <View style={styles.likeItem}>
-                <View
-                  style={[
-                    styles.userAvatar,
-                    { backgroundColor: item.userProfileColor },
-                  ]}
-                >
-                  <Text style={styles.userInitial}>
-                    {item.userDisplayName?.charAt(0)?.toUpperCase() || "?"}
-                  </Text>
-                </View>
+                <OptimizedAvatar
+                  displayName={item.userDisplayName || "Anonymous"}
+                  profileColor={item.userProfileColor}
+                />
                 <Text style={styles.userName}>
                   {item.userDisplayName || "Anonymous"}
                 </Text>
@@ -236,6 +307,73 @@ const CommentItem: React.FC<CommentItemProps> = ({
         </SafeAreaView>
       </Modal>
     </>
+  );
+};
+
+// Animated Like Button Component
+const AnimatedLikeButton: React.FC<{
+  isLiked: boolean;
+  onPress: () => void;
+  count: number;
+}> = ({ isLiked, onPress, count }) => {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const heartAnim = useRef(new Animated.Value(isLiked ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(heartAnim, {
+      toValue: isLiked ? 1 : 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, [isLiked, heartAnim]);
+
+  const handlePress = () => {
+    // Scale animation on press
+    Animated.sequence([
+      Animated.timing(scaleAnim, {
+        toValue: 0.8,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    onPress();
+  };
+
+  return (
+    <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+      <TouchableOpacity onPress={handlePress} style={styles.likeButton}>
+        <Animated.Text
+          style={[
+            styles.likeIcon,
+            {
+              opacity: heartAnim,
+              transform: [{ scale: heartAnim }],
+            },
+          ]}
+        >
+          ❤️
+        </Animated.Text>
+        <Animated.Text
+          style={[
+            styles.likeIcon,
+            {
+              opacity: heartAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [1, 0],
+              }),
+            },
+          ]}
+        >
+          🤍
+        </Animated.Text>
+      </TouchableOpacity>
+    </Animated.View>
   );
 };
 
@@ -533,16 +671,10 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
               <View style={styles.likeItem}>
-                <View
-                  style={[
-                    styles.userAvatar,
-                    { backgroundColor: item.userProfileColor },
-                  ]}
-                >
-                  <Text style={styles.userInitial}>
-                    {item.userDisplayName?.charAt(0)?.toUpperCase() || "?"}
-                  </Text>
-                </View>
+                <OptimizedAvatar
+                  displayName={item.userDisplayName || "Anonymous"}
+                  profileColor={item.userProfileColor}
+                />
                 <Text style={styles.userName}>
                   {item.userDisplayName || "Anonymous"}
                 </Text>
@@ -831,6 +963,33 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
   },
+  avatarContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: "hidden",
+  },
+  avatarPlaceholder: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#f0f0f0",
+  },
+  avatarImage: {
+    flex: 1,
+    width: "100%",
+    height: "100%",
+  },
 });
 
-export default WhisperInteractions;
+const WhisperInteractionsWithErrorBoundary: React.FC<
+  WhisperInteractionsProps
+> = (props) => {
+  return (
+    <ErrorBoundary>
+      <WhisperInteractions {...props} />
+    </ErrorBoundary>
+  );
+};
+
+export default WhisperInteractionsWithErrorBoundary;

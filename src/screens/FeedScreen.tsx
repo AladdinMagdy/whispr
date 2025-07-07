@@ -17,6 +17,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   AppState,
+  Image,
 } from "react-native";
 import TrackPlayer, {
   State,
@@ -35,6 +36,8 @@ import { getPreloadService } from "../services/preloadService";
 import { Whisper } from "../types";
 import { useAuth } from "../providers/AuthProvider";
 import { QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
+import ErrorBoundary from "../components/ErrorBoundary";
+import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
 // Lazy load heavy components for better performance
 const WhisperInteractions = React.lazy(
   () => import("../components/WhisperInteractions")
@@ -43,6 +46,9 @@ const WhisperInteractions = React.lazy(
 const { height, width } = Dimensions.get("window");
 
 const FeedScreen = () => {
+  // Performance monitoring
+  usePerformanceMonitor("FeedScreen");
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -678,62 +684,65 @@ const FeedScreen = () => {
   }
 
   return (
-    <View style={styles.container}>
-      {/* New whispers indicator */}
-      {newWhispersCount > 0 && (
-        <View style={styles.newWhispersIndicator}>
-          <Text style={styles.newWhispersText}>
-            🎉 {newWhispersCount} new whisper{newWhispersCount > 1 ? "s" : ""}!
-          </Text>
-        </View>
-      )}
+    <ErrorBoundary>
+      <View style={styles.container}>
+        {/* New whispers indicator */}
+        {newWhispersCount > 0 && (
+          <View style={styles.newWhispersIndicator}>
+            <Text style={styles.newWhispersText}>
+              🎉 {newWhispersCount} new whisper{newWhispersCount > 1 ? "s" : ""}
+              !
+            </Text>
+          </View>
+        )}
 
-      <FlatList
-        ref={flatListRef}
-        data={convertWhispersToAudioTracks}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.id}
-        pagingEnabled
-        horizontal={false}
-        showsVerticalScrollIndicator={false}
-        snapToInterval={height}
-        decelerationRate="fast"
-        onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={{ itemVisiblePercentThreshold: 80 }}
-        getItemLayout={(_, index) => ({
-          length: height,
-          offset: height * index,
-          index,
-        })}
-        initialScrollIndex={scrollPosition}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        onEndReached={loadMoreWhispers}
-        onEndReachedThreshold={0.5}
-        ListFooterComponent={
-          loadingMore ? (
-            <View style={styles.loadingMoreContainer}>
-              <ActivityIndicator size="small" color="#007AFF" />
-              <Text style={styles.loadingMoreText}>
-                Loading more whispers...
-              </Text>
-            </View>
-          ) : null
-        }
-        // Performance optimizations
-        removeClippedSubviews={true}
-        maxToRenderPerBatch={3}
-        windowSize={5}
-        initialNumToRender={1}
-        updateCellsBatchingPeriod={50}
-        disableVirtualization={false}
-        maintainVisibleContentPosition={{
-          minIndexForVisible: 0,
-          autoscrollToTopThreshold: 10,
-        }}
-      />
-    </View>
+        <FlatList
+          ref={flatListRef}
+          data={convertWhispersToAudioTracks}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id}
+          pagingEnabled
+          horizontal={false}
+          showsVerticalScrollIndicator={false}
+          snapToInterval={height}
+          decelerationRate="fast"
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={{ itemVisiblePercentThreshold: 80 }}
+          getItemLayout={(_, index) => ({
+            length: height,
+            offset: height * index,
+            index,
+          })}
+          initialScrollIndex={scrollPosition}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          onEndReached={loadMoreWhispers}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.loadingMoreContainer}>
+                <ActivityIndicator size="small" color="#007AFF" />
+                <Text style={styles.loadingMoreText}>
+                  Loading more whispers...
+                </Text>
+              </View>
+            ) : null
+          }
+          // Performance optimizations
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={3}
+          windowSize={5}
+          initialNumToRender={1}
+          updateCellsBatchingPeriod={50}
+          disableVirtualization={false}
+          maintainVisibleContentPosition={{
+            minIndexForVisible: 0,
+            autoscrollToTopThreshold: 10,
+          }}
+        />
+      </View>
+    </ErrorBoundary>
   );
 };
 
