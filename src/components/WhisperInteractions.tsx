@@ -18,6 +18,8 @@ import { getInteractionService } from "../services/interactionService";
 import { Whisper, Comment } from "../types";
 import { FIRESTORE_COLLECTIONS } from "../constants";
 import ErrorBoundary from "./ErrorBoundary";
+import { getFirestoreService } from "../services/firestoreService";
+import { onSnapshot, doc } from "firebase/firestore";
 
 interface WhisperInteractionsProps {
   whisper: Whisper;
@@ -127,6 +129,7 @@ const CommentItem: React.FC<CommentItemProps> = ({
   const [commentLikesLastDoc, setCommentLikesLastDoc] = useState<any>(null);
 
   const interactionService = getInteractionService();
+  const firestoreService = getFirestoreService();
 
   // Load comment like state on mount
   useEffect(() => {
@@ -152,6 +155,24 @@ const CommentItem: React.FC<CommentItemProps> = ({
 
     loadCommentLikeState();
   }, [comment.id, interactionService]);
+
+  // Real-time comment likes modal
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    if (showCommentLikes) {
+      setLoadingCommentLikes(true);
+      unsubscribe = firestoreService.subscribeToCommentLikes(
+        comment.id,
+        (likes) => {
+          setCommentLikes(likes);
+          setLoadingCommentLikes(false);
+        }
+      );
+    }
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [showCommentLikes, comment.id, firestoreService]);
 
   const handleLike = async () => {
     try {
@@ -402,6 +423,60 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
   const [commentsLastDoc, setCommentsLastDoc] = useState<any>(null);
 
   const interactionService = getInteractionService();
+  const firestoreService = getFirestoreService();
+
+  // Real-time like and comment count for whisper
+  useEffect(() => {
+    const whisperDocRef = doc(
+      firestoreService["firestore"],
+      "whispers",
+      whisper.id
+    );
+    const unsubscribe = onSnapshot(whisperDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setLikeCount(data.likes || 0);
+        setCommentCount(data.replies || 0);
+      }
+    });
+    return () => unsubscribe();
+  }, [whisper.id, firestoreService]);
+
+  // Real-time comments modal
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    if (showComments) {
+      setLoadingComments(true);
+      unsubscribe = firestoreService.subscribeToComments(
+        whisper.id,
+        (comments) => {
+          setComments(comments);
+          setLoadingComments(false);
+        }
+      );
+    }
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [showComments, whisper.id, firestoreService]);
+
+  // Real-time likes modal
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    if (showLikes) {
+      setLoadingLikes(true);
+      unsubscribe = firestoreService.subscribeToWhisperLikes(
+        whisper.id,
+        (likes) => {
+          setLikes(likes);
+          setLoadingLikes(false);
+        }
+      );
+    }
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [showLikes, whisper.id, firestoreService]);
 
   // Check if user has liked this whisper and update counts when whisper changes
   useEffect(() => {
@@ -485,17 +560,29 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
 
     setSubmittingComment(true);
     try {
-      const result = await interactionService.addComment(
-        whisper.id,
-        newComment.trim()
-      );
+      const text = newComment.trim();
+      const result = await interactionService.addComment(whisper.id, text);
 
       setNewComment("");
-      setCommentCount(result.count);
-      onCommentChange?.(result.count);
-
-      // Reload comments to show the new one
-      loadInitialComments();
+      // Optimistically update comment count and list
+      setCommentCount((prev) => prev + 1);
+      onCommentChange?.(commentCount + 1);
+      setComments((prev) => [
+        {
+          id: result.commentId,
+          whisperId: whisper.id,
+          userId: user.uid,
+          userDisplayName: user.displayName,
+          userProfileColor: user.profileColor,
+          text,
+          likes: 0,
+          createdAt: new Date(),
+          isEdited: false,
+        },
+        ...prev,
+      ]);
+      // Optionally, reload from server in background
+      setTimeout(() => loadInitialComments(), 1500);
     } catch (error) {
       console.error("Error adding comment:", error);
       Alert.alert("Error", "Failed to add comment");

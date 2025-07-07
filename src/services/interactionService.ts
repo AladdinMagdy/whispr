@@ -400,7 +400,7 @@ export class InteractionService {
       };
 
       // Clear comment cache for this whisper
-      this.clearCommentCache(whisperId);
+      await this.clearCommentCache(whisperId);
 
       // Add to server
       const commentId = await this.firestoreService.addComment(
@@ -746,12 +746,30 @@ export class InteractionService {
     }
   }
 
-  private clearCommentCache(whisperId: string): void {
+  private async clearCommentCache(whisperId: string): Promise<void> {
+    // Clear memory cache
     Object.keys(this.commentCache).forEach((key) => {
       if (key.startsWith(whisperId)) {
         delete this.commentCache[key];
       }
     });
+
+    // Clear AsyncStorage cache for this whisper
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      const commentKeys = keys.filter(
+        (key) => key.startsWith(COMMENT_CACHE_PREFIX) && key.includes(whisperId)
+      );
+
+      if (commentKeys.length > 0) {
+        await AsyncStorage.multiRemove(commentKeys);
+        console.log(
+          `🧹 Cleared ${commentKeys.length} comment cache entries for whisper ${whisperId}`
+        );
+      }
+    } catch (error) {
+      console.error("Error clearing comment cache from AsyncStorage:", error);
+    }
   }
 
   private debounceServerUpdate(

@@ -973,6 +973,155 @@ export class FirestoreService {
       );
     }
   }
+
+  /**
+   * Real-time listener for comments on a whisper
+   */
+  subscribeToComments(
+    whisperId: string,
+    callback: (comments: Comment[]) => void
+  ): () => void {
+    try {
+      const commentsQuery = query(
+        collection(this.firestore, FIRESTORE_COLLECTIONS.REPLIES),
+        where("whisperId", "==", whisperId),
+        orderBy("createdAt", "desc")
+      );
+      const unsubscribe = onSnapshot(
+        commentsQuery,
+        (querySnapshot) => {
+          const comments: Comment[] = [];
+          querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            comments.push({
+              id: doc.id,
+              whisperId: data.whisperId,
+              userId: data.userId,
+              userDisplayName: data.userDisplayName,
+              userProfileColor: data.userProfileColor,
+              text: data.text,
+              likes: data.likes || 0,
+              createdAt: data.createdAt?.toDate() || new Date(),
+              isEdited: data.isEdited || false,
+              editedAt: data.editedAt?.toDate(),
+            });
+          });
+          callback(comments);
+        },
+        (error) => {
+          console.error("❌ Real-time comments listener error:", error);
+        }
+      );
+      return unsubscribe;
+    } catch (error) {
+      console.error("❌ Error setting up real-time comments listener:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Real-time listener for likes on a whisper
+   */
+  subscribeToWhisperLikes(
+    whisperId: string,
+    callback: (likes: Like[]) => void
+  ): () => void {
+    try {
+      const likesQuery = query(
+        collection(this.firestore, FIRESTORE_COLLECTIONS.LIKES),
+        where("whisperId", "==", whisperId),
+        orderBy("createdAt", "desc")
+      );
+      const unsubscribe = onSnapshot(
+        likesQuery,
+        (querySnapshot) => {
+          const likes: Like[] = [];
+          querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            likes.push({
+              id: doc.id,
+              whisperId: data.whisperId,
+              userId: data.userId,
+              userDisplayName: data.userDisplayName || "Anonymous",
+              userProfileColor: data.userProfileColor || "#9E9E9E",
+              createdAt: data.createdAt?.toDate() || new Date(),
+            });
+          });
+          callback(likes);
+        },
+        (error) => {
+          console.error("❌ Real-time whisper likes listener error:", error);
+        }
+      );
+      return unsubscribe;
+    } catch (error) {
+      console.error(
+        "❌ Error setting up real-time whisper likes listener:",
+        error
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Real-time listener for likes on a comment
+   */
+  subscribeToCommentLikes(
+    commentId: string,
+    callback: (likes: any[]) => void
+  ): () => void {
+    try {
+      const likesQuery = query(
+        collection(this.firestore, "commentLikes"),
+        where("commentId", "==", commentId),
+        orderBy("createdAt", "desc")
+      );
+      const unsubscribe = onSnapshot(
+        likesQuery,
+        async (querySnapshot) => {
+          const likes: any[] = [];
+          for (const likeDoc of querySnapshot.docs) {
+            const likeData = likeDoc.data();
+            // Get user details
+            let userDisplayName = "Anonymous";
+            let userProfileColor = "#007AFF";
+            try {
+              const userRef = doc(
+                this.firestore,
+                this.usersCollection,
+                likeData.userId
+              );
+              const userDoc = await getDoc(userRef);
+              if (userDoc.exists()) {
+                const userData = userDoc.data();
+                userDisplayName = userData.displayName || "Anonymous";
+                userProfileColor = userData.profileColor || "#007AFF";
+              }
+            } catch {}
+            likes.push({
+              id: likeDoc.id,
+              commentId: likeData.commentId,
+              userId: likeData.userId,
+              userDisplayName,
+              userProfileColor,
+              createdAt: likeData.createdAt?.toDate() || new Date(),
+            });
+          }
+          callback(likes);
+        },
+        (error) => {
+          console.error("❌ Real-time comment likes listener error:", error);
+        }
+      );
+      return unsubscribe;
+    } catch (error) {
+      console.error(
+        "❌ Error setting up real-time comment likes listener:",
+        error
+      );
+      throw error;
+    }
+  }
 }
 
 /**
