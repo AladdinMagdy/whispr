@@ -27,7 +27,9 @@ import { Whisper } from "../types";
 import { useAuth } from "../providers/AuthProvider";
 import ErrorBoundary from "../components/ErrorBoundary";
 import LoadingSpinner from "../components/LoadingSpinner";
-import AudioSlide from "../components/AudioSlide";
+import AudioSlide, { pauseAllAudioSlides } from "../components/AudioSlide";
+import { useFocusEffect } from "@react-navigation/native";
+import { getAudioCacheService } from "../services/audioCacheService";
 
 const { height, width } = Dimensions.get("window");
 
@@ -58,6 +60,58 @@ const FeedScreen = () => {
     addNewWhisper,
     updateCache,
   } = useFeedStore();
+
+  // Preload next tracks when currentIndex changes
+  useEffect(() => {
+    if (whispers.length > 0 && currentIndex >= 0) {
+      const audioCacheService = getAudioCacheService();
+
+      // Convert whispers to AudioTrack format for preloading
+      const audioTracks = whispers.map((whisper) => ({
+        id: whisper.id,
+        title: whisper.userDisplayName,
+        artist: `${whisper.whisperPercentage.toFixed(
+          1
+        )}% whisper • ${formatTime(whisper.duration)}`,
+        artwork: `https://ui-avatars.com/api/?name=${encodeURIComponent(
+          whisper.userDisplayName
+        )}&background=${whisper.userProfileColor.replace(
+          "#",
+          ""
+        )}&color=fff&size=200`,
+        url: whisper.audioUrl,
+      }));
+
+      // Preload next 3 tracks for smooth scrolling
+      audioCacheService
+        .preloadTracks(audioTracks, currentIndex, 3)
+        .catch((error) => {
+          console.warn("Failed to preload tracks:", error);
+        });
+
+      // Log cache statistics periodically (every 10 index changes)
+      if (currentIndex % 10 === 0) {
+        const stats = audioCacheService.getCacheStats();
+        console.log("📊 Audio Cache Stats:", {
+          fileCount: stats.fileCount,
+          totalSize: `${(stats.totalSize / 1024 / 1024).toFixed(1)}MB`,
+          maxSize: `${(stats.maxSize / 1024 / 1024).toFixed(1)}MB`,
+          usagePercentage: `${stats.usagePercentage.toFixed(1)}%`,
+        });
+      }
+    }
+  }, [currentIndex, whispers]);
+
+  // Helper function to format time
+  const formatTime = (seconds: number): string => {
+    const m = Math.floor(seconds / 60)
+      .toString()
+      .padStart(2, "0");
+    const s = Math.floor(seconds % 60)
+      .toString()
+      .padStart(2, "0");
+    return `${m}:${s}`;
+  };
 
   // Load whispers with caching and retry mechanism
   const loadWhispers = async (forceRefresh = false, retryAttempt = 0) => {
@@ -213,6 +267,16 @@ const FeedScreen = () => {
       );
     },
     [currentIndex]
+  );
+
+  // Pause all audio when FeedScreen loses focus or unmounts
+  useFocusEffect(
+    React.useCallback(() => {
+      // On focus: do nothing
+      return () => {
+        pauseAllAudioSlides();
+      };
+    }, [])
   );
 
   // Show loading state

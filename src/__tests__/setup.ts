@@ -17,30 +17,6 @@ jest.mock("react-native-audio-recorder-player", () => {
   };
 });
 
-// Mock react-native-track-player
-jest.mock("react-native-track-player", () => ({
-  default: {
-    setupPlayer: jest.fn().mockResolvedValue(undefined),
-    add: jest.fn().mockResolvedValue(undefined),
-    play: jest.fn().mockResolvedValue(undefined),
-    pause: jest.fn().mockResolvedValue(undefined),
-    stop: jest.fn().mockResolvedValue(undefined),
-    skip: jest.fn().mockResolvedValue(undefined),
-    reset: jest.fn().mockResolvedValue(undefined),
-    getState: jest.fn().mockResolvedValue("Stopped"),
-    getPosition: jest.fn().mockResolvedValue(0),
-    getDuration: jest.fn().mockResolvedValue(0),
-  },
-  State: {
-    Playing: "Playing",
-    Paused: "Paused",
-    Stopped: "Stopped",
-    None: "None",
-  },
-  usePlaybackState: jest.fn(() => ({ state: "Stopped" })),
-  useProgress: jest.fn(() => ({ position: 0, duration: 0 })),
-}));
-
 // Mock Firebase
 jest.mock("../config/firebase", () => ({
   getAuthInstance: jest.fn(() => ({

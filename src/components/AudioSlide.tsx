@@ -5,8 +5,26 @@ import BackgroundMedia from "./BackgroundMedia";
 import AudioControls from "./AudioControls";
 import WhisperInteractions from "./WhisperInteractions";
 import { Whisper } from "../types";
+import { getAudioCacheService } from "../services/audioCacheService";
 
 const { height, width } = Dimensions.get("window");
+
+// --- BEGIN: Global Audio Pause Logic ---
+const activeSounds = new Set<Audio.Sound>();
+
+export const pauseAllAudioSlides = async () => {
+  for (const sound of activeSounds) {
+    try {
+      const status = await sound.getStatusAsync();
+      if (status.isLoaded && status.isPlaying) {
+        await sound.pauseAsync();
+      }
+    } catch (e) {
+      // Ignore errors
+    }
+  }
+};
+// --- END: Global Audio Pause Logic ---
 
 interface AudioSlideProps {
   whisper: Whisper;
@@ -57,14 +75,21 @@ const AudioSlide: React.FC<AudioSlideProps> = ({
         shouldDuckAndroid: true,
       });
 
+      // Get cached audio URL (downloads and caches if not already cached)
+      const audioCacheService = getAudioCacheService();
+      const cachedAudioUrl = await audioCacheService.getCachedAudioUrl(
+        whisper.audioUrl
+      );
+
       // Create and load the audio with looping enabled
       const { sound } = await Audio.Sound.createAsync(
-        { uri: whisper.audioUrl },
+        { uri: cachedAudioUrl },
         { shouldPlay: false, isLooping: true }, // Enable looping
         onPlaybackStatusUpdate
       );
 
       audioRef.current = sound;
+      activeSounds.add(sound); // Register sound
       setIsLoaded(true);
       console.log(
         `Audio loaded for whisper: ${whisper.id} with looping enabled`
@@ -169,6 +194,7 @@ const AudioSlide: React.FC<AudioSlideProps> = ({
     try {
       if (audioRef.current) {
         console.log(`Cleaning up audio for whisper: ${whisper.id}`);
+        activeSounds.delete(audioRef.current); // Unregister sound
         await audioRef.current.unloadAsync();
         audioRef.current = null;
       }

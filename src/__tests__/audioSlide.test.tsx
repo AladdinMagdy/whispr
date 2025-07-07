@@ -85,7 +85,7 @@ describe("AudioSlide", () => {
 
       expect(Audio.Sound.createAsync).toHaveBeenCalledWith(
         { uri: mockWhisper.audioUrl },
-        { shouldPlay: false, isLooping: false },
+        { shouldPlay: false, isLooping: true },
         expect.any(Function)
       );
     });

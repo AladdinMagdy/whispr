@@ -4,7 +4,15 @@
  */
 
 import * as FileSystem from "expo-file-system";
-import { AudioTrack } from "../store/useAudioStore";
+
+// Local type definition for audio tracks
+export interface AudioTrack {
+  id: string;
+  title: string;
+  artist: string;
+  artwork?: string;
+  url: string;
+}
 
 interface CachedAudio {
   originalUrl: string;
