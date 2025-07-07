@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { View, StyleSheet, Dimensions, Button } from "react-native";
-import { Audio } from "expo-av";
+import { Audio, AVPlaybackStatus } from "expo-av";
 import BackgroundMedia from "./BackgroundMedia";
 import AudioControls from "./AudioControls";
 import WhisperInteractions from "./WhisperInteractions";
@@ -14,16 +14,16 @@ const { height, width } = Dimensions.get("window");
 const activeSounds = new Set<Audio.Sound>();
 
 export const pauseAllAudioSlides = async () => {
-  for (const sound of activeSounds) {
+  console.log("🔄 Pausing all audio slides...");
+  const pausePromises = Array.from(activeSounds).map(async (sound) => {
     try {
-      const status = await sound.getStatusAsync();
-      if (status.isLoaded && status.isPlaying) {
-        await sound.pauseAsync();
-      }
-    } catch (e) {
-      // Ignore errors
+      await sound.pauseAsync();
+    } catch (error) {
+      console.warn("Error pausing sound:", error);
     }
-  }
+  });
+  await Promise.all(pausePromises);
+  console.log("✅ All audio slides paused");
 };
 // --- END: Global Audio Pause Logic ---
 
@@ -45,75 +45,30 @@ const AudioSlide: React.FC<AudioSlideProps> = ({
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
   const audioRef = useRef<Audio.Sound | null>(null);
+  const initializationRef = useRef(false);
+  const whisperIdRef = useRef(whisper.id);
+  const audioUrlRef = useRef(whisper.audioUrl);
+  const isActiveRef = useRef(isActive);
+  const isVisibleRef = useRef(isVisible);
+  const hasInitializedRef = useRef(false);
 
-  // Initialize audio when component mounts
+  // Update refs when props change
   useEffect(() => {
-    initializeAudio();
-    return () => {
-      cleanupAudio();
-    };
-  }, []);
+    whisperIdRef.current = whisper.id;
+    audioUrlRef.current = whisper.audioUrl;
+  }, [whisper.id, whisper.audioUrl]);
 
-  // Handle visibility and active state changes
   useEffect(() => {
-    if (isActive && isVisible) {
-      if (isLoaded) {
-        console.log(`Auto-playing audio for slide: ${whisper.id}`);
-        playAudio();
-      }
-    } else if (isLoaded) {
-      console.log(`Pausing audio for slide: ${whisper.id}`);
-      pauseAudio();
-    }
-  }, [isActive, isVisible, isLoaded, whisper.id]);
+    isActiveRef.current = isActive;
+  }, [isActive]);
 
-  const initializeAudio = async () => {
-    try {
-      console.log(`Initializing audio for whisper: ${whisper.id}`);
+  useEffect(() => {
+    isVisibleRef.current = isVisible;
+  }, [isVisible]);
 
-      // Set audio mode for better iOS compatibility
-      await Audio.setAudioModeAsync({
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-      });
-
-      // Get cached audio URL (downloads and caches if not already cached)
-      const audioCacheService = getAudioCacheService();
-      const cachedAudioUrl = await audioCacheService.getCachedAudioUrl(
-        whisper.audioUrl
-      );
-
-      // Create and load the audio with looping enabled
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: cachedAudioUrl },
-        { shouldPlay: false, isLooping: true }, // Enable looping
-        onPlaybackStatusUpdate
-      );
-
-      audioRef.current = sound;
-      activeSounds.add(sound); // Register sound
-      setIsLoaded(true);
-      console.log(
-        `Audio loaded for whisper: ${whisper.id} with looping enabled`
-      );
-
-      // If this slide is already active when audio loads, start playing immediately
-      if (isActive && isVisible) {
-        console.log(
-          `Slide was active when audio loaded, starting playback immediately`
-        );
-        setTimeout(() => {
-          playAudio();
-        }, 100); // Small delay to ensure everything is ready
-      }
-    } catch (error) {
-      console.error("Error initializing audio:", error);
-    }
-  };
-
-  const onPlaybackStatusUpdate = (status: any) => {
+  const onPlaybackStatusUpdate = useCallback((status: AVPlaybackStatus) => {
     if (!status.isLoaded) {
       // Audio is not loaded
       if (status.error) {
@@ -135,40 +90,166 @@ const AudioSlide: React.FC<AudioSlideProps> = ({
 
     // Log when audio finishes and loops (for debugging)
     if (status.didJustFinish && status.isLooping) {
-      console.log(`🎵 Audio finished and looping for whisper: ${whisper.id}`);
+      console.log(
+        `🎵 Audio finished and looping for whisper: ${whisperIdRef.current}`
+      );
     }
-  };
+  }, []);
 
-  const playAudio = async () => {
+  const playAudio = useCallback(async () => {
     try {
-      if (audioRef.current && isLoaded) {
-        console.log(`Playing audio for whisper: ${whisper.id}`);
+      if (
+        audioRef.current &&
+        isLoaded &&
+        !isInitializing &&
+        !initializationRef.current
+      ) {
+        console.log(`Playing audio for whisper: ${whisperIdRef.current}`);
         await audioRef.current.playAsync();
       }
     } catch (error) {
       console.error("Error playing audio:", error);
     }
-  };
+  }, [isLoaded, isInitializing]);
 
-  const pauseAudio = async () => {
+  const pauseAudio = useCallback(async () => {
     try {
-      if (audioRef.current && isLoaded) {
-        console.log(`Pausing audio for whisper: ${whisper.id}`);
+      if (
+        audioRef.current &&
+        isLoaded &&
+        !isInitializing &&
+        !initializationRef.current
+      ) {
+        console.log(`Pausing audio for whisper: ${whisperIdRef.current}`);
         await audioRef.current.pauseAsync();
       }
     } catch (error) {
       console.error("Error pausing audio:", error);
     }
-  };
+  }, [isLoaded, isInitializing]);
+
+  const cleanupAudio = useCallback(async () => {
+    try {
+      if (audioRef.current && !isInitializing && !initializationRef.current) {
+        console.log(`Cleaning up audio for whisper: ${whisperIdRef.current}`);
+        activeSounds.delete(audioRef.current); // Unregister sound
+        await audioRef.current.unloadAsync();
+        audioRef.current = null;
+        setIsLoaded(false);
+        hasInitializedRef.current = false;
+      }
+    } catch (error) {
+      console.error("Error cleaning up audio:", error);
+    }
+  }, [isInitializing]);
+
+  // Initialize audio only once when component mounts
+  useEffect(() => {
+    // Only initialize if not already initialized and not currently initializing
+    if (hasInitializedRef.current || initializationRef.current) {
+      return;
+    }
+
+    const initializeAudio = async () => {
+      try {
+        setIsInitializing(true);
+        initializationRef.current = true;
+        hasInitializedRef.current = true;
+        console.log(`Initializing audio for whisper: ${whisperIdRef.current}`);
+
+        // Set audio mode for better iOS compatibility
+        await Audio.setAudioModeAsync({
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          shouldDuckAndroid: true,
+        });
+
+        // Get cached audio URL (downloads and caches if not already cached)
+        const audioCacheService = getAudioCacheService();
+        const cachedAudioUrl = await audioCacheService.getCachedAudioUrl(
+          audioUrlRef.current
+        );
+
+        // Create and load the audio with looping enabled
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: cachedAudioUrl },
+          { shouldPlay: false, isLooping: true }, // Enable looping
+          onPlaybackStatusUpdate
+        );
+
+        audioRef.current = sound;
+        activeSounds.add(sound); // Register sound
+        setIsLoaded(true);
+        setIsInitializing(false);
+        initializationRef.current = false;
+        console.log(
+          `Audio loaded for whisper: ${whisperIdRef.current} with looping enabled`
+        );
+
+        // If this slide is already active when audio loads, start playing immediately
+        if (isActiveRef.current && isVisibleRef.current) {
+          console.log(
+            `Slide was active when audio loaded, starting playback immediately`
+          );
+          // Use a longer delay to ensure audio is fully loaded
+          setTimeout(async () => {
+            try {
+              if (audioRef.current && !initializationRef.current) {
+                console.log(
+                  `Auto-playing audio for whisper: ${whisperIdRef.current}`
+                );
+                await audioRef.current.playAsync();
+              }
+            } catch (error) {
+              console.error("Error auto-playing audio:", error);
+            }
+          }, 300); // Increased delay to ensure everything is ready
+        }
+      } catch (error) {
+        console.error("Error initializing audio:", error);
+        setIsInitializing(false);
+        initializationRef.current = false;
+        hasInitializedRef.current = false;
+      }
+    };
+
+    initializeAudio();
+
+    return () => {
+      cleanupAudio();
+    };
+  }, [cleanupAudio, onPlaybackStatusUpdate]); // Include required dependencies
+
+  // Handle visibility and active state changes
+  useEffect(() => {
+    if (
+      isActive &&
+      isVisible &&
+      isLoaded &&
+      !isInitializing &&
+      !initializationRef.current
+    ) {
+      console.log(`Auto-playing audio for slide: ${whisperIdRef.current}`);
+      playAudio();
+    } else if (isLoaded && !isInitializing && !initializationRef.current) {
+      console.log(`Pausing audio for slide: ${whisperIdRef.current}`);
+      pauseAudio();
+    }
+  }, [isActive, isVisible, isLoaded, isInitializing, playAudio, pauseAudio]);
 
   const replayAudio = async () => {
     try {
-      if (audioRef.current && isLoaded) {
-        console.log(`🔄 Replaying audio for whisper: ${whisper.id}`);
+      if (
+        audioRef.current &&
+        isLoaded &&
+        !isInitializing &&
+        !initializationRef.current
+      ) {
+        console.log(`🔄 Replaying audio for whisper: ${whisperIdRef.current}`);
         await audioRef.current.replayAsync();
       } else {
         console.log(
-          `[AudioSlide] Replay failed: audio not loaded for ${whisper.id}`
+          `[AudioSlide] Replay failed: audio not loaded for ${whisperIdRef.current}`
         );
       }
     } catch (error) {
@@ -192,19 +273,6 @@ const AudioSlide: React.FC<AudioSlideProps> = ({
 
   const handleReplay = async () => {
     await replayAudio();
-  };
-
-  const cleanupAudio = async () => {
-    try {
-      if (audioRef.current) {
-        console.log(`Cleaning up audio for whisper: ${whisper.id}`);
-        activeSounds.delete(audioRef.current); // Unregister sound
-        await audioRef.current.unloadAsync();
-        audioRef.current = null;
-      }
-    } catch (error) {
-      console.error("Error cleaning up audio:", error);
-    }
   };
 
   return (

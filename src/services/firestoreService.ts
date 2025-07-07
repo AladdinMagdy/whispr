@@ -18,13 +18,14 @@ import {
   startAfter,
   DocumentData,
   QueryDocumentSnapshot,
-  Timestamp,
-  increment,
   onSnapshot,
   serverTimestamp,
+  increment,
+  Timestamp,
+  FieldValue,
 } from "firebase/firestore";
 import { getFirestoreInstance } from "@/config/firebase";
-import { Whisper, Comment, Like, CommentLike } from "@/types";
+import { Whisper, Comment, Like } from "@/types";
 import { FIRESTORE_COLLECTIONS } from "@/constants";
 
 export interface WhisperUploadData {
@@ -33,6 +34,22 @@ export interface WhisperUploadData {
   whisperPercentage: number;
   averageLevel: number;
   confidence: number;
+}
+
+export interface LikeData {
+  whisperId: string;
+  userId: string;
+  userDisplayName?: string;
+  userProfileColor?: string;
+  createdAt: Timestamp | Date | null | FieldValue;
+}
+
+export interface CommentLikeData {
+  commentId: string;
+  userId: string;
+  userDisplayName?: string;
+  userProfileColor?: string;
+  createdAt: Timestamp | Date | null | FieldValue;
 }
 
 export interface WhisperFeedOptions {
@@ -331,7 +348,7 @@ export class FirestoreService {
 
       if (likeSnapshot.empty) {
         // User hasn't liked this whisper yet - add like
-        const likeData: any = {
+        const likeData: LikeData = {
           whisperId,
           userId,
           createdAt: serverTimestamp(),
@@ -754,7 +771,7 @@ export class FirestoreService {
   /**
    * Delete a whisper (only by the creator)
    */
-  async deleteWhisper(whisperId: string, userId: string): Promise<void> {
+  async deleteWhisper(whisperId: string): Promise<void> {
     try {
       const whisperRef = doc(
         this.firestore,
@@ -828,7 +845,7 @@ export class FirestoreService {
    */
   static destroyInstance(): void {
     if (FirestoreService.instance) {
-      FirestoreService.instance = null as any;
+      FirestoreService.instance = null as unknown as FirestoreService;
       console.log("🗑️ FirestoreService singleton destroyed");
     }
   }
@@ -906,7 +923,7 @@ export class FirestoreService {
     limitCount: number = 50,
     startAfterDoc?: QueryDocumentSnapshot<DocumentData>
   ): Promise<{
-    likes: any[];
+    likes: CommentLikeData[];
     lastDoc: QueryDocumentSnapshot<DocumentData> | null;
     hasMore: boolean;
   }> {
@@ -920,48 +937,24 @@ export class FirestoreService {
       );
 
       const querySnapshot = await getDocs(likesQuery);
-      const likes: any[] = [];
+      const likes: CommentLikeData[] = [];
 
-      // Get user details for each like
-      for (const likeDoc of querySnapshot.docs) {
-        const likeData = likeDoc.data();
-
-        // Get user details
-        const userRef = doc(
-          this.firestore,
-          this.usersCollection,
-          likeData.userId
-        );
-        const userDoc = await getDoc(userRef);
-
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          likes.push({
-            id: likeDoc.id,
-            commentId: likeData.commentId,
-            userId: likeData.userId,
-            userDisplayName: userData.displayName || "Anonymous",
-            userProfileColor: userData.profileColor || "#007AFF",
-            createdAt: likeData.createdAt?.toDate() || new Date(),
-          });
-        } else {
-          // Fallback for deleted users
-          likes.push({
-            id: likeDoc.id,
-            commentId: likeData.commentId,
-            userId: likeData.userId,
-            userDisplayName: "Anonymous",
-            userProfileColor: "#999999",
-            createdAt: likeData.createdAt?.toDate() || new Date(),
-          });
-        }
-      }
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        likes.push({
+          commentId: data.commentId,
+          userId: data.userId,
+          userDisplayName: data.userDisplayName || "Anonymous",
+          userProfileColor: data.userProfileColor || "#9E9E9E",
+          createdAt: data.createdAt,
+        });
+      });
 
       const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
       const hasMore = querySnapshot.docs.length === limitCount;
 
       console.log(
-        `✅ Fetched ${likes.length} likes for comment ${commentId}, hasMore: ${hasMore}`
+        `✅ Fetched ${likes.length} comment likes for comment ${commentId}, hasMore: ${hasMore}`
       );
       return { likes, lastDoc, hasMore };
     } catch (error) {
@@ -1068,7 +1061,7 @@ export class FirestoreService {
    */
   subscribeToCommentLikes(
     commentId: string,
-    callback: (likes: any[]) => void
+    callback: (likes: CommentLikeData[]) => void
   ): () => void {
     try {
       const likesQuery = query(
@@ -1079,47 +1072,27 @@ export class FirestoreService {
       const unsubscribe = onSnapshot(
         likesQuery,
         async (querySnapshot) => {
-          const likes: any[] = [];
+          const likes: CommentLikeData[] = [];
           for (const likeDoc of querySnapshot.docs) {
             const likeData = likeDoc.data();
-            // Get user details
-            let userDisplayName = "Anonymous";
-            let userProfileColor = "#007AFF";
-            try {
-              const userRef = doc(
-                this.firestore,
-                this.usersCollection,
-                likeData.userId
-              );
-              const userDoc = await getDoc(userRef);
-              if (userDoc.exists()) {
-                const userData = userDoc.data();
-                userDisplayName = userData.displayName || "Anonymous";
-                userProfileColor = userData.profileColor || "#007AFF";
-              }
-            } catch {}
             likes.push({
-              id: likeDoc.id,
               commentId: likeData.commentId,
               userId: likeData.userId,
-              userDisplayName,
-              userProfileColor,
-              createdAt: likeData.createdAt?.toDate() || new Date(),
+              userDisplayName: likeData.userDisplayName || "Anonymous",
+              userProfileColor: likeData.userProfileColor || "#9E9E9E",
+              createdAt: likeData.createdAt,
             });
           }
           callback(likes);
         },
         (error) => {
-          console.error("❌ Real-time comment likes listener error:", error);
+          console.error("Error in comment likes subscription:", error);
         }
       );
       return unsubscribe;
     } catch (error) {
-      console.error(
-        "❌ Error setting up real-time comment likes listener:",
-        error
-      );
-      throw error;
+      console.error("Error setting up comment likes subscription:", error);
+      return () => {}; // Return empty function
     }
   }
 }

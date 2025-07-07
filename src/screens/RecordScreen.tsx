@@ -1,14 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   StyleSheet,
   Alert,
-  Dimensions,
   Animated,
   TouchableOpacity,
-  AppState,
 } from "react-native";
-import { Button, Text, Card, ProgressBar } from "react-native-paper";
+import { Button, Card, ProgressBar, Text } from "react-native-paper";
 import { useNavigation } from "@react-navigation/native";
 import { StackNavigationProp } from "@react-navigation/stack";
 import { useAuth } from "../providers/AuthProvider";
@@ -16,16 +14,13 @@ import {
   getRecordingService,
   RecordingUtils,
 } from "../services/recordingService";
-import { getUploadService, UploadUtils } from "../services/uploadService";
+import { getUploadService } from "../services/uploadService";
 import {
   WHISPER_VALIDATION,
   WHISPER_COLORS,
   WHISPER_ERROR_MESSAGES,
-  WHISPER_SUCCESS_MESSAGES,
 } from "../constants/whisperValidation";
 import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
-
-const { width, height } = Dimensions.get("window");
 
 type RootStackParamList = {
   MainTabs: undefined;
@@ -47,12 +42,88 @@ interface RecordingState {
   isUploading: boolean;
 }
 
-export default function RecordScreen() {
+const RecordScreen = () => {
+  // Add performance monitoring
+  usePerformanceMonitor("RecordScreen");
+
+  // Move all hooks to the top
   const navigation = useNavigation<RecordScreenNavigationProp>();
   const { user, incrementWhisperCount } = useAuth();
 
-  // Add performance monitoring
-  usePerformanceMonitor("RecordScreen");
+  // Initialize recording service
+  const recordingServiceInstance = useRef(getRecordingService()).current;
+  const uploadServiceInstance = useRef(getUploadService()).current;
+
+  // Local state for loading and errors
+  const [isLoading, setIsLoading] = useState(false);
+
+  const [recordingState, setRecordingState] = useState<RecordingState>({
+    isRecording: false,
+    duration: 0,
+    audioLevel: 0,
+    isWhisper: false,
+    recordingUri: null,
+    uploadProgress: 0,
+    isUploading: false,
+  });
+
+  const [debugMode, setDebugMode] = useState(false);
+  const pulseAnimation = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    // Set up recording service callbacks
+    recordingServiceInstance.setCallbacks({
+      onAudioLevelChange: (level: number, isWhisper: boolean) => {
+        setRecordingState((prev) => ({
+          ...prev,
+          audioLevel: level,
+          isWhisper,
+        }));
+      },
+      onDurationChange: (duration: number) => {
+        setRecordingState((prev) => ({
+          ...prev,
+          duration,
+        }));
+      },
+      onRecordingComplete: (uri: string) => {
+        setRecordingState((prev) => ({
+          ...prev,
+          isRecording: false,
+          recordingUri: uri,
+        }));
+      },
+      onRecordingStopped: (uri: string, wasAutoStop: boolean) => {
+        setRecordingState((prev) => ({
+          ...prev,
+          isRecording: false,
+          recordingUri: uri,
+        }));
+
+        if (wasAutoStop) {
+          console.log("🎯 Recording auto-stopped at maximum duration");
+          // Optionally show a message to the user
+          Alert.alert(
+            "Recording Complete",
+            "Recording stopped automatically at 30 seconds"
+          );
+        }
+      },
+      onError: (errorMessage: string) => {
+        Alert.alert("Recording Error", errorMessage);
+      },
+    });
+
+    // Set whisper threshold
+    recordingServiceInstance.setWhisperThreshold(
+      WHISPER_VALIDATION.DEFAULT_WHISPER_THRESHOLD
+    );
+
+    return () => {
+      // Cleanup
+      recordingServiceInstance.destroy();
+    };
+  }, [recordingServiceInstance]);
 
   // Check if we're in a modal context
   const isModal = navigation
@@ -86,84 +157,34 @@ export default function RecordScreen() {
     );
   }
 
-  // Initialize recording service
-  const recordingService = useRef(getRecordingService()).current;
-  const uploadService = useRef(getUploadService()).current;
-
-  // Local state for loading and errors
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const [recordingState, setRecordingState] = useState<RecordingState>({
-    isRecording: false,
-    duration: 0,
-    audioLevel: 0,
-    isWhisper: false,
-    recordingUri: null,
-    uploadProgress: 0,
-    isUploading: false,
-  });
-
-  const [debugMode, setDebugMode] = useState(false);
-  const pulseAnimation = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    // Set up recording service callbacks
-    recordingService.setCallbacks({
-      onAudioLevelChange: (level: number, isWhisper: boolean) => {
-        setRecordingState((prev) => ({
-          ...prev,
-          audioLevel: level,
-          isWhisper,
-        }));
-      },
-      onDurationChange: (duration: number) => {
-        setRecordingState((prev) => ({
-          ...prev,
-          duration,
-        }));
-      },
-      onRecordingComplete: (uri: string) => {
-        setRecordingState((prev) => ({
-          ...prev,
-          isRecording: false,
-          recordingUri: uri,
-        }));
-      },
-      onRecordingStopped: (uri: string, wasAutoStop: boolean) => {
-        setRecordingState((prev) => ({
-          ...prev,
-          isRecording: false,
-          recordingUri: uri,
-        }));
-
-        if (wasAutoStop) {
-          console.log("🎯 Recording auto-stopped at maximum duration");
-          // Optionally show a message to the user
-          setError("Recording stopped automatically at 30 seconds");
-        }
-      },
-      onError: (error: string) => {
-        setError(error);
-      },
-    });
-
-    // Set whisper threshold
-    recordingService.setWhisperThreshold(
-      WHISPER_VALIDATION.DEFAULT_WHISPER_THRESHOLD
+  // Early return for loading state
+  if (!user) {
+    return (
+      <View style={styles.container}>
+        <Card style={styles.card}>
+          <Card.Content>
+            <Text style={styles.title}>Authentication Required</Text>
+            <Text style={styles.subtitle}>
+              Please sign in to record whispers.
+            </Text>
+            <Button
+              mode="contained"
+              onPress={() => navigation.goBack()}
+              style={styles.backButton}
+            >
+              Go Back
+            </Button>
+          </Card.Content>
+        </Card>
+      </View>
     );
-
-    return () => {
-      // Cleanup
-      recordingService.destroy();
-    };
-  }, []);
+  }
 
   const startRecording = async () => {
     try {
       setIsLoading(true);
 
-      await recordingService.startRecording();
+      await recordingServiceInstance.startRecording();
 
       setRecordingState((prev) => ({
         ...prev,
@@ -182,7 +203,7 @@ export default function RecordScreen() {
       setIsLoading(false);
     } catch (error) {
       console.error("Error starting recording:", error);
-      setError("Failed to start recording");
+      Alert.alert("Recording Error", "Failed to start recording");
       setIsLoading(false);
     }
   };
@@ -191,7 +212,7 @@ export default function RecordScreen() {
     try {
       setIsLoading(true);
 
-      const uri = await recordingService.stopRecording();
+      const uri = await recordingServiceInstance.stopRecording();
 
       // Only update state if we got a valid URI (recording was actually stopped)
       if (uri) {
@@ -211,7 +232,7 @@ export default function RecordScreen() {
       setIsLoading(false);
     } catch (error) {
       console.error("Error stopping recording:", error);
-      setError("Failed to stop recording");
+      Alert.alert("Recording Error", "Failed to stop recording");
       setIsLoading(false);
     }
   };
@@ -240,7 +261,7 @@ export default function RecordScreen() {
     }
 
     // Get whisper statistics from recording service
-    const stats = recordingService.getWhisperStatistics();
+    const stats = recordingServiceInstance.getWhisperStatistics();
 
     // Debug: Log the actual statistics
     console.log("🔍 Upload validation stats:", {
@@ -306,7 +327,7 @@ export default function RecordScreen() {
           style: "default",
           onPress: () => {
             // Reset recording state on validation failure
-            recordingService.reset();
+            recordingServiceInstance.reset();
             setRecordingState({
               isRecording: false,
               duration: 0,
@@ -336,7 +357,8 @@ export default function RecordScreen() {
       };
 
       // Validate upload data
-      const uploadValidation = uploadService.validateUploadData(uploadData);
+      const uploadValidation =
+        uploadServiceInstance.validateUploadData(uploadData);
       if (!uploadValidation.isValid) {
         Alert.alert(
           "Upload Validation Failed",
@@ -346,15 +368,12 @@ export default function RecordScreen() {
       }
 
       // Upload to Firebase
-      const result = await uploadService.uploadWhisper(
-        uploadData,
-        (progress) => {
-          setRecordingState((prev) => ({
-            ...prev,
-            uploadProgress: progress.progress,
-          }));
-        }
-      );
+      await uploadServiceInstance.uploadWhisper(uploadData, (progress) => {
+        setRecordingState((prev) => ({
+          ...prev,
+          uploadProgress: progress.progress,
+        }));
+      });
 
       // Increment user's whisper count
       await incrementWhisperCount();
@@ -374,7 +393,7 @@ export default function RecordScreen() {
             text: "View Feed",
             onPress: () => {
               // Reset recording state
-              recordingService.reset();
+              recordingServiceInstance.reset();
               setRecordingState({
                 isRecording: false,
                 duration: 0,
@@ -395,12 +414,12 @@ export default function RecordScreen() {
       setRecordingState((prev) => ({ ...prev, isUploading: false }));
     } catch (error) {
       console.error("Error uploading recording:", error);
-      setError("Failed to upload recording");
+      Alert.alert("Upload Error", "Failed to upload recording");
       setIsLoading(false);
       setRecordingState((prev) => ({ ...prev, isUploading: false }));
 
       // Reset recording state on upload error
-      recordingService.reset();
+      recordingServiceInstance.reset();
       setRecordingState({
         isRecording: false,
         duration: 0,
@@ -434,7 +453,7 @@ export default function RecordScreen() {
 
   const getValidationStats = () => {
     if (!recordingState.isRecording) return null;
-    return recordingService.getWhisperStatistics();
+    return recordingServiceInstance.getWhisperStatistics();
   };
 
   const isRecordingUploadable = () => {
@@ -468,7 +487,7 @@ export default function RecordScreen() {
       return false;
     }
 
-    const stats = recordingService.getWhisperStatistics();
+    const stats = recordingServiceInstance.getWhisperStatistics();
     return (
       stats.whisperPercentage >= WHISPER_VALIDATION.MIN_WHISPER_PERCENTAGE &&
       stats.averageLevel <= WHISPER_VALIDATION.MAX_AVERAGE_LEVEL &&
@@ -607,7 +626,10 @@ export default function RecordScreen() {
               </Text>
               <Text variant="bodySmall" style={styles.debugText}>
                 Threshold:{" "}
-                {Math.round(recordingService.getWhisperThreshold() * 100)}%
+                {Math.round(
+                  recordingServiceInstance.getWhisperThreshold() * 100
+                )}
+                %
               </Text>
               {getValidationStats() && (
                 <>
@@ -649,7 +671,7 @@ export default function RecordScreen() {
                 <TouchableOpacity
                   style={[styles.calibrateButton, { marginTop: 10 }]}
                   onPress={() => {
-                    recordingService.autoCalibrateThreshold();
+                    recordingServiceInstance.autoCalibrateThreshold();
                     console.log("Manual calibration triggered");
                   }}
                 >
@@ -664,13 +686,16 @@ export default function RecordScreen() {
                 <View style={styles.thresholdContainer}>
                   <Text variant="bodySmall" style={styles.debugText}>
                     Manual Threshold:{" "}
-                    {Math.round(recordingService.getWhisperThreshold() * 100)}%
+                    {Math.round(
+                      recordingServiceInstance.getWhisperThreshold() * 100
+                    )}
+                    %
                   </Text>
                   <View style={styles.thresholdButtons}>
                     <TouchableOpacity
                       style={styles.thresholdButton}
                       onPress={() =>
-                        recordingService.setWhisperThreshold(
+                        recordingServiceInstance.setWhisperThreshold(
                           WHISPER_VALIDATION.THRESHOLD_BUTTONS.VERY_LOW
                         )
                       }
@@ -680,7 +705,7 @@ export default function RecordScreen() {
                     <TouchableOpacity
                       style={styles.thresholdButton}
                       onPress={() =>
-                        recordingService.setWhisperThreshold(
+                        recordingServiceInstance.setWhisperThreshold(
                           WHISPER_VALIDATION.THRESHOLD_BUTTONS.LOW
                         )
                       }
@@ -690,7 +715,7 @@ export default function RecordScreen() {
                     <TouchableOpacity
                       style={styles.thresholdButton}
                       onPress={() =>
-                        recordingService.setWhisperThreshold(
+                        recordingServiceInstance.setWhisperThreshold(
                           WHISPER_VALIDATION.THRESHOLD_BUTTONS.MEDIUM
                         )
                       }
@@ -700,7 +725,7 @@ export default function RecordScreen() {
                     <TouchableOpacity
                       style={styles.thresholdButton}
                       onPress={() =>
-                        recordingService.setWhisperThreshold(
+                        recordingServiceInstance.setWhisperThreshold(
                           WHISPER_VALIDATION.THRESHOLD_BUTTONS.HIGH
                         )
                       }
@@ -775,16 +800,11 @@ export default function RecordScreen() {
 
         {/* Back Button */}
         <Button
-          mode="outlined"
+          mode="contained"
           onPress={() => navigation.goBack()}
           style={styles.backButton}
-          disabled={
-            isLoading ||
-            recordingState.isRecording ||
-            recordingState.isUploading
-          }
         >
-          Back to Home
+          Go Back
         </Button>
 
         {/* Debug Toggle Button */}
@@ -803,7 +823,7 @@ export default function RecordScreen() {
       </View>
     </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -981,3 +1001,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
 });
+
+export default RecordScreen;

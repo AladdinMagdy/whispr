@@ -2,12 +2,11 @@ import { getFirestoreService } from "./firestoreService";
 import { StorageService } from "./storageService";
 import { TranscriptionService } from "./transcriptionService";
 import { AudioFormatTest } from "../utils/audioFormatTest";
-import { Whisper, AudioRecording, User } from "@/types";
+import { Whisper, AudioRecording } from "@/types";
 import { FEATURE_FLAGS } from "@/constants";
 
 export interface WhisperCreationOptions {
   enableTranscription?: boolean;
-  onUploadProgress?: (progress: number) => void;
 }
 
 export interface WhisperCreationResult {
@@ -28,7 +27,7 @@ export class WhisperService {
     options: WhisperCreationOptions = {}
   ): Promise<WhisperCreationResult> {
     try {
-      const { enableTranscription = true, onUploadProgress } = options;
+      const { enableTranscription = true } = options;
 
       // Test audio format before processing
       console.log("🔍 Testing audio format before processing...");
@@ -107,10 +106,10 @@ export class WhisperService {
   /**
    * Get public whispers for feed
    */
-  static async getPublicWhispers(limit: number = 20): Promise<Whisper[]> {
+  static async getPublicWhispers(): Promise<Whisper[]> {
     try {
       const firestoreService = getFirestoreService();
-      const result = await firestoreService.getWhispers({ limit });
+      const result = await firestoreService.getWhispers({ limit: 20 });
       return result.whispers;
     } catch (error) {
       console.error("Error getting public whispers:", error);
@@ -121,10 +120,7 @@ export class WhisperService {
   /**
    * Get user's whispers
    */
-  static async getUserWhispers(
-    userId: string,
-    limit: number = 20
-  ): Promise<Whisper[]> {
+  static async getUserWhispers(userId: string): Promise<Whisper[]> {
     try {
       const firestoreService = getFirestoreService();
       const result = await firestoreService.getUserWhispers(userId);
@@ -165,11 +161,11 @@ export class WhisperService {
   /**
    * Delete a whisper
    */
-  static async deleteWhisper(whisperId: string, userId: string): Promise<void> {
+  static async deleteWhisper(whisperId: string): Promise<void> {
     try {
       const firestoreService = getFirestoreService();
       // Delete from Firestore
-      await firestoreService.deleteWhisper(whisperId, userId);
+      await firestoreService.deleteWhisper(whisperId);
 
       // TODO: Delete from Storage if needed
       // await StorageService.deleteAudio(audioUrl);

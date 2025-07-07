@@ -10,7 +10,7 @@ import {
   connectStorageEmulator,
   FirebaseStorage,
 } from "firebase/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+
 import { env, validateEnvironment, isDevelopment } from "./environment";
 
 // Validate environment variables
@@ -94,7 +94,7 @@ const connectToEmulators = async (): Promise<void> => {
           disableWarnings: true,
         });
         return true;
-      } catch (error) {
+      } catch {
         console.log("Auth emulator not available at localhost:9099");
         return false;
       }
@@ -104,7 +104,7 @@ const connectToEmulators = async (): Promise<void> => {
       try {
         await connectFirestoreEmulator(firebaseDb!, "localhost", 8080);
         return true;
-      } catch (error) {
+      } catch {
         console.log("Firestore emulator not available at localhost:8080");
         return false;
       }
@@ -114,7 +114,7 @@ const connectToEmulators = async (): Promise<void> => {
       try {
         await connectStorageEmulator(firebaseStorage!, "localhost", 9199);
         return true;
-      } catch (error) {
+      } catch {
         console.log("Storage emulator not available at localhost:9199");
         return false;
       }

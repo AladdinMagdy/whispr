@@ -1,8 +1,8 @@
 import React, {
   useState,
   useEffect,
-  useCallback,
   useRef,
+  useCallback,
   useMemo,
 } from "react";
 import {
@@ -18,14 +18,15 @@ import {
   SafeAreaView,
   Image,
   Animated,
-  Dimensions,
 } from "react-native";
 import { useAuth } from "../providers/AuthProvider";
 import { getInteractionService } from "../services/interactionService";
-import { Whisper, Comment } from "../types";
-import { FIRESTORE_COLLECTIONS } from "../constants";
+import { Whisper, Comment, Like } from "../types";
 import ErrorBoundary from "./ErrorBoundary";
-import { getFirestoreService } from "../services/firestoreService";
+import {
+  getFirestoreService,
+  CommentLikeData,
+} from "../services/firestoreService";
 import { onSnapshot, doc } from "firebase/firestore";
 import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
 
@@ -43,25 +44,31 @@ interface CommentItemProps {
 }
 
 // Optimized Avatar Component with lazy loading and caching
-const OptimizedAvatar: React.FC<{
+const OptimizedAvatar = React.memo<{
   displayName: string;
   profileColor: string;
   size?: number;
-}> = ({ displayName, profileColor, size = 40 }) => {
+}>(({ displayName, profileColor, size = 40 }) => {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
 
-  const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(
-    displayName
-  )}&background=${profileColor.replace("#", "")}&color=fff&size=${size * 2}`;
+  const avatarUrl = useMemo(
+    () =>
+      `https://ui-avatars.com/api/?name=${encodeURIComponent(
+        displayName
+      )}&background=${profileColor.replace("#", "")}&color=fff&size=${
+        size * 2
+      }`,
+    [displayName, profileColor, size]
+  );
 
-  const handleImageLoad = () => {
+  const handleImageLoad = useCallback(() => {
     setImageLoaded(true);
-  };
+  }, []);
 
-  const handleImageError = () => {
+  const handleImageError = useCallback(() => {
     setImageError(true);
-  };
+  }, []);
 
   if (imageError) {
     // Fallback to colored circle with initial
@@ -120,231 +127,229 @@ const OptimizedAvatar: React.FC<{
       />
     </View>
   );
-};
+});
+OptimizedAvatar.displayName = "OptimizedAvatar";
 
-const CommentItem: React.FC<CommentItemProps> = ({
-  comment,
-  currentUserId,
-  onLikeComment,
-  onDeleteComment,
-}) => {
-  const [isLiked, setIsLiked] = useState(false);
-  const [likeCount, setLikeCount] = useState(comment.likes);
-  const [showCommentLikes, setShowCommentLikes] = useState(false);
-  const [commentLikes, setCommentLikes] = useState<any[]>([]);
-  const [loadingCommentLikes, setLoadingCommentLikes] = useState(false);
-  const [commentLikesHasMore, setCommentLikesHasMore] = useState(true);
-  const [commentLikesLastDoc, setCommentLikesLastDoc] = useState<any>(null);
+const CommentItem = React.memo<CommentItemProps>(
+  ({ comment, currentUserId, onLikeComment, onDeleteComment }) => {
+    const [isLiked, setIsLiked] = useState(false);
+    const [likeCount, setLikeCount] = useState(comment.likes);
+    const [showCommentLikes, setShowCommentLikes] = useState(false);
+    const [commentLikes, setCommentLikes] = useState<CommentLikeData[]>([]);
+    const [loadingCommentLikes, setLoadingCommentLikes] = useState(false);
+    const [commentLikesHasMore, setCommentLikesHasMore] = useState(true);
+    const [commentLikesLastDoc, setCommentLikesLastDoc] =
+      useState<unknown>(null);
 
-  const interactionService = getInteractionService();
-  const firestoreService = getFirestoreService();
+    const interactionService = getInteractionService();
+    const firestoreService = getFirestoreService();
 
-  // Load comment like state on mount
-  useEffect(() => {
-    const loadCommentLikeState = async () => {
-      try {
-        const hasLiked = await interactionService.hasUserLikedComment(
-          comment.id
-        );
-        setIsLiked(hasLiked);
-        // Get the current comment data to ensure we have the latest like count
-        const currentComment = await interactionService.getComment(comment.id);
-        if (currentComment) {
-          setLikeCount(currentComment.likes);
-        } else {
-          setLikeCount(comment.likes);
-        }
-      } catch (error) {
-        console.error("Error loading comment like state:", error);
-        setIsLiked(false);
-        setLikeCount(comment.likes);
-      }
-    };
-
-    loadCommentLikeState();
-  }, [comment.id, interactionService]);
-
-  // Real-time comment likes modal
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-    if (showCommentLikes) {
-      setLoadingCommentLikes(true);
-      unsubscribe = firestoreService.subscribeToCommentLikes(
-        comment.id,
-        (likes) => {
-          setCommentLikes(likes);
-          setLoadingCommentLikes(false);
-        }
-      );
-    }
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, [showCommentLikes, comment.id, firestoreService]);
-
-  const handleLike = async () => {
-    try {
-      const result = await interactionService.toggleCommentLike(comment.id);
-      setIsLiked(result.isLiked);
-      setLikeCount(result.count);
-      onLikeComment(comment.id);
-
-      // Refresh the comment data to ensure we have the latest count
-      setTimeout(async () => {
+    // Load comment like state on mount
+    useEffect(() => {
+      const loadCommentLikeState = async () => {
         try {
-          const currentComment = await interactionService.getComment(
+          const isLiked = await interactionService.hasUserLikedComment(
             comment.id
           );
-          if (currentComment) {
-            setLikeCount(currentComment.likes);
-          }
+          setIsLiked(isLiked);
+          setLikeCount(comment.likes);
         } catch (error) {
-          console.error("Error refreshing comment like count:", error);
+          console.error("Error loading comment like state:", error);
+          setIsLiked(false);
+          setLikeCount(comment.likes);
         }
-      }, 1000); // Small delay to ensure server has updated
-    } catch (error) {
-      console.error("Error liking comment:", error);
-    }
-  };
+      };
 
-  const handleDelete = () => {
-    Alert.alert(
-      "Delete Comment",
-      "Are you sure you want to delete this comment?",
+      loadCommentLikeState();
+    }, [comment.id, comment.likes, interactionService]);
+
+    // Real-time comment likes modal
+    useEffect(() => {
+      let unsubscribe: (() => void) | undefined;
+      if (showCommentLikes) {
+        setLoadingCommentLikes(true);
+        unsubscribe = firestoreService.subscribeToCommentLikes(
+          comment.id,
+          (likes) => {
+            setCommentLikes(likes);
+            setLoadingCommentLikes(false);
+          }
+        );
+      }
+      return () => {
+        if (unsubscribe) unsubscribe();
+      };
+    }, [showCommentLikes, comment.id, firestoreService]);
+
+    const handleLike = useCallback(async () => {
+      try {
+        const result = await interactionService.toggleCommentLike(comment.id);
+        setIsLiked(result.isLiked);
+        setLikeCount(result.count);
+        onLikeComment(comment.id);
+
+        // Refresh the comment data to ensure we have the latest count
+        setTimeout(async () => {
+          try {
+            const currentComment = await interactionService.getComment(
+              comment.id
+            );
+            if (currentComment) {
+              setLikeCount(currentComment.likes);
+            }
+          } catch (error) {
+            console.error("Error refreshing comment like count:", error);
+          }
+        }, 1000); // Small delay to ensure server has updated
+      } catch (error) {
+        console.error("Error liking comment:", error);
+      }
+    }, [comment.id, interactionService, onLikeComment]);
+
+    const handleDelete = useCallback(() => {
+      Alert.alert(
+        "Delete Comment",
+        "Are you sure you want to delete this comment?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: () => onDeleteComment(comment.id),
+          },
+        ]
+      );
+    }, [comment.id, onDeleteComment]);
+
+    const loadCommentLikes = useCallback(
+      async (reset = false) => {
+        if (loadingCommentLikes) return;
+        setLoadingCommentLikes(true);
+
+        try {
+          const result = await interactionService.getCommentLikes(
+            comment.id,
+            20,
+            reset ? null : commentLikesLastDoc
+          );
+
+          if (reset) {
+            setCommentLikes(result.likes);
+          } else {
+            setCommentLikes([...commentLikes, ...result.likes]);
+          }
+
+          setCommentLikesHasMore(result.hasMore);
+          setCommentLikesLastDoc(result.lastDoc);
+        } catch (error) {
+          console.error("Error loading comment likes:", error);
+        } finally {
+          setLoadingCommentLikes(false);
+        }
+      },
       [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () => onDeleteComment(comment.id),
-        },
+        comment.id,
+        interactionService,
+        loadingCommentLikes,
+        commentLikes,
+        commentLikesLastDoc,
       ]
     );
-  };
 
-  const loadCommentLikes = async (reset = false) => {
-    if (loadingCommentLikes) return;
-    setLoadingCommentLikes(true);
+    const handleShowCommentLikes = useCallback(() => {
+      setShowCommentLikes(true);
+      loadCommentLikes(true);
+    }, [loadCommentLikes]);
 
-    try {
-      const result = await interactionService.getCommentLikes(
-        comment.id,
-        20,
-        reset ? null : commentLikesLastDoc
-      );
-
-      if (reset) {
-        setCommentLikes(result.likes);
-      } else {
-        setCommentLikes([...commentLikes, ...result.likes]);
-      }
-
-      setCommentLikesHasMore(result.hasMore);
-      setCommentLikesLastDoc(result.lastDoc);
-    } catch (error) {
-      console.error("Error loading comment likes:", error);
-    } finally {
-      setLoadingCommentLikes(false);
-    }
-  };
-
-  const handleShowCommentLikes = () => {
-    setShowCommentLikes(true);
-    loadCommentLikes(true);
-  };
-
-  return (
-    <>
-      <View style={styles.commentItem}>
-        <View style={styles.commentHeader}>
-          <View style={styles.commentUserInfo}>
-            <OptimizedAvatar
-              displayName={comment.userDisplayName || "Anonymous"}
-              profileColor={comment.userProfileColor}
-            />
-            <Text style={styles.userName}>
-              {comment.userDisplayName || "Anonymous"}
+    return (
+      <>
+        <View style={styles.commentItem}>
+          <View style={styles.commentHeader}>
+            <View style={styles.commentUserInfo}>
+              <OptimizedAvatar
+                displayName={comment.userDisplayName || "Anonymous"}
+                profileColor={comment.userProfileColor}
+              />
+              <Text style={styles.userName}>
+                {comment.userDisplayName || "Anonymous"}
+              </Text>
+            </View>
+            <View style={styles.commentActions}>
+              <AnimatedLikeButton isLiked={isLiked} onPress={handleLike} />
+              <TouchableOpacity
+                onPress={handleShowCommentLikes}
+                style={styles.likeCountButton}
+              >
+                <Text style={styles.likeCount}>{likeCount}</Text>
+              </TouchableOpacity>
+              {comment.userId === currentUserId && (
+                <TouchableOpacity
+                  onPress={handleDelete}
+                  style={styles.deleteButton}
+                >
+                  <Text style={styles.deleteIcon}>🗑️</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+          <Text style={styles.commentText}>{comment.text}</Text>
+          <View style={styles.commentFooter}>
+            <Text style={styles.commentTime}>
+              {new Date(comment.createdAt).toLocaleDateString()}
             </Text>
           </View>
-          <View style={styles.commentActions}>
-            <AnimatedLikeButton
-              isLiked={isLiked}
-              onPress={handleLike}
-              count={likeCount}
-            />
-            <TouchableOpacity
-              onPress={handleShowCommentLikes}
-              style={styles.likeCountButton}
-            >
-              <Text style={styles.likeCount}>{likeCount}</Text>
-            </TouchableOpacity>
-            {comment.userId === currentUserId && (
-              <TouchableOpacity
-                onPress={handleDelete}
-                style={styles.deleteButton}
-              >
-                <Text style={styles.deleteIcon}>🗑️</Text>
-              </TouchableOpacity>
-            )}
-          </View>
         </View>
-        <Text style={styles.commentText}>{comment.text}</Text>
-        <View style={styles.commentFooter}>
-          <Text style={styles.commentTime}>
-            {new Date(comment.createdAt).toLocaleDateString()}
-          </Text>
-        </View>
-      </View>
 
-      {/* Comment Likes Modal */}
-      <Modal
-        visible={showCommentLikes}
-        animationType="slide"
-        onRequestClose={() => setShowCommentLikes(false)}
-      >
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Comment Likes</Text>
-            <TouchableOpacity
-              onPress={() => setShowCommentLikes(false)}
-              style={styles.closeButton}
-            >
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            data={commentLikes}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <View style={styles.likeItem}>
-                <OptimizedAvatar
-                  displayName={item.userDisplayName || "Anonymous"}
-                  profileColor={item.userProfileColor}
-                />
-                <Text style={styles.userName}>
-                  {item.userDisplayName || "Anonymous"}
-                </Text>
-              </View>
-            )}
-            onEndReached={() => commentLikesHasMore && loadCommentLikes()}
-            onEndReachedThreshold={0.5}
-            ListFooterComponent={
-              loadingCommentLikes ? <ActivityIndicator /> : null
-            }
-            contentContainerStyle={styles.listContentContainer}
-          />
-        </SafeAreaView>
-      </Modal>
-    </>
-  );
-};
+        {/* Comment Likes Modal */}
+        <Modal
+          visible={showCommentLikes}
+          animationType="slide"
+          onRequestClose={() => setShowCommentLikes(false)}
+        >
+          <SafeAreaView style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Comment Likes</Text>
+              <TouchableOpacity
+                onPress={() => setShowCommentLikes(false)}
+                style={styles.closeButton}
+              >
+                <Text style={styles.closeButtonText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={commentLikes}
+              keyExtractor={(item) => item.userId}
+              renderItem={({ item }) => (
+                <View style={styles.likeItem}>
+                  <OptimizedAvatar
+                    displayName={item.userDisplayName || "Anonymous"}
+                    profileColor={item.userProfileColor || "#9E9E9E"}
+                  />
+                  <Text style={styles.userName}>
+                    {item.userDisplayName || "Anonymous"}
+                  </Text>
+                </View>
+              )}
+              onEndReached={() => commentLikesHasMore && loadCommentLikes()}
+              onEndReachedThreshold={0.5}
+              ListFooterComponent={
+                loadingCommentLikes ? <ActivityIndicator /> : null
+              }
+              contentContainerStyle={styles.listContentContainer}
+            />
+          </SafeAreaView>
+        </Modal>
+      </>
+    );
+  }
+);
+CommentItem.displayName = "CommentItem";
 
 // Animated Like Button Component
-const AnimatedLikeButton: React.FC<{
+const AnimatedLikeButton = React.memo<{
   isLiked: boolean;
   onPress: () => void;
-  count: number;
-}> = ({ isLiked, onPress, count }) => {
+}>(({ isLiked, onPress }) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const heartAnim = useRef(new Animated.Value(isLiked ? 1 : 0)).current;
 
@@ -356,7 +361,7 @@ const AnimatedLikeButton: React.FC<{
     }).start();
   }, [isLiked, heartAnim]);
 
-  const handlePress = () => {
+  const handlePress = useCallback(() => {
     // Scale animation on press
     Animated.sequence([
       Animated.timing(scaleAnim, {
@@ -372,475 +377,473 @@ const AnimatedLikeButton: React.FC<{
     ]).start();
 
     onPress();
-  };
+  }, [scaleAnim, onPress]);
 
   return (
-    <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-      <TouchableOpacity onPress={handlePress} style={styles.likeButton}>
-        <Animated.Text
-          style={[
-            styles.likeIcon,
-            {
-              opacity: heartAnim,
-              transform: [{ scale: heartAnim }],
-            },
-          ]}
-        >
-          ❤️
-        </Animated.Text>
-        <Animated.Text
-          style={[
-            styles.likeIcon,
-            {
-              opacity: heartAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: [1, 0],
-              }),
-            },
-          ]}
-        >
-          🤍
-        </Animated.Text>
-      </TouchableOpacity>
-    </Animated.View>
+    <TouchableOpacity onPress={handlePress} style={styles.likeButton}>
+      <Animated.View
+        style={[
+          styles.likeButtonContent,
+          {
+            transform: [{ scale: scaleAnim }],
+          },
+        ]}
+      >
+        <Text style={[styles.likeIcon, isLiked && styles.likedIcon]}>
+          {isLiked ? "❤️" : "🤍"}
+        </Text>
+      </Animated.View>
+    </TouchableOpacity>
   );
-};
+});
+AnimatedLikeButton.displayName = "AnimatedLikeButton";
 
-const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
-  whisper,
-  onLikeChange,
-  onCommentChange,
-}) => {
-  // Add performance monitoring
-  usePerformanceMonitor("WhisperInteractions");
+const WhisperInteractions = React.memo<WhisperInteractionsProps>(
+  ({ whisper, onLikeChange, onCommentChange }) => {
+    // Add performance monitoring
+    usePerformanceMonitor("WhisperInteractions");
 
-  const { user } = useAuth();
-  const [isLiked, setIsLiked] = useState(false);
-  const [likeCount, setLikeCount] = useState(whisper.likes);
-  const [commentCount, setCommentCount] = useState(whisper.replies);
-  const [showComments, setShowComments] = useState(false);
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [loadingComments, setLoadingComments] = useState(false);
-  const [newComment, setNewComment] = useState("");
-  const [submittingComment, setSubmittingComment] = useState(false);
-  const [showLikes, setShowLikes] = useState(false);
-  const [likes, setLikes] = useState<any[]>([]);
-  const [loadingLikes, setLoadingLikes] = useState(false);
-  const [likesHasMore, setLikesHasMore] = useState(true);
-  const [likesLastDoc, setLikesLastDoc] = useState<any>(null);
+    const { user } = useAuth();
+    const [isLiked, setIsLiked] = useState(false);
+    const [likeCount, setLikeCount] = useState(whisper.likes);
+    const [commentCount, setCommentCount] = useState(whisper.replies);
+    const [showComments, setShowComments] = useState(false);
+    const [comments, setComments] = useState<Comment[]>([]);
+    const [loadingComments, setLoadingComments] = useState(false);
+    const [newComment, setNewComment] = useState("");
+    const [submittingComment, setSubmittingComment] = useState(false);
+    const [showLikes, setShowLikes] = useState(false);
+    const [likes, setLikes] = useState<Like[]>([]);
+    const [loadingLikes, setLoadingLikes] = useState(false);
+    const [likesHasMore, setLikesHasMore] = useState(true);
+    const [likesLastDoc, setLikesLastDoc] = useState<unknown>(null);
 
-  // Comments pagination
-  const [commentsHasMore, setCommentsHasMore] = useState(true);
-  const [commentsLastDoc, setCommentsLastDoc] = useState<any>(null);
+    // Comments pagination
+    const [commentsHasMore, setCommentsHasMore] = useState(true);
+    const [commentsLastDoc, setCommentsLastDoc] = useState<unknown>(null);
 
-  const interactionService = getInteractionService();
-  const firestoreService = getFirestoreService();
+    const interactionService = getInteractionService();
+    const firestoreService = getFirestoreService();
 
-  // Real-time like and comment count for whisper
-  useEffect(() => {
-    const whisperDocRef = doc(
-      firestoreService["firestore"],
-      "whispers",
-      whisper.id
-    );
-    const unsubscribe = onSnapshot(whisperDocRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setLikeCount(data.likes || 0);
-        setCommentCount(data.replies || 0);
+    // Real-time like and comment count for whisper
+    useEffect(() => {
+      const whisperDocRef = doc(
+        firestoreService["firestore"],
+        "whispers",
+        whisper.id
+      );
+      const unsubscribe = onSnapshot(whisperDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setLikeCount(data.likes || 0);
+          setCommentCount(data.replies || 0);
+        }
+      });
+      return () => unsubscribe();
+    }, [whisper.id, firestoreService]);
+
+    // Real-time comments modal
+    useEffect(() => {
+      let unsubscribe: (() => void) | undefined;
+      if (showComments) {
+        setLoadingComments(true);
+        unsubscribe = firestoreService.subscribeToComments(
+          whisper.id,
+          (comments) => {
+            setComments(comments);
+            setLoadingComments(false);
+          }
+        );
       }
-    });
-    return () => unsubscribe();
-  }, [whisper.id, firestoreService]);
+      return () => {
+        if (unsubscribe) unsubscribe();
+      };
+    }, [showComments, whisper.id, firestoreService]);
 
-  // Real-time comments modal
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-    if (showComments) {
-      setLoadingComments(true);
-      unsubscribe = firestoreService.subscribeToComments(
-        whisper.id,
-        (comments) => {
-          setComments(comments);
-          setLoadingComments(false);
-        }
-      );
-    }
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, [showComments, whisper.id, firestoreService]);
+    // Real-time likes modal
+    useEffect(() => {
+      let unsubscribe: (() => void) | undefined;
+      if (showLikes) {
+        setLoadingLikes(true);
+        unsubscribe = firestoreService.subscribeToWhisperLikes(
+          whisper.id,
+          (likes) => {
+            setLikes(likes);
+            setLoadingLikes(false);
+          }
+        );
+      }
+      return () => {
+        if (unsubscribe) unsubscribe();
+      };
+    }, [showLikes, whisper.id, firestoreService]);
 
-  // Real-time likes modal
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-    if (showLikes) {
-      setLoadingLikes(true);
-      unsubscribe = firestoreService.subscribeToWhisperLikes(
-        whisper.id,
-        (likes) => {
-          setLikes(likes);
-          setLoadingLikes(false);
-        }
-      );
-    }
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, [showLikes, whisper.id, firestoreService]);
+    // Check if user has liked this whisper and update counts when whisper changes
+    useEffect(() => {
+      const loadLikeState = async () => {
+        // Update counts from whisper prop
+        setLikeCount(whisper.likes);
+        setCommentCount(whisper.replies);
 
-  // Check if user has liked this whisper and update counts when whisper changes
-  useEffect(() => {
-    const loadLikeState = async () => {
-      // Update counts from whisper prop
-      setLikeCount(whisper.likes);
-      setCommentCount(whisper.replies);
-
-      // Check if user has liked this whisper (cached)
-      if (user) {
-        try {
-          const hasLiked = await interactionService.hasUserLiked(whisper.id);
-          setIsLiked(hasLiked);
-        } catch (error) {
-          console.error("Error loading like state:", error);
+        // Check if user has liked this whisper (cached)
+        if (user) {
+          try {
+            const hasLiked = await interactionService.hasUserLiked(whisper.id);
+            setIsLiked(hasLiked);
+          } catch (error) {
+            console.error("Error loading like state:", error);
+            setIsLiked(false);
+          }
+        } else {
           setIsLiked(false);
         }
-      } else {
-        setIsLiked(false);
+      };
+
+      loadLikeState();
+    }, [whisper.id, whisper.likes, whisper.replies, user, interactionService]);
+
+    const handleLike = async () => {
+      if (!user) {
+        Alert.alert("Error", "You must be logged in to like whispers");
+        return;
+      }
+
+      try {
+        // Use optimized interaction service with caching and optimistic updates
+        const result = await interactionService.toggleLike(whisper.id);
+
+        setIsLiked(result.isLiked);
+        setLikeCount(result.count);
+        onLikeChange?.(result.isLiked, result.count);
+      } catch (error) {
+        console.error("Error liking whisper:", error);
+        Alert.alert("Error", "Failed to like whisper");
       }
     };
 
-    loadLikeState();
-  }, [whisper.id, whisper.likes, whisper.replies, user, interactionService]);
+    // Remove the old loadComments function and replace with proper pagination
+    const loadInitialComments = async () => {
+      if (loadingComments) return;
+      setLoadingComments(true);
+      try {
+        const result = await interactionService.getComments(
+          whisper.id,
+          20,
+          null
+        );
+        setComments(result.comments);
+        setCommentsHasMore(result.hasMore);
+        setCommentsLastDoc(result.lastDoc);
+      } catch (error) {
+        console.error("Error loading comments:", error);
+        Alert.alert("Error", "Failed to load comments");
+      } finally {
+        setLoadingComments(false);
+      }
+    };
 
-  const handleLike = async () => {
-    if (!user) {
-      Alert.alert("Error", "You must be logged in to like whispers");
-      return;
-    }
-
-    try {
-      // Use optimized interaction service with caching and optimistic updates
-      const result = await interactionService.toggleLike(whisper.id);
-
-      setIsLiked(result.isLiked);
-      setLikeCount(result.count);
-      onLikeChange?.(result.isLiked, result.count);
-    } catch (error) {
-      console.error("Error liking whisper:", error);
-      Alert.alert("Error", "Failed to like whisper");
-    }
-  };
-
-  // Remove the old loadComments function and replace with proper pagination
-  const loadInitialComments = async () => {
-    if (loadingComments) return;
-    setLoadingComments(true);
-    try {
-      const result = await interactionService.getComments(whisper.id, 20, null);
-      setComments(result.comments);
-      setCommentsHasMore(result.hasMore);
-      setCommentsLastDoc(result.lastDoc);
-    } catch (error) {
-      console.error("Error loading comments:", error);
-      Alert.alert("Error", "Failed to load comments");
-    } finally {
-      setLoadingComments(false);
-    }
-  };
-
-  const handleShowComments = () => {
-    setShowComments(true);
-    // Reset and load initial comments
-    setComments([]);
-    setCommentsHasMore(true);
-    setCommentsLastDoc(null);
-    loadInitialComments();
-  };
-
-  const handleSubmitComment = async () => {
-    if (!user) {
-      Alert.alert("Error", "You must be logged in to comment");
-      return;
-    }
-
-    if (!newComment.trim()) {
-      Alert.alert("Error", "Please enter a comment");
-      return;
-    }
-
-    setSubmittingComment(true);
-    try {
-      const text = newComment.trim();
-      const result = await interactionService.addComment(whisper.id, text);
-
-      setNewComment("");
-      // Optimistically update comment count and list
-      setCommentCount((prev) => prev + 1);
-      onCommentChange?.(commentCount + 1);
-      setComments((prev) => [
-        {
-          id: result.commentId,
-          whisperId: whisper.id,
-          userId: user.uid,
-          userDisplayName: user.displayName,
-          userProfileColor: user.profileColor,
-          text,
-          likes: 0,
-          createdAt: new Date(),
-          isEdited: false,
-        },
-        ...prev,
-      ]);
-      // Optionally, reload from server in background
-      setTimeout(() => loadInitialComments(), 1500);
-    } catch (error) {
-      console.error("Error adding comment:", error);
-      Alert.alert("Error", "Failed to add comment");
-    } finally {
-      setSubmittingComment(false);
-    }
-  };
-
-  const handleDeleteComment = async (commentId: string) => {
-    if (!user) return;
-
-    try {
-      const result = await interactionService.deleteComment(
-        commentId,
-        whisper.id
-      );
-
-      setCommentCount(result.count);
-      onCommentChange?.(result.count);
-      // Reload comments to remove the deleted comment
+    const handleShowComments = () => {
+      setShowComments(true);
+      // Reset and load initial comments
+      setComments([]);
+      setCommentsHasMore(true);
+      setCommentsLastDoc(null);
       loadInitialComments();
-    } catch (error) {
-      console.error("Error deleting comment:", error);
-      Alert.alert("Error", "Failed to delete comment");
-    }
-  };
+    };
 
-  const handleLikeComment = (commentId: string) => {
-    // This will be handled by the CommentItem component
-  };
-
-  const handleValidateLikeCount = async () => {
-    try {
-      const { getFirestoreService } = require("../services/firestoreService");
-      const firestoreService = getFirestoreService();
-
-      console.log("🔍 Validating like count for whisper:", whisper.id);
-      const actualCount = await firestoreService.validateAndFixLikeCount(
-        whisper.id
-      );
-
-      // Update local state
-      setLikeCount(actualCount);
-      onLikeChange?.(isLiked, actualCount);
-
-      Alert.alert(
-        "Like Count Validation",
-        `Whisper like count: ${actualCount}\nThis count has been validated and fixed if needed.`
-      );
-    } catch (error) {
-      console.error("Error validating like count:", error);
-      Alert.alert("Error", "Failed to validate like count");
-    }
-  };
-
-  // Load paginated likes with deduplication
-  const loadLikes = async (reset = false) => {
-    if (loadingLikes || (!likesHasMore && !reset)) return;
-    setLoadingLikes(true);
-    try {
-      const result = await interactionService.getLikes(
-        whisper.id,
-        20,
-        reset ? null : likesLastDoc
-      );
-
-      if (reset) {
-        setLikes(result.likes);
-      } else {
-        // Deduplicate likes by ID
-        const existingIds = new Set(likes.map((l) => l.id));
-        const newLikes = result.likes.filter((l) => !existingIds.has(l.id));
-        setLikes((prev) => [...prev, ...newLikes]);
+    const handleSubmitComment = async () => {
+      if (!user) {
+        Alert.alert("Error", "You must be logged in to comment");
+        return;
       }
 
-      setLikesHasMore(result.hasMore);
-      setLikesLastDoc(result.lastDoc);
-    } catch (error) {
-      console.error("Error loading likes:", error);
-      Alert.alert("Error", "Failed to load likes");
-    } finally {
-      setLoadingLikes(false);
-    }
-  };
+      if (!newComment.trim()) {
+        Alert.alert("Error", "Please enter a comment");
+        return;
+      }
 
-  // Load paginated comments with deduplication
-  const loadMoreComments = async () => {
-    if (loadingComments || !commentsHasMore) return;
-    setLoadingComments(true);
-    try {
-      const result = await interactionService.getComments(
-        whisper.id,
-        20,
-        commentsLastDoc
-      );
+      setSubmittingComment(true);
+      try {
+        const text = newComment.trim();
+        const result = await interactionService.addComment(whisper.id, text);
 
-      // Deduplicate comments by ID
-      const existingIds = new Set(comments.map((c) => c.id));
-      const newComments = result.comments.filter((c) => !existingIds.has(c.id));
+        setNewComment("");
+        // Optimistically update comment count and list
+        setCommentCount((prev) => prev + 1);
+        onCommentChange?.(commentCount + 1);
+        setComments((prev) => [
+          {
+            id: result.commentId,
+            whisperId: whisper.id,
+            userId: user.uid,
+            userDisplayName: user.displayName,
+            userProfileColor: user.profileColor,
+            text,
+            likes: 0,
+            createdAt: new Date(),
+            isEdited: false,
+          },
+          ...prev,
+        ]);
+        // Optionally, reload from server in background
+        setTimeout(() => loadInitialComments(), 1500);
+      } catch (error) {
+        console.error("Error adding comment:", error);
+        Alert.alert("Error", "Failed to add comment");
+      } finally {
+        setSubmittingComment(false);
+      }
+    };
 
-      setComments((prev) => [...prev, ...newComments]);
-      setCommentsHasMore(result.hasMore);
-      setCommentsLastDoc(result.lastDoc);
-    } catch (error) {
-      console.error("Error loading more comments:", error);
-      Alert.alert("Error", "Failed to load more comments");
-    } finally {
-      setLoadingComments(false);
-    }
-  };
+    const handleDeleteComment = async (commentId: string) => {
+      if (!user) return;
 
-  // Reset likes/comments when modal opens
-  useEffect(() => {
-    if (showLikes) {
-      setLikes([]);
-      setLikesHasMore(true);
-      setLikesLastDoc(null);
-      loadLikes(true);
-    }
-  }, [showLikes, whisper.id]);
+      try {
+        const result = await interactionService.deleteComment(
+          commentId,
+          whisper.id
+        );
 
-  return (
-    <View style={styles.container}>
-      {/* Main interaction buttons */}
-      <View style={styles.interactionRow}>
-        <TouchableOpacity onPress={handleLike} style={styles.interactionButton}>
-          <Text style={[styles.interactionIcon, isLiked && styles.likedIcon]}>
-            {isLiked ? "❤️" : "🤍"}
-          </Text>
-          <Text style={styles.countText}>{likeCount}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={handleShowComments}
-          style={styles.interactionButton}
+        setCommentCount(result.count);
+        onCommentChange?.(result.count);
+        // Reload comments to remove the deleted comment
+        loadInitialComments();
+      } catch (error) {
+        console.error("Error deleting comment:", error);
+        Alert.alert("Error", "Failed to delete comment");
+      }
+    };
+
+    const handleLikeComment = () => {
+      // This will be handled by the CommentItem component
+    };
+
+    const handleValidateLikeCount = async () => {
+      try {
+        console.log("🔍 Validating like count for whisper:", whisper.id);
+        const actualCount = await firestoreService.validateAndFixLikeCount(
+          whisper.id
+        );
+
+        // Update local state
+        setLikeCount(actualCount);
+        onLikeChange?.(isLiked, actualCount);
+
+        Alert.alert(
+          "Like Count Validation",
+          `Whisper like count: ${actualCount}\nThis count has been validated and fixed if needed.`
+        );
+      } catch (error) {
+        console.error("Error validating like count:", error);
+        Alert.alert("Error", "Failed to validate like count");
+      }
+    };
+
+    // Load paginated likes with deduplication
+    const loadLikes = useCallback(
+      async (reset = false) => {
+        if (loadingLikes) return;
+        setLoadingLikes(true);
+
+        try {
+          const result = await interactionService.getLikes(
+            whisper.id,
+            20,
+            reset ? null : likesLastDoc
+          );
+
+          if (reset) {
+            setLikes(result.likes);
+          } else {
+            // Deduplicate likes by ID
+            const existingIds = new Set(likes.map((l) => l.id));
+            const newLikes = result.likes.filter((l) => !existingIds.has(l.id));
+            setLikes((prev) => [...prev, ...newLikes]);
+          }
+
+          setLikesHasMore(result.hasMore);
+          setLikesLastDoc(result.lastDoc);
+        } catch (error) {
+          console.error("Error loading likes:", error);
+          Alert.alert("Error", "Failed to load likes");
+        } finally {
+          setLoadingLikes(false);
+        }
+      },
+      [loadingLikes, interactionService, whisper.id, likes, likesLastDoc]
+    );
+
+    // Load paginated comments with deduplication
+    const loadMoreComments = async () => {
+      if (loadingComments || !commentsHasMore) return;
+      setLoadingComments(true);
+      try {
+        const result = await interactionService.getComments(
+          whisper.id,
+          20,
+          commentsLastDoc
+        );
+
+        // Deduplicate comments by ID
+        const existingIds = new Set(comments.map((c) => c.id));
+        const newComments = result.comments.filter(
+          (c) => !existingIds.has(c.id)
+        );
+
+        setComments((prev) => [...prev, ...newComments]);
+        setCommentsHasMore(result.hasMore);
+        setCommentsLastDoc(result.lastDoc);
+      } catch (error) {
+        console.error("Error loading more comments:", error);
+        Alert.alert("Error", "Failed to load more comments");
+      } finally {
+        setLoadingComments(false);
+      }
+    };
+
+    // Reset likes/comments when modal opens
+    useEffect(() => {
+      if (showLikes) {
+        setLikes([]);
+        setLikesHasMore(true);
+        setLikesLastDoc(null);
+        loadLikes(true);
+      }
+    }, [showLikes, whisper.id, loadLikes]);
+
+    return (
+      <View style={styles.container}>
+        {/* Main interaction buttons */}
+        <View style={styles.interactionRow}>
+          <TouchableOpacity
+            onPress={handleLike}
+            style={styles.interactionButton}
+          >
+            <Text style={[styles.interactionIcon, isLiked && styles.likedIcon]}>
+              {isLiked ? "❤️" : "🤍"}
+            </Text>
+            <Text style={styles.countText}>{likeCount}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleShowComments}
+            style={styles.interactionButton}
+          >
+            <Text style={styles.interactionIcon}>💬</Text>
+            <Text style={styles.countText}>{commentCount}</Text>
+          </TouchableOpacity>
+          {/* View Likes Button */}
+          <TouchableOpacity
+            onPress={() => setShowLikes(true)}
+            style={styles.interactionButton}
+          >
+            <Text style={styles.interactionIcon}>👥</Text>
+          </TouchableOpacity>
+          {/* Debug: Validate Like Count Button */}
+          <TouchableOpacity
+            onPress={handleValidateLikeCount}
+            style={[styles.interactionButton, { backgroundColor: "#666" }]}
+          >
+            <Text style={styles.interactionIcon}>🔍</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Likes Modal */}
+        <Modal
+          visible={showLikes}
+          animationType="slide"
+          onRequestClose={() => setShowLikes(false)}
         >
-          <Text style={styles.interactionIcon}>💬</Text>
-          <Text style={styles.countText}>{commentCount}</Text>
-        </TouchableOpacity>
-        {/* View Likes Button */}
-        <TouchableOpacity
-          onPress={() => setShowLikes(true)}
-          style={styles.interactionButton}
-        >
-          <Text style={styles.interactionIcon}>👥</Text>
-        </TouchableOpacity>
-        {/* Debug: Validate Like Count Button */}
-        <TouchableOpacity
-          onPress={handleValidateLikeCount}
-          style={[styles.interactionButton, { backgroundColor: "#666" }]}
-        >
-          <Text style={styles.interactionIcon}>🔍</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Likes Modal */}
-      <Modal
-        visible={showLikes}
-        animationType="slide"
-        onRequestClose={() => setShowLikes(false)}
-      >
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Likes</Text>
-            <TouchableOpacity
-              onPress={() => setShowLikes(false)}
-              style={styles.closeButton}
-            >
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            data={likes}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <View style={styles.likeItem}>
-                <OptimizedAvatar
-                  displayName={item.userDisplayName || "Anonymous"}
-                  profileColor={item.userProfileColor}
-                />
-                <Text style={styles.userName}>
-                  {item.userDisplayName || "Anonymous"}
-                </Text>
-              </View>
-            )}
-            onEndReached={() => likesHasMore && loadLikes()}
-            onEndReachedThreshold={0.5}
-            ListFooterComponent={loadingLikes ? <ActivityIndicator /> : null}
-            contentContainerStyle={styles.listContentContainer}
-          />
-        </SafeAreaView>
-      </Modal>
-
-      {/* Comments Modal (update for pagination) */}
-      <Modal
-        visible={showComments}
-        animationType="slide"
-        onRequestClose={() => setShowComments(false)}
-      >
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Comments</Text>
-            <TouchableOpacity
-              onPress={() => setShowComments(false)}
-              style={styles.closeButton}
-            >
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            data={comments}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <CommentItem
-                comment={item}
-                currentUserId={user?.uid || ""}
-                onLikeComment={handleLikeComment}
-                onDeleteComment={handleDeleteComment}
-              />
-            )}
-            onEndReached={() => commentsHasMore && loadMoreComments()}
-            onEndReachedThreshold={0.5}
-            ListFooterComponent={loadingComments ? <ActivityIndicator /> : null}
-            contentContainerStyle={styles.listContentContainer}
-          />
-          <View style={styles.commentInputRow}>
-            <TextInput
-              style={styles.commentInput}
-              value={newComment}
-              onChangeText={setNewComment}
-              placeholder="Add a comment..."
-              editable={!submittingComment}
+          <SafeAreaView style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Likes</Text>
+              <TouchableOpacity
+                onPress={() => setShowLikes(false)}
+                style={styles.closeButton}
+              >
+                <Text style={styles.closeButtonText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={likes}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <View style={styles.likeItem}>
+                  <OptimizedAvatar
+                    displayName={item.userDisplayName || "Anonymous"}
+                    profileColor={item.userProfileColor}
+                  />
+                  <Text style={styles.userName}>
+                    {item.userDisplayName || "Anonymous"}
+                  </Text>
+                </View>
+              )}
+              onEndReached={() => likesHasMore && loadLikes()}
+              onEndReachedThreshold={0.5}
+              ListFooterComponent={loadingLikes ? <ActivityIndicator /> : null}
+              contentContainerStyle={styles.listContentContainer}
             />
-            <TouchableOpacity
-              onPress={handleSubmitComment}
-              style={styles.sendButton}
-              disabled={submittingComment}
-            >
-              <Text style={styles.sendButtonText}>
-                {submittingComment ? "..." : "Send"}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      </Modal>
-    </View>
-  );
-};
+          </SafeAreaView>
+        </Modal>
+
+        {/* Comments Modal (update for pagination) */}
+        <Modal
+          visible={showComments}
+          animationType="slide"
+          onRequestClose={() => setShowComments(false)}
+        >
+          <SafeAreaView style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Comments</Text>
+              <TouchableOpacity
+                onPress={() => setShowComments(false)}
+                style={styles.closeButton}
+              >
+                <Text style={styles.closeButtonText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={comments}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <CommentItem
+                  comment={item}
+                  currentUserId={user?.uid || ""}
+                  onLikeComment={handleLikeComment}
+                  onDeleteComment={handleDeleteComment}
+                />
+              )}
+              onEndReached={() => commentsHasMore && loadMoreComments()}
+              onEndReachedThreshold={0.5}
+              ListFooterComponent={
+                loadingComments ? <ActivityIndicator /> : null
+              }
+              contentContainerStyle={styles.listContentContainer}
+            />
+            <View style={styles.commentInputRow}>
+              <TextInput
+                style={styles.commentInput}
+                value={newComment}
+                onChangeText={setNewComment}
+                placeholder="Add a comment..."
+                editable={!submittingComment}
+              />
+              <TouchableOpacity
+                onPress={handleSubmitComment}
+                style={styles.sendButton}
+                disabled={submittingComment}
+              >
+                <Text style={styles.sendButtonText}>
+                  {submittingComment ? "..." : "Send"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </SafeAreaView>
+        </Modal>
+      </View>
+    );
+  }
+);
+WhisperInteractions.displayName = "WhisperInteractions";
 
 const styles = StyleSheet.create({
   container: {
@@ -868,6 +871,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 3.84,
     elevation: 5,
+  },
+  likeButtonContent: {
+    alignItems: "center",
+    justifyContent: "center",
   },
   interactionIcon: {
     fontSize: 24,

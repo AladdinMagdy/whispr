@@ -12,7 +12,6 @@ import {
   useAuthError,
   useIsAuthenticated,
 } from "../store/useAuthStore";
-import { getAuthService } from "../services/authService";
 
 interface AuthContextType {
   user: ReturnType<typeof useAuthUser>;

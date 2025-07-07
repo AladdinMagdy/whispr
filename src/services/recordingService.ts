@@ -8,11 +8,9 @@ import AudioRecorderPlayer, {
   AVEncoderAudioQualityIOSType,
   AVEncodingOption,
   AudioSourceAndroidType,
-  OutputFormatAndroidType,
   AudioEncoderAndroidType,
   AVModeIOSOption,
 } from "react-native-audio-recorder-player";
-import { Platform } from "react-native";
 import {
   WHISPER_VALIDATION,
   WHISPER_COLORS,
@@ -22,6 +20,12 @@ export interface AudioLevelData {
   level: number; // 0-1 range (converted from metering)
   isWhisper: boolean;
   timestamp: number;
+}
+
+export interface RecordingEvent {
+  currentMetering?: number;
+  currentPosition?: number;
+  [key: string]: unknown;
 }
 
 export interface RecordingState {
@@ -156,7 +160,7 @@ export class RecordingService {
       this.wasAutoStop = false;
 
       // Start recording with metering enabled
-      const uri = await this.audioRecorderPlayer.startRecorder(
+      await this.audioRecorderPlayer.startRecorder(
         undefined, // Use default path
         this.getAudioSet(),
         true // Enable metering
@@ -165,7 +169,7 @@ export class RecordingService {
       this.isRecording = true;
 
       // Add record back listener for real audio levels
-      this.audioRecorderPlayer.addRecordBackListener((e: any) => {
+      this.audioRecorderPlayer.addRecordBackListener((e: RecordingEvent) => {
         const currentTime = Date.now();
         const duration = (currentTime - this.recordingStartTime) / 1000;
 
@@ -476,7 +480,7 @@ export class RecordingService {
   static destroyInstance(): void {
     if (RecordingService.instance) {
       RecordingService.instance.destroy();
-      RecordingService.instance = null as any;
+      RecordingService.instance = null as unknown as RecordingService;
       console.log("🗑️ RecordingService singleton destroyed");
     }
   }

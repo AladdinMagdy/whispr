@@ -9,13 +9,8 @@ export class AudioConversionService {
   /**
    * Convert audio file to a format compatible with Whisper API
    */
-  static async convertForTranscription(
-    audioUri: string,
-    options: AudioConversionOptions = {}
-  ): Promise<string> {
+  static async convertForTranscription(audioUri: string): Promise<string> {
     try {
-      const { targetFormat = "mp3", quality = "medium" } = options;
-
       // For now, we'll implement a simple approach
       // In a production app, you might want to use a native audio conversion library
 

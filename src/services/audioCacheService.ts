@@ -4,6 +4,7 @@
  */
 
 import * as DefaultFileSystem from "expo-file-system";
+import type { FileInfo } from "expo-file-system";
 
 // Local type definition for audio tracks
 export interface AudioTrack {
@@ -213,10 +214,13 @@ export class AudioCacheService {
         if (originalUrl !== localPath) {
           await this.fileSystem.copyAsync({ from: originalUrl, to: localPath });
         }
-        const fileInfo = await this.fileSystem.getInfoAsync(localPath, {
+        const fileInfo = (await this.fileSystem.getInfoAsync(localPath, {
           size: true,
-        });
-        const fileSize = (fileInfo as any).size || 0;
+        })) as FileInfo;
+        const fileSize =
+          fileInfo.exists && typeof fileInfo.size === "number"
+            ? fileInfo.size
+            : 0;
         await this.manageCacheSize(fileSize);
         const cachedAudio: CachedAudio = {
           originalUrl,
@@ -248,15 +252,14 @@ export class AudioCacheService {
         }
 
         // Get file info for size calculation
-        const fileInfo = await this.fileSystem.getInfoAsync(localPath, {
+        const fileInfo = (await this.fileSystem.getInfoAsync(localPath, {
           size: true,
-        });
+        })) as FileInfo;
         if (!fileInfo.exists) {
           console.error("❌ Downloaded file not found");
           return originalUrl;
         }
-
-        const fileSize = (fileInfo as any).size || 0;
+        const fileSize = typeof fileInfo.size === "number" ? fileInfo.size : 0;
 
         // Manage cache size before adding new file
         await this.manageCacheSize(fileSize);
@@ -480,7 +483,7 @@ export class AudioCacheService {
    */
   static destroyInstance(): void {
     if (AudioCacheService.instance) {
-      AudioCacheService.instance = null as any;
+      AudioCacheService.instance = null as unknown as AudioCacheService;
       console.log("🗑️ AudioCacheService singleton destroyed");
     }
   }

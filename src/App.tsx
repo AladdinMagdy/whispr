@@ -7,9 +7,7 @@ import { PaperProvider } from "react-native-paper";
 import { View, Text, ActivityIndicator } from "react-native";
 
 // Import screens
-import HomeScreen from "./screens/HomeScreen";
 import RecordScreen from "./screens/RecordScreen";
-import FeedScreen from "./screens/FeedScreen";
 
 // Import providers
 import { AuthProvider } from "./providers/AuthProvider";

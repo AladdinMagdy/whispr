@@ -1,7 +1,17 @@
 import { getFirestoreService } from "./firestoreService";
 import { useAuthStore } from "../store/useAuthStore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { FIRESTORE_COLLECTIONS } from "../constants";
+import { Like, Comment, CommentLike } from "../types";
+import { QueryDocumentSnapshot, DocumentData } from "firebase/firestore";
+
+function hasId(obj: unknown): obj is { id: string } {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    "id" in obj &&
+    typeof (obj as Record<string, unknown>).id === "string"
+  );
+}
 
 // Cache keys
 const LIKE_CACHE_PREFIX = "whispr_like_";
@@ -10,11 +20,6 @@ const COUNT_CACHE_PREFIX = "whispr_count_";
 
 // Cache TTL (Time To Live) in milliseconds
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-interface CachedData<T> {
-  data: T;
-  timestamp: number;
-}
 
 interface LikeCache {
   [whisperId: string]: {
@@ -25,16 +30,30 @@ interface LikeCache {
 }
 
 interface CommentCache {
-  comments: any[];
+  comments: Comment[];
   count: number;
   timestamp: number;
   hasMore: boolean;
-  lastDoc: any;
+  lastDoc: unknown;
 }
 
 interface CountCache {
   likes: number;
   replies: number;
+  timestamp: number;
+}
+
+interface LikeListCache {
+  likes: Like[];
+  hasMore: boolean;
+  lastDoc: unknown;
+  timestamp: number;
+}
+
+interface CommentLikeListCache {
+  likes: CommentLike[];
+  hasMore: boolean;
+  lastDoc: unknown;
   timestamp: number;
 }
 
@@ -46,14 +65,9 @@ export class InteractionService {
   private countCache: { [whisperId: string]: CountCache } = {};
   private pendingLikes: Set<string> = new Set();
   private pendingComments: Set<string> = new Set();
-  private debounceTimers: { [key: string]: NodeJS.Timeout } = {};
+  private debounceTimers: { [key: string]: ReturnType<typeof setTimeout> } = {};
   private likeListCache: {
-    [key: string]: {
-      likes: any[];
-      hasMore: boolean;
-      lastDoc: any;
-      timestamp: number;
-    };
+    [key: string]: LikeListCache | CommentLikeListCache;
   } = {};
 
   private constructor() {}
@@ -118,7 +132,7 @@ export class InteractionService {
 
       // Immediate server update (no debouncing for accuracy)
       try {
-        await this.updateLikeOnServer(whisperId, user.uid, newIsLiked);
+        await this.updateLikeOnServer(whisperId, user.uid);
 
         // Validate server count after update
         const serverWhisper = await this.firestoreService.getWhisper(whisperId);
@@ -273,41 +287,44 @@ export class InteractionService {
   async getLikes(
     whisperId: string,
     limit: number = 50,
-    lastDoc?: any
-  ): Promise<{ likes: any[]; hasMore: boolean; lastDoc: any }> {
-    const cacheKey = `${whisperId}_likes_${limit}_${lastDoc?.id || "first"}`;
+    lastDoc?: unknown
+  ): Promise<{ likes: Like[]; hasMore: boolean; lastDoc: unknown }> {
+    let lastDocId: string;
+    if (hasId(lastDoc)) {
+      const docWithId = lastDoc as { id: string };
+      lastDocId = docWithId.id;
+    } else if (lastDoc) {
+      try {
+        lastDocId = JSON.stringify(lastDoc);
+      } catch {
+        lastDocId = "first";
+      }
+    } else {
+      lastDocId = "first";
+    }
+    const cacheKey = `${whisperId}_likes_${limit}_${lastDocId}`;
 
     // Check memory cache first
-    if (
-      this.likeListCache[cacheKey] &&
-      Date.now() - this.likeListCache[cacheKey].timestamp < CACHE_TTL
-    ) {
-      return this.likeListCache[cacheKey];
+    const cached = this.likeListCache[cacheKey] as LikeListCache | undefined;
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      return cached;
     }
-
-    // Check AsyncStorage cache (optional, not implemented for likes list yet)
-    // const cached = await this.getLikeListCache(cacheKey);
-    // if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    //   this.likeListCache[cacheKey] = cached;
-    //   return cached;
-    // }
 
     // Fetch from server
     try {
       const result = await this.firestoreService.getWhisperLikes(
         whisperId,
         limit,
-        lastDoc
+        lastDoc as unknown as QueryDocumentSnapshot<DocumentData>
       );
       const { likes, hasMore, lastDoc: newLastDoc } = result;
-      const cacheResult = {
+      const cacheResult: LikeListCache = {
         likes,
         hasMore,
         lastDoc: newLastDoc,
         timestamp: Date.now(),
       };
       this.likeListCache[cacheKey] = cacheResult;
-      // Optionally persist to AsyncStorage
       return cacheResult;
     } catch (error) {
       console.error("Error fetching likes:", error);
@@ -321,14 +338,27 @@ export class InteractionService {
   async getComments(
     whisperId: string,
     limit: number = 20,
-    lastDoc?: any
+    lastDoc?: unknown
   ): Promise<{
-    comments: any[];
+    comments: Comment[];
     hasMore: boolean;
-    lastDoc: any;
+    lastDoc: unknown;
     count: number;
   }> {
-    const cacheKey = `${whisperId}_comments_${limit}_${lastDoc?.id || "first"}`;
+    let lastDocId: string;
+    if (hasId(lastDoc)) {
+      const docWithId = lastDoc as { id: string };
+      lastDocId = docWithId.id;
+    } else if (lastDoc) {
+      try {
+        lastDocId = JSON.stringify(lastDoc);
+      } catch {
+        lastDocId = "first";
+      }
+    } else {
+      lastDocId = "first";
+    }
+    const cacheKey = `${whisperId}_comments_${limit}_${lastDocId}`;
 
     // Check memory cache first
     if (
@@ -350,7 +380,7 @@ export class InteractionService {
       const result = await this.firestoreService.getComments(
         whisperId,
         limit,
-        lastDoc
+        lastDoc as unknown as QueryDocumentSnapshot<DocumentData>
       );
       const { comments, hasMore, lastDoc: newLastDoc } = result;
       const cacheResult = {
@@ -554,13 +584,13 @@ export class InteractionService {
   async getCommentLikes(
     commentId: string,
     limit: number = 50,
-    lastDoc?: any
-  ): Promise<{ likes: any[]; hasMore: boolean; lastDoc: any }> {
+    lastDoc?: unknown
+  ): Promise<{ likes: CommentLike[]; hasMore: boolean; lastDoc: unknown }> {
     const cacheKey = `comment_likes_${commentId}`;
 
     // Check cache for first page
     if (!lastDoc && this.likeListCache[cacheKey]) {
-      const cached = this.likeListCache[cacheKey];
+      const cached = this.likeListCache[cacheKey] as CommentLikeListCache;
       if (Date.now() - cached.timestamp < CACHE_TTL) {
         return cached;
       }
@@ -570,18 +600,27 @@ export class InteractionService {
       const result = await this.firestoreService.getCommentLikes(
         commentId,
         limit,
-        lastDoc
+        lastDoc as unknown as QueryDocumentSnapshot<DocumentData>
       );
-
-      // Cache first page
+      // Map likes to ensure each has an id property
+      const likesWithId: CommentLike[] = result.likes.map((like, idx) => ({
+        id:
+          ((like as unknown as Record<string, unknown>).id as string) ||
+          String(idx),
+        commentId: like.commentId,
+        userId: like.userId,
+        createdAt: like.createdAt instanceof Date ? like.createdAt : new Date(),
+      }));
+      const cacheResult: CommentLikeListCache = {
+        likes: likesWithId,
+        hasMore: result.hasMore,
+        lastDoc: result.lastDoc,
+        timestamp: Date.now(),
+      };
       if (!lastDoc) {
-        this.likeListCache[cacheKey] = {
-          ...result,
-          timestamp: Date.now(),
-        };
+        this.likeListCache[cacheKey] = cacheResult;
       }
-
-      return result;
+      return cacheResult;
     } catch (error) {
       console.error("Error getting comment likes:", error);
       throw error;
@@ -686,7 +725,10 @@ export class InteractionService {
 
   // Private helper methods
 
-  private async persistLikeCache(key: string, data: any): Promise<void> {
+  private async persistLikeCache(
+    key: string,
+    data: LikeCache[keyof LikeCache]
+  ): Promise<void> {
     try {
       await AsyncStorage.setItem(LIKE_CACHE_PREFIX + key, JSON.stringify(data));
     } catch (error) {
@@ -694,17 +736,22 @@ export class InteractionService {
     }
   }
 
-  private async getLikeCache(key: string): Promise<any> {
+  private async getLikeCache(
+    key: string
+  ): Promise<LikeCache[keyof LikeCache] | null> {
     try {
       const data = await AsyncStorage.getItem(LIKE_CACHE_PREFIX + key);
-      return data ? JSON.parse(data) : null;
+      return data ? (JSON.parse(data) as LikeCache[keyof LikeCache]) : null;
     } catch (error) {
       console.error("Error getting like cache:", error);
       return null;
     }
   }
 
-  private async persistCommentCache(key: string, data: any): Promise<void> {
+  private async persistCommentCache(
+    key: string,
+    data: CommentCache
+  ): Promise<void> {
     try {
       await AsyncStorage.setItem(
         COMMENT_CACHE_PREFIX + key,
@@ -715,17 +762,20 @@ export class InteractionService {
     }
   }
 
-  private async getCommentCache(key: string): Promise<any> {
+  private async getCommentCache(key: string): Promise<CommentCache | null> {
     try {
       const data = await AsyncStorage.getItem(COMMENT_CACHE_PREFIX + key);
-      return data ? JSON.parse(data) : null;
+      return data ? (JSON.parse(data) as CommentCache) : null;
     } catch (error) {
       console.error("Error getting comment cache:", error);
       return null;
     }
   }
 
-  private async persistCountCache(key: string, data: any): Promise<void> {
+  private async persistCountCache(
+    key: string,
+    data: CountCache
+  ): Promise<void> {
     try {
       await AsyncStorage.setItem(
         COUNT_CACHE_PREFIX + key,
@@ -736,10 +786,10 @@ export class InteractionService {
     }
   }
 
-  private async getCountCache(key: string): Promise<any> {
+  private async getCountCache(key: string): Promise<CountCache | null> {
     try {
       const data = await AsyncStorage.getItem(COUNT_CACHE_PREFIX + key);
-      return data ? JSON.parse(data) : null;
+      return data ? (JSON.parse(data) as CountCache) : null;
     } catch (error) {
       console.error("Error getting count cache:", error);
       return null;
@@ -795,8 +845,7 @@ export class InteractionService {
 
   private async updateLikeOnServer(
     whisperId: string,
-    userId: string,
-    isLiked: boolean
+    userId: string
   ): Promise<void> {
     // Get user info for the like
     const { user } = useAuthStore.getState();
@@ -816,7 +865,7 @@ export class InteractionService {
   /**
    * Get a single comment by ID
    */
-  async getComment(commentId: string): Promise<any> {
+  async getComment(commentId: string): Promise<Comment | null> {
     try {
       return await this.firestoreService.getComment(commentId);
     } catch (error) {
@@ -833,13 +882,19 @@ export const getInteractionService = (): InteractionService => {
 
 export const resetInteractionService = (): void => {
   // Reset the singleton instance
-  (InteractionService as any).instance = undefined;
+  (
+    InteractionService as unknown as { instance?: InteractionService }
+  ).instance = undefined;
 };
 
 export const destroyInteractionService = (): void => {
-  const instance = (InteractionService as any).instance;
+  const instance = (
+    InteractionService as unknown as { instance?: InteractionService }
+  ).instance;
   if (instance) {
     instance.clearAllCaches();
-    (InteractionService as any).instance = undefined;
+    (
+      InteractionService as unknown as { instance?: InteractionService }
+    ).instance = undefined;
   }
 };

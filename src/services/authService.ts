@@ -384,7 +384,7 @@ export class AuthService {
   static destroyInstance(): void {
     if (AuthService.instance) {
       AuthService.instance.destroy();
-      AuthService.instance = null as any;
+      AuthService.instance = null as unknown as AuthService;
       console.log("🗑️ AuthService singleton destroyed");
     }
   }

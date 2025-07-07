@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { devtools, persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { User, Whisper, AudioRecording, AppState, AppActions } from "@/types";
+import { User, Whisper, AppState, AppActions } from "@/types";
 
 interface AppStore extends AppState, AppActions {
   // Additional actions

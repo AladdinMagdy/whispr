@@ -3,18 +3,8 @@
  * Handles audio file uploads to Firebase Storage and Firestore document creation
  */
 
-import {
-  getStorageInstance,
-  getFirestoreInstance,
-  getAuthInstance,
-} from "../config/firebase";
-import {
-  ref,
-  uploadBytes,
-  getDownloadURL,
-  uploadBytesResumable,
-} from "firebase/storage";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { getStorageInstance, getAuthInstance } from "../config/firebase";
+import { ref, getDownloadURL, uploadBytesResumable } from "firebase/storage";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   WHISPER_VALIDATION,
@@ -38,7 +28,7 @@ export interface WhisperUploadData {
   averageLevel: number;
   confidence: number;
   transcription?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface WhisperDocument {
@@ -50,7 +40,7 @@ export interface WhisperDocument {
   averageLevel: number;
   confidence: number;
   transcription?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -287,20 +277,13 @@ export class UploadService {
     totalDuration: number;
     averageConfidence: number;
   }> {
-    try {
-      const userId = await this.getCurrentUser();
-
-      // This would typically query Firestore for user's whispers
-      // For now, return mock data
-      return {
-        totalWhispers: 0,
-        totalDuration: 0,
-        averageConfidence: 0,
-      };
-    } catch (error) {
-      console.error("Error getting user upload stats:", error);
-      throw error;
-    }
+    // This would typically query Firestore for user's whispers
+    // For now, return mock data
+    return {
+      totalWhispers: 0,
+      totalDuration: 0,
+      averageConfidence: 0,
+    };
   }
 }
 

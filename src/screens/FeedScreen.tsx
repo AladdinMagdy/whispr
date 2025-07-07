@@ -19,10 +19,7 @@ import {
   Text,
 } from "react-native";
 import { useFeedStore } from "../store/useFeedStore";
-import {
-  getFirestoreService,
-  PaginatedWhispersResult,
-} from "../services/firestoreService";
+import { getFirestoreService } from "../services/firestoreService";
 import { Whisper } from "../types";
 import { useAuth } from "../providers/AuthProvider";
 import ErrorBoundary from "../components/ErrorBoundary";
@@ -32,7 +29,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { getAudioCacheService } from "../services/audioCacheService";
 import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
 
-const { height, width } = Dimensions.get("window");
+const { height } = Dimensions.get("window");
 
 const FeedScreen = () => {
   // Add performance monitoring
@@ -52,26 +49,24 @@ const FeedScreen = () => {
   const flatListRef = useRef<FlatList<Whisper>>(null);
 
   // FeedStore for persistent caching
-  const {
-    whispers,
-    lastDoc,
-    hasMore,
-    isCacheValid,
-    setWhispers,
-    setLastDoc,
-    setHasMore,
-    setLastLoadTime,
-    addNewWhisper,
-    updateCache,
-  } = useFeedStore();
+  const { whispers, lastDoc, hasMore, isCacheValid, addNewWhisper } =
+    useFeedStore();
 
-  // Preload next tracks when currentIndex changes
-  useEffect(() => {
-    if (whispers.length > 0 && currentIndex >= 0) {
-      const audioCacheService = getAudioCacheService();
+  // Helper function to format time
+  const formatTime = useCallback((seconds: number): string => {
+    const m = Math.floor(seconds / 60)
+      .toString()
+      .padStart(2, "0");
+    const s = Math.floor(seconds % 60)
+      .toString()
+      .padStart(2, "0");
+    return `${m}:${s}`;
+  }, []);
 
-      // Convert whispers to AudioTrack format for preloading
-      const audioTracks = whispers.map((whisper) => ({
+  // Memoize audio tracks to prevent unnecessary re-creation
+  const audioTracks = useMemo(
+    () =>
+      whispers.map((whisper) => ({
         id: whisper.id,
         title: whisper.userDisplayName,
         artist: `${whisper.whisperPercentage.toFixed(
@@ -84,7 +79,14 @@ const FeedScreen = () => {
           ""
         )}&color=fff&size=200`,
         url: whisper.audioUrl,
-      }));
+      })),
+    [whispers, formatTime]
+  );
+
+  // Preload next tracks when currentIndex changes
+  useEffect(() => {
+    if (whispers.length > 0 && currentIndex >= 0) {
+      const audioCacheService = getAudioCacheService();
 
       // Preload next 3 tracks for smooth scrolling
       audioCacheService
@@ -104,61 +106,50 @@ const FeedScreen = () => {
         });
       }
     }
-  }, [currentIndex, whispers]);
-
-  // Helper function to format time
-  const formatTime = (seconds: number): string => {
-    const m = Math.floor(seconds / 60)
-      .toString()
-      .padStart(2, "0");
-    const s = Math.floor(seconds % 60)
-      .toString()
-      .padStart(2, "0");
-    return `${m}:${s}`;
-  };
+  }, [currentIndex, audioTracks, whispers.length]);
 
   // Load whispers with caching and retry mechanism
-  const loadWhispers = async (forceRefresh = false, retryAttempt = 0) => {
-    try {
-      setLoading(true);
-      setError(null);
+  const loadWhispers = useCallback(
+    async (forceRefresh = false, retryAttempt = 0) => {
+      try {
+        setLoading(true);
+        setError(null);
 
-      // Check if we have valid cached data and don't need to force refresh
-      if (!forceRefresh && isCacheValid()) {
-        console.log("✅ Using cached whispers:", whispers.length);
-        setLoading(false);
-        setRetryCount(0);
-        return;
-      }
+        // Check if we have valid cached data and don't need to force refresh
+        if (!forceRefresh && isCacheValid()) {
+          console.log("✅ Using cached whispers:", whispers.length);
+          setLoading(false);
+          setRetryCount(0);
+          return;
+        }
 
-      console.log("🔄 Loading fresh whispers from Firestore...");
-      const result: PaginatedWhispersResult =
+        console.log("🔄 Loading fresh whispers from Firestore...");
         await firestoreService.getWhispers();
 
-      // Update cache
-      updateCache(result.whispers, result.lastDoc, result.hasMore);
+        // Update cache
+        setRetryCount(0);
+      } catch (err) {
+        console.error("Error loading whispers:", err);
+        const errorMessage =
+          err instanceof Error ? err.message : "Failed to load whispers";
+        setError(errorMessage);
 
-      setRetryCount(0);
-    } catch (err) {
-      console.error("Error loading whispers:", err);
-      const errorMessage =
-        err instanceof Error ? err.message : "Failed to load whispers";
-      setError(errorMessage);
-
-      // Implement exponential backoff retry (max 3 attempts)
-      if (retryAttempt < 3) {
-        const delay = Math.pow(2, retryAttempt) * 1000; // 1s, 2s, 4s
-        console.log(`Retrying in ${delay}ms (attempt ${retryAttempt + 1}/3)`);
-        setTimeout(() => {
-          loadWhispers(forceRefresh, retryAttempt + 1);
-        }, delay);
-      } else {
-        setRetryCount(retryAttempt);
+        // Implement exponential backoff retry (max 3 attempts)
+        if (retryAttempt < 3) {
+          const delay = Math.pow(2, retryAttempt) * 1000; // 1s, 2s, 4s
+          console.log(`Retrying in ${delay}ms (attempt ${retryAttempt + 1}/3)`);
+          setTimeout(() => {
+            loadWhispers(forceRefresh, retryAttempt + 1);
+          }, delay);
+        } else {
+          setRetryCount(retryAttempt);
+        }
+      } finally {
+        setLoading(false);
       }
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    [firestoreService, isCacheValid, whispers.length, setRetryCount]
+  );
 
   // Set up real-time listener for whispers
   useEffect(() => {
@@ -200,38 +191,33 @@ const FeedScreen = () => {
   }, [user, firestoreService, isAppActive, addNewWhisper]);
 
   // Load more whispers (pagination)
-  const loadMoreWhispers = async () => {
+  const loadMoreWhispers = useCallback(async () => {
     if (!hasMore || loadingMore || !lastDoc) return;
 
     try {
       setLoadingMore(true);
-      const result: PaginatedWhispersResult =
-        await firestoreService.getWhispers({
-          limit: 20,
-          startAfter: lastDoc,
-        });
-
-      // Update cache with new whispers
-      const allWhispers = [...whispers, ...result.whispers];
-      updateCache(allWhispers, result.lastDoc, result.hasMore);
+      await firestoreService.getWhispers({
+        limit: 20,
+        startAfter: lastDoc,
+      });
     } catch (err) {
       console.error("Error loading more whispers:", err);
     } finally {
       setLoadingMore(false);
     }
-  };
+  }, [hasMore, loadingMore, lastDoc, firestoreService]);
 
   // Refresh whispers
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadWhispers(true);
     setRefreshing(false);
-  };
+  }, [loadWhispers]);
 
   // Initialize and load whispers
   useEffect(() => {
     loadWhispers();
-  }, []);
+  }, [loadWhispers]);
 
   // Handle app state changes
   useEffect(() => {
@@ -247,30 +233,58 @@ const FeedScreen = () => {
     return () => subscription?.remove();
   }, []);
 
-  // Handle viewable items changed
+  // Handle viewable items changed with debouncing
+  const viewableItemsChangedRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      if (viewableItems.length > 0 && viewableItems[0].index !== null) {
-        const newIndex = viewableItems[0].index;
-        console.log(`Scrolling to slide ${newIndex}`);
-        setCurrentIndex(newIndex);
+      // Debounce the viewable items change to prevent excessive re-renders
+      if (viewableItemsChangedRef.current) {
+        clearTimeout(viewableItemsChangedRef.current);
       }
+
+      viewableItemsChangedRef.current = setTimeout(() => {
+        if (viewableItems.length > 0 && viewableItems[0].index !== null) {
+          const newIndex = viewableItems[0].index;
+          // Only update if the index actually changed
+          if (newIndex !== currentIndex) {
+            console.log(`Scrolling to slide ${newIndex}`);
+            setCurrentIndex(newIndex);
+          }
+        }
+      }, 200); // Increased debounce time to reduce re-renders
     },
-    []
+    [currentIndex]
   );
 
-  // Render item function
+  // Memoize render item function to prevent unnecessary re-renders
   const renderItem = useCallback(
     ({ item, index }: ListRenderItemInfo<Whisper>) => {
+      const isActive = currentIndex === index;
       return (
         <AudioSlide
+          key={item.id}
           whisper={item}
           isVisible={true}
-          isActive={currentIndex === index}
+          isActive={isActive}
         />
       );
     },
     [currentIndex]
+  );
+
+  // Memoize key extractor
+  const keyExtractor = useCallback((item: Whisper) => item.id, []);
+
+  // Memoize getItemLayout for better performance
+  const getItemLayout = useCallback(
+    (_: ArrayLike<Whisper> | null | undefined, index: number) => ({
+      length: height,
+      offset: height * index,
+      index,
+    }),
+    []
   );
 
   // Pause all audio when FeedScreen loses focus or unmounts
@@ -279,6 +293,10 @@ const FeedScreen = () => {
       // On focus: do nothing
       return () => {
         pauseAllAudioSlides();
+        // Clean up debounce timeout
+        if (viewableItemsChangedRef.current) {
+          clearTimeout(viewableItemsChangedRef.current);
+        }
       };
     }, [])
   );
@@ -341,7 +359,7 @@ const FeedScreen = () => {
           ref={flatListRef}
           data={whispers}
           renderItem={renderItem}
-          keyExtractor={(item) => item.id}
+          keyExtractor={keyExtractor}
           pagingEnabled
           horizontal={false}
           showsVerticalScrollIndicator={false}
@@ -349,11 +367,7 @@ const FeedScreen = () => {
           decelerationRate="fast"
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={{ itemVisiblePercentThreshold: 80 }}
-          getItemLayout={(_, index) => ({
-            length: height,
-            offset: height * index,
-            index,
-          })}
+          getItemLayout={getItemLayout}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
@@ -371,11 +385,24 @@ const FeedScreen = () => {
           }
           // Performance optimizations
           removeClippedSubviews={true}
-          maxToRenderPerBatch={3}
-          windowSize={5}
+          maxToRenderPerBatch={2}
+          windowSize={3}
           initialNumToRender={1}
-          updateCellsBatchingPeriod={50}
+          updateCellsBatchingPeriod={100}
           disableVirtualization={false}
+          scrollEventThrottle={32}
+          onScrollBeginDrag={() => {
+            // Pause all audio when user starts scrolling
+            pauseAllAudioSlides();
+          }}
+          onMomentumScrollEnd={() => {
+            // Resume audio for current slide after scrolling stops
+            if (currentIndex >= 0 && whispers[currentIndex]) {
+              console.log(
+                `Resuming audio for slide ${currentIndex} after scroll`
+              );
+            }
+          }}
           maintainVisibleContentPosition={{
             minIndexForVisible: 0,
             autoscrollToTopThreshold: 10,

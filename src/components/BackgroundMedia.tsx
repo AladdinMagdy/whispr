@@ -1,8 +1,6 @@
 import React from "react";
-import { View, Image, StyleSheet, Dimensions } from "react-native";
+import { View, Image, StyleSheet } from "react-native";
 import { Whisper } from "../types";
-
-const { height, width } = Dimensions.get("window");
 
 interface BackgroundMediaProps {
   whisper: Whisper;
