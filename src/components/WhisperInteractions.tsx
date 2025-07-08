@@ -182,17 +182,28 @@ const CommentItem = React.memo<CommentItemProps>(
     }, [showCommentLikes, comment.id]); // Remove service dependency
 
     const handleLike = useCallback(async () => {
+      // Optimistic update - update UI immediately
+      const newIsLiked = !isLiked;
+      const newLikeCount = newIsLiked ? likeCount + 1 : likeCount - 1;
+
+      setIsLiked(newIsLiked);
+      setLikeCount(newLikeCount);
+      onLikeComment(comment.id);
+
       try {
-        const result = await interactionServiceRef.current.toggleCommentLike(
-          comment.id
-        );
-        setIsLiked(result.isLiked);
-        setLikeCount(result.count);
-        onLikeComment(comment.id);
+        // Call server after optimistic update
+        await interactionServiceRef.current.toggleCommentLike(comment.id);
+
+        // The real-time listener will sync the actual state from the server
+        // No need to update state here as the listener handles it
       } catch (error) {
         console.error("Error liking comment:", error);
+
+        // Revert optimistic update on error
+        setIsLiked(!newIsLiked);
+        setLikeCount(newIsLiked ? likeCount - 1 : likeCount + 1);
       }
-    }, [comment.id, onLikeComment]);
+    }, [comment.id, onLikeComment, isLiked, likeCount]);
 
     const handleDelete = useCallback(() => {
       Alert.alert(
@@ -437,7 +448,8 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
         unsubscribe = firestoreServiceRef.current.subscribeToComments(
           whisper.id,
           (newComments) => {
-            // Simply replace the comments array - the server has the authoritative data
+            // Replace comments array with server data - this will include the new comment
+            // and replace any optimistic comments with their server versions
             setComments(newComments);
             setLoadingComments(false);
           }
@@ -548,18 +560,28 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
         return;
       }
 
-      try {
-        // Use optimized interaction service with caching and optimistic updates
-        const result = await interactionServiceRef.current.toggleLike(
-          whisper.id
-        );
+      // Optimistic update - update UI immediately
+      const newIsLiked = !isLiked;
+      const newLikeCount = newIsLiked ? likeCount + 1 : likeCount - 1;
 
-        setIsLiked(result.isLiked);
-        // Don't set like count here - let the real-time listener handle it
-        onLikeChange?.(result.isLiked, result.count);
+      setIsLiked(newIsLiked);
+      setLikeCount(newLikeCount);
+      onLikeChange?.(newIsLiked, newLikeCount);
+
+      try {
+        // Call server after optimistic update
+        await interactionServiceRef.current.toggleLike(whisper.id);
+
+        // The real-time listener will sync the actual state from the server
+        // No need to update state here as the listener handles it
       } catch (error) {
         console.error("Error liking whisper:", error);
         Alert.alert("Error", "Failed to like whisper");
+
+        // Revert optimistic update on error
+        setIsLiked(!newIsLiked);
+        setLikeCount(newIsLiked ? likeCount - 1 : likeCount + 1);
+        onLikeChange?.(!newIsLiked, newIsLiked ? likeCount - 1 : likeCount + 1);
       }
     };
 
@@ -605,20 +627,47 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
       }
 
       setSubmittingComment(true);
+
+      // Create optimistic comment first
+      const optimisticComment = {
+        id: `optimistic-${Date.now()}`, // Temporary ID to avoid conflicts
+        whisperId: whisper.id,
+        userId: user.uid,
+        userDisplayName: user.displayName,
+        userProfileColor: user.profileColor,
+        text: newComment.trim(),
+        likes: 0,
+        createdAt: new Date(),
+        isEdited: false,
+      };
+
+      // Add optimistic comment to UI IMMEDIATELY (before server call)
+      setComments((prev) => [optimisticComment, ...prev]);
+
+      // Update comment count optimistically
+      setCommentCount((prev) => prev + 1);
+      onCommentChange?.(commentCount + 1);
+
+      // Clear input immediately for better UX
+      const text = newComment.trim();
+      setNewComment("");
+
       try {
-        const text = newComment.trim();
+        // Now call the server - the optimistic comment is already in place
         await interactionServiceRef.current.addComment(whisper.id, text);
 
-        setNewComment("");
-        // Optimistically update comment count
-        setCommentCount((prev) => prev + 1);
-        onCommentChange?.(commentCount + 1);
-
-        // Don't add optimistic comment to UI - let the real-time listener handle it
-        // This prevents the duplicate issue entirely
+        // The real-time listener will replace the optimistic comment with the real one
+        // when it receives the server update
       } catch (error) {
         console.error("Error adding comment:", error);
         Alert.alert("Error", "Failed to add comment");
+
+        // Remove optimistic comment on error
+        setComments((prev) =>
+          prev.filter((c) => c.id !== optimisticComment.id)
+        );
+        setCommentCount((prev) => prev - 1);
+        onCommentChange?.(commentCount - 1);
       } finally {
         setSubmittingComment(false);
       }
@@ -627,19 +676,35 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
     const handleDeleteComment = async (commentId: string) => {
       if (!user) return;
 
+      // Optimistic update - remove comment from UI immediately
+      const commentToDelete = comments.find((c) => c.id === commentId);
+      if (!commentToDelete) return;
+
+      // Remove comment from UI immediately
+      setComments((prev) => prev.filter((c) => c.id !== commentId));
+
+      // Update comment count optimistically
+      const newCommentCount = commentCount - 1;
+      setCommentCount(newCommentCount);
+      onCommentChange?.(newCommentCount);
+
       try {
-        const result = await interactionServiceRef.current.deleteComment(
+        // Call server after optimistic update
+        await interactionServiceRef.current.deleteComment(
           commentId,
           whisper.id
         );
 
-        setCommentCount(result.count);
-        onCommentChange?.(result.count);
-        // Reload comments to remove the deleted comment
-        loadInitialComments();
+        // The real-time listener will sync the actual state from the server
+        // No need to update state here as the listener handles it
       } catch (error) {
         console.error("Error deleting comment:", error);
         Alert.alert("Error", "Failed to delete comment");
+
+        // Revert optimistic update on error
+        setComments((prev) => [...prev, commentToDelete]);
+        setCommentCount((prev) => prev + 1);
+        onCommentChange?.(commentCount + 1);
       }
     };
 

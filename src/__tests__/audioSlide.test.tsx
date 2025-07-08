@@ -142,7 +142,7 @@ describe("AudioSlide", () => {
       playAsync: jest.fn(),
       pauseAsync: jest.fn(),
       unloadAsync: jest.fn().mockImplementation(() => {
-        // eslint-disable-next-line no-console
+         
         console.log("unloadAsync called");
         return Promise.resolve();
       }),
@@ -188,7 +188,7 @@ describe("AudioSlide", () => {
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     // Debug log
-    // eslint-disable-next-line no-console
+     
     console.log("unloadAsync calls:", mockSound.unloadAsync.mock.calls.length);
     expect(mockSound.unloadAsync).toHaveBeenCalled();
   });
