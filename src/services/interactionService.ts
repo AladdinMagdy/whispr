@@ -496,7 +496,12 @@ export class InteractionService {
 
       // Update on server
       try {
-        await this.firestoreService.likeComment(commentId, user.uid);
+        await this.firestoreService.likeComment(
+          commentId,
+          user.uid,
+          user.displayName,
+          user.profileColor
+        );
 
         // Get updated comment from server to validate count
         const updatedComment = await this.firestoreService.getComment(
@@ -602,13 +607,15 @@ export class InteractionService {
         limit,
         lastDoc as unknown as QueryDocumentSnapshot<DocumentData>
       );
-      // Map likes to ensure each has an id property
+      // Map likes to ensure each has an id property and user display info
       const likesWithId: CommentLike[] = result.likes.map((like, idx) => ({
         id:
           ((like as unknown as Record<string, unknown>).id as string) ||
           String(idx),
         commentId: like.commentId,
         userId: like.userId,
+        userDisplayName: like.userDisplayName || "Anonymous",
+        userProfileColor: like.userProfileColor || "#9E9E9E",
         createdAt: like.createdAt instanceof Date ? like.createdAt : new Date(),
       }));
       const cacheResult: CommentLikeListCache = {

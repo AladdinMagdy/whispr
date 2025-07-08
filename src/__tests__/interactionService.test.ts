@@ -18,39 +18,49 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 }));
 
 const mockFirestoreService = {
+  likeWhisper: jest.fn(),
+  unlikeWhisper: jest.fn(),
   hasUserLikedWhisper: jest.fn(),
   getWhisper: jest.fn(),
   getComments: jest.fn(),
   addComment: jest.fn(),
   deleteComment: jest.fn(),
-  likeWhisper: jest.fn(),
   likeComment: jest.fn(),
+  unlikeComment: jest.fn(),
   getComment: jest.fn(),
-  hasUserLikedComment: jest.fn(),
   getCommentLikes: jest.fn(),
-};
-
-const mockAuthStore = {
-  getState: jest.fn(),
-};
-
-const mockUser = {
-  uid: "test-user-123",
-  displayName: "Test User",
-  profileColor: "#FF5733",
 };
 
 describe("InteractionService", () => {
   let interactionService: InteractionService;
 
-  beforeEach(() => {
-    resetInteractionService();
-    jest.clearAllMocks();
+  beforeEach(async () => {
     jest.useRealTimers();
-
+    jest.clearAllTimers();
+    jest.resetAllMocks();
+    // Reset the singleton instance and its state
+    (resetInteractionService as jest.Mock)();
+    // Always mock useAuthStore.getState to return a valid user
+    // Mock the full AuthStore shape
+    (useAuthStore.getState as unknown as jest.Mock).mockImplementation(() => ({
+      user: {
+        uid: "user123",
+        displayName: "Test User",
+        profileColor: "#123456",
+      },
+      signInAnonymously: jest.fn(),
+      signOut: jest.fn(),
+      updateLastActive: jest.fn(),
+      incrementWhisperCount: jest.fn(),
+      incrementReactionCount: jest.fn(),
+      setCallbacks: jest.fn(),
+      getCurrentUser: jest.fn(),
+      updateProfile: jest.fn(),
+      isAuthenticated: true,
+      loading: false,
+      error: null,
+    }));
     (getFirestoreService as jest.Mock).mockReturnValue(mockFirestoreService);
-    (useAuthStore.getState as jest.Mock).mockReturnValue({ user: mockUser });
-
     interactionService = getInteractionService();
   });
 
@@ -59,13 +69,13 @@ describe("InteractionService", () => {
   });
 
   describe("Singleton Pattern", () => {
-    it("should return the same instance", () => {
+    it("should return the same instance", async () => {
       const instance1 = getInteractionService();
       const instance2 = getInteractionService();
       expect(instance1).toBe(instance2);
     });
 
-    it("should reset instance correctly", () => {
+    it("should reset instance correctly", async () => {
       const instance1 = getInteractionService();
       resetInteractionService();
       const instance2 = getInteractionService();
@@ -250,9 +260,9 @@ describe("InteractionService", () => {
       expect(result.count).toBe(1);
       expect(mockFirestoreService.addComment).toHaveBeenCalledWith(
         whisperId,
-        mockUser.uid,
-        mockUser.displayName,
-        mockUser.profileColor,
+        "user123",
+        "Test User",
+        "#123456",
         commentText
       );
     });
@@ -295,7 +305,9 @@ describe("InteractionService", () => {
       expect(result.count).toBe(1);
       expect(mockFirestoreService.likeComment).toHaveBeenCalledWith(
         commentId,
-        mockUser.uid
+        "user123",
+        "Test User",
+        "#123456"
       );
       expect(mockFirestoreService.getComment).toHaveBeenCalledWith(commentId);
     });
@@ -339,7 +351,7 @@ describe("InteractionService", () => {
       expect(result.count).toBe(0);
       expect(mockFirestoreService.deleteComment).toHaveBeenCalledWith(
         commentId,
-        mockUser.uid
+        "user123"
       );
     });
 
@@ -462,23 +474,34 @@ describe("InteractionService", () => {
   });
 
   describe("Debouncing", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       jest.useRealTimers();
       jest.clearAllTimers();
       jest.resetAllMocks();
       // Reset the singleton instance and its state
-      const {
-        resetInteractionService,
-      } = require("../services/interactionService");
-      resetInteractionService();
+      (resetInteractionService as jest.Mock)();
       // Always mock useAuthStore.getState to return a valid user
-      const mockUser = {
-        uid: "user123",
-        displayName: "Test User",
-        profileColor: "#123456",
-      };
-      const { useAuthStore } = require("../store/useAuthStore");
-      useAuthStore.getState = jest.fn(() => ({ user: mockUser }));
+      // Mock the full AuthStore shape
+      (useAuthStore.getState as unknown as jest.Mock).mockImplementation(
+        () => ({
+          user: {
+            uid: "user123",
+            displayName: "Test User",
+            profileColor: "#123456",
+          },
+          signInAnonymously: jest.fn(),
+          signOut: jest.fn(),
+          updateLastActive: jest.fn(),
+          incrementWhisperCount: jest.fn(),
+          incrementReactionCount: jest.fn(),
+          setCallbacks: jest.fn(),
+          getCurrentUser: jest.fn(),
+          updateProfile: jest.fn(),
+          isAuthenticated: true,
+          loading: false,
+          error: null,
+        })
+      );
     });
 
     it("should debounce server updates", async () => {

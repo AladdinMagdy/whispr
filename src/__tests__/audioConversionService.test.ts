@@ -1,7 +1,4 @@
-import {
-  AudioConversionService,
-  AudioConversionOptions,
-} from "../services/audioConversionService";
+import { AudioConversionService } from "../services/audioConversionService";
 import * as FileSystem from "expo-file-system";
 
 // Mock expo-file-system
@@ -44,13 +41,8 @@ describe("AudioConversionService", () => {
 
     it("should handle conversion options", async () => {
       const audioUri = "file://test.wav";
-      const options: AudioConversionOptions = {
-        targetFormat: "mp3",
-        quality: "high",
-      };
       const result = await AudioConversionService.convertForTranscription(
-        audioUri,
-        options
+        audioUri
       );
       expect(result).toBe(audioUri);
     });

@@ -6,8 +6,10 @@ import {
   uploadBytes,
   getDownloadURL,
   deleteObject,
-  UploadResult,
 } from "firebase/storage";
+
+// Declare global for TypeScript
+declare const global: any;
 
 // Mock Firebase Storage
 jest.mock("../config/firebase", () => ({

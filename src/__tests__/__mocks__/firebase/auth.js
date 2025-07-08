@@ -1,9 +1,13 @@
 // Mock Firebase Auth
+
+// Declare global for TypeScript
+/* global process */
+
 export const onAuthStateChanged = jest.fn((auth, callback) => {
   // Simulate auth state change without calling unsubscribe
-  setTimeout(() => {
+  process.nextTick(() => {
     callback({ uid: "test-user-id" });
-  }, 0);
+  });
   return () => { }; // Return empty unsubscribe function
 });
 

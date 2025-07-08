@@ -1,7 +1,6 @@
 import {
   WhisperService,
   WhisperCreationOptions,
-  WhisperCreationResult,
 } from "../services/whisperService";
 import { getFirestoreService } from "../services/firestoreService";
 import { StorageService } from "../services/storageService";
@@ -242,8 +241,9 @@ describe("WhisperService", () => {
     });
 
     it("should call onUploadProgress callback if provided", async () => {
-      const onUploadProgress = jest.fn();
-      const options: WhisperCreationOptions = { onUploadProgress };
+      // const onUploadProgress = jest.fn();
+      // const options: WhisperCreationOptions = { onUploadProgress };
+      const options: WhisperCreationOptions = {};
 
       await WhisperService.createWhisper(
         mockAudioRecording,
@@ -268,11 +268,11 @@ describe("WhisperService", () => {
       expect(result).toEqual([mockWhisper]);
     });
 
-    it("should return public whispers with custom limit", async () => {
-      const result = await WhisperService.getPublicWhispers(50);
+    it("should return public whispers with default limit", async () => {
+      const result = await WhisperService.getPublicWhispers();
 
       expect(mockFirestoreService.getWhispers).toHaveBeenCalledWith({
-        limit: 50,
+        limit: 20,
       });
       expect(result).toEqual([mockWhisper]);
     });
@@ -359,11 +359,10 @@ describe("WhisperService", () => {
 
   describe("deleteWhisper", () => {
     it("should delete whisper successfully", async () => {
-      await WhisperService.deleteWhisper("whisper-123", "user-123");
+      await WhisperService.deleteWhisper("whisper-123");
 
       expect(mockFirestoreService.deleteWhisper).toHaveBeenCalledWith(
-        "whisper-123",
-        "user-123"
+        "whisper-123"
       );
     });
 
@@ -372,9 +371,9 @@ describe("WhisperService", () => {
         new Error("Database error")
       );
 
-      await expect(
-        WhisperService.deleteWhisper("whisper-123", "user-123")
-      ).rejects.toThrow("Failed to delete whisper");
+      await expect(WhisperService.deleteWhisper("whisper-123")).rejects.toThrow(
+        "Failed to delete whisper"
+      );
     });
   });
 

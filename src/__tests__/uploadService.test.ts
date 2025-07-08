@@ -3,7 +3,11 @@ import {
   WhisperUploadData,
   UploadUtils,
 } from "../services/uploadService";
-import { WHISPER_VALIDATION } from "../constants/whisperValidation";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { collection, addDoc } from "firebase/firestore";
+
+// Declare global for TypeScript
+declare const global: any;
 
 // Mock Firebase modules
 const mockAuth = {
@@ -33,65 +37,33 @@ jest.mock("../config/firebase", () => ({
 
 // Mock Firebase functions directly
 jest.mock("firebase/storage", () => ({
-  ref: jest.fn(() => ({
-    put: jest.fn().mockResolvedValue({
-      ref: { getDownloadURL: jest.fn().mockResolvedValue("mock-url") },
-    }),
-  })),
-  uploadBytes: jest.fn().mockResolvedValue({
-    ref: { getDownloadURL: jest.fn().mockResolvedValue("mock-url") },
-  }),
-  uploadBytesResumable: jest.fn(() => ({
-    on: jest.fn((event, next, error) => {
-      if (event === "state_changed") {
-        // Simulate progress
-        next({
-          bytesTransferred: 512,
-          totalBytes: 1024,
-        });
-        // Simulate completion
-        next({
-          bytesTransferred: 1024,
-          totalBytes: 1024,
-        });
-      }
-      return Promise.resolve();
-    }),
-  })),
-  getDownloadURL: jest.fn().mockResolvedValue("mock-url"),
+  ref: jest.fn(),
+  uploadBytesResumable: jest.fn(),
+  getDownloadURL: jest.fn(),
 }));
 
 jest.mock("firebase/firestore", () => ({
-  collection: jest.fn(() => ({
-    addDoc: jest.fn().mockResolvedValue({ id: "test-doc-id" }),
-  })),
-  addDoc: jest.fn().mockResolvedValue({ id: "test-doc-id" }),
+  collection: jest.fn(),
+  addDoc: jest.fn(),
   serverTimestamp: jest.fn(() => new Date()),
 }));
 
 describe("UploadService", () => {
   let uploadService: UploadService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     uploadService = UploadService.getInstance();
     jest.clearAllMocks();
 
     // Reset Firebase function mocks to default behavior
-    const {
-      ref,
-      uploadBytesResumable,
-      getDownloadURL,
-    } = require("firebase/storage");
-    const { collection, addDoc } = require("firebase/firestore");
-
-    ref.mockImplementation(() => ({
+    (ref as jest.Mock).mockImplementation(() => ({
       put: jest.fn().mockResolvedValue({
         ref: { getDownloadURL: jest.fn().mockResolvedValue("mock-url") },
       }),
     }));
 
-    uploadBytesResumable.mockImplementation(() => ({
-      on: jest.fn((event, next, error) => {
+    (uploadBytesResumable as jest.Mock).mockImplementation(() => ({
+      on: jest.fn((event, next) => {
         if (event === "state_changed") {
           next({ bytesTransferred: 512, totalBytes: 1024 });
           next({ bytesTransferred: 1024, totalBytes: 1024 });
@@ -100,11 +72,11 @@ describe("UploadService", () => {
       }),
     }));
 
-    getDownloadURL.mockResolvedValue("mock-url");
-    collection.mockImplementation(() => ({
+    (getDownloadURL as jest.Mock).mockResolvedValue("mock-url");
+    (collection as jest.Mock).mockImplementation(() => ({
       addDoc: jest.fn().mockResolvedValue({ id: "test-doc-id" }),
     }));
-    addDoc.mockResolvedValue({ id: "test-doc-id" });
+    (addDoc as jest.Mock).mockResolvedValue({ id: "test-doc-id" });
   });
 
   describe("Singleton Pattern", () => {
@@ -263,27 +235,45 @@ describe("UploadService", () => {
       const result = await uploadService.uploadAudioFile(mockAudioUri);
 
       expect(result).toBe("mock-url");
-      const { ref } = require("firebase/storage");
-      expect(ref).toHaveBeenCalled();
+      expect(ref as jest.Mock).toHaveBeenCalled();
     });
 
     test("should handle upload error", async () => {
       const mockAudioUri = "file://mock-audio.m4a";
 
       // Mock storage error by overriding the uploadBytesResumable mock
-      const { uploadBytesResumable } = require("firebase/storage");
-      uploadBytesResumable.mockImplementation(() => ({
+      (uploadBytesResumable as jest.Mock).mockImplementation(() => ({
         on: jest.fn((event, next, error) => {
           if (event === "state_changed") {
             // Simulate error
-            error(new Error("Storage upload failed"));
+            error(new Error("Upload failed"));
           }
-          return Promise.reject(new Error("Storage upload failed"));
+          return Promise.resolve();
         }),
       }));
 
       await expect(uploadService.uploadAudioFile(mockAudioUri)).rejects.toThrow(
-        "Storage upload failed"
+        "Failed to upload audio: Upload failed"
+      );
+    });
+
+    test("should handle fetch error", async () => {
+      const mockAudioUri = "file://mock-audio.m4a";
+      global.fetch = jest.fn().mockRejectedValue(new Error("Network error"));
+      await expect(uploadService.uploadAudioFile(mockAudioUri)).rejects.toThrow(
+        "Failed to upload audio: Network error"
+      );
+    });
+
+    test("should handle getDownloadURL error", async () => {
+      const mockAudioUri = "file://mock-audio.m4a";
+      // Mock fetch to succeed so we reach getDownloadURL
+      global.fetch = jest.fn().mockResolvedValue({
+        blob: jest.fn().mockResolvedValue(new Blob(["mock audio data"])),
+      });
+      (getDownloadURL as jest.Mock).mockRejectedValue(new Error("URL error"));
+      await expect(uploadService.uploadAudioFile(mockAudioUri)).rejects.toThrow(
+        "Failed to upload audio: URL error"
       );
     });
   });
@@ -306,8 +296,10 @@ describe("UploadService", () => {
       );
 
       expect(result).toBe("test-doc-id");
-      const { collection } = require("firebase/firestore");
-      expect(collection).toHaveBeenCalledWith(expect.anything(), "whispers");
+      expect(collection as jest.Mock).toHaveBeenCalledWith(
+        expect.anything(),
+        "whispers"
+      );
     });
 
     test("should handle document creation error", async () => {
@@ -321,8 +313,7 @@ describe("UploadService", () => {
       };
 
       // Mock Firestore error by overriding the addDoc mock
-      const { addDoc } = require("firebase/firestore");
-      addDoc.mockRejectedValue(new Error("Firestore error"));
+      (addDoc as jest.Mock).mockRejectedValue(new Error("Firestore error"));
 
       await expect(
         uploadService.createWhisperDocument(mockAudioUrl, mockUploadData)

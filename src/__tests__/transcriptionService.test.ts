@@ -1,10 +1,10 @@
-import {
-  TranscriptionService,
-  TranscriptionOptions,
-} from "../services/transcriptionService";
+import { TranscriptionService } from "../services/transcriptionService";
 import { AudioConversionService } from "../services/audioConversionService";
 import { env } from "../config/environment";
 import { API_ENDPOINTS } from "../constants";
+
+// Declare global for TypeScript
+declare const global: any;
 
 jest.mock("../services/audioConversionService", () => ({
   AudioConversionService: {

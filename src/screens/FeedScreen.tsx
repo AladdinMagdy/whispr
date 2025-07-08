@@ -253,7 +253,7 @@ const FeedScreen = () => {
             setCurrentIndex(newIndex);
           }
         }
-      }, 200); // Increased debounce time to reduce re-renders
+      }, 500); // Increased debounce time to 500ms to reduce re-renders
     },
     [currentIndex]
   );
@@ -261,17 +261,18 @@ const FeedScreen = () => {
   // Memoize render item function to prevent unnecessary re-renders
   const renderItem = useCallback(
     ({ item, index }: ListRenderItemInfo<Whisper>) => {
-      const isActive = currentIndex === index;
+      // Use a function to get current index to avoid dependency issues
+      const getIsActive = () => currentIndex === index;
       return (
         <AudioSlide
           key={item.id}
           whisper={item}
           isVisible={true}
-          isActive={isActive}
+          isActive={getIsActive()}
         />
       );
     },
-    [currentIndex]
+    [currentIndex] // Keep this dependency but the issue is elsewhere
   );
 
   // Memoize key extractor
@@ -385,12 +386,12 @@ const FeedScreen = () => {
           }
           // Performance optimizations
           removeClippedSubviews={true}
-          maxToRenderPerBatch={2}
-          windowSize={3}
+          maxToRenderPerBatch={1}
+          windowSize={2}
           initialNumToRender={1}
-          updateCellsBatchingPeriod={100}
+          updateCellsBatchingPeriod={200}
           disableVirtualization={false}
-          scrollEventThrottle={32}
+          scrollEventThrottle={64}
           onScrollBeginDrag={() => {
             // Pause all audio when user starts scrolling
             pauseAllAudioSlides();

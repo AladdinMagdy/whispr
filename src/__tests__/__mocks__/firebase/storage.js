@@ -10,7 +10,7 @@ export const uploadBytes = jest.fn().mockResolvedValue({
 });
 
 export const uploadBytesResumable = jest.fn(() => ({
-  on: jest.fn((event, next, error) => {
+  on: jest.fn((event, next) => {
     if (event === "state_changed") {
       // Simulate progress
       next({

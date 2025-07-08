@@ -85,7 +85,7 @@ describe("AudioCacheService", () => {
 
       // Recreate service to trigger initialization
       resetAudioCacheService();
-      const newService = getAudioCacheService();
+      getAudioCacheService();
 
       // Wait for async initialization
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -384,7 +384,7 @@ describe("AudioCacheService", () => {
       const getCachedSpy = jest.spyOn(audioCacheService, "getCachedAudioUrl");
 
       // Manually set isPreloading to true to simulate ongoing preload
-      // @ts-ignore (accessing private state for test)
+      // @ts-expect-error (accessing private state for test)
       audioCacheService.state.isPreloading = true;
 
       // Try to preload while already preloading (should return immediately)
@@ -394,7 +394,7 @@ describe("AudioCacheService", () => {
       expect(getCachedSpy).not.toHaveBeenCalled();
 
       // Reset the flag
-      // @ts-ignore
+      // @ts-expect-error - accessing private state for test
       audioCacheService.state.isPreloading = false;
     });
 
@@ -468,7 +468,7 @@ describe("AudioCacheService", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Manually set the cache state to match the test's expectations
-      // @ts-ignore (accessing private state for test)
+      // @ts-expect-error (accessing private state for test)
       newService.state.cachedFiles = new Map([
         [
           "https://example.com/old1.mp3",
@@ -489,7 +489,7 @@ describe("AudioCacheService", () => {
           },
         ],
       ]);
-      // @ts-ignore
+      // @ts-expect-error - accessing private state for test
       newService.state.currentCacheSize = 90 * 1024 * 1024;
 
       // Call getCachedAudioUrl to trigger eviction

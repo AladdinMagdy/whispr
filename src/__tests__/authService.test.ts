@@ -8,6 +8,9 @@ import {
   resetAuthService,
   destroyAuthService,
 } from "../services/authService";
+import { getAuthInstance, getFirestoreInstance } from "../config/firebase";
+import { signInAnonymously, signOut } from "firebase/auth";
+import { setDoc, getDoc } from "firebase/firestore";
 
 // Mock Firebase modules
 jest.mock("../config/firebase", () => ({
@@ -43,18 +46,11 @@ describe("AuthService", () => {
   let mockSetDoc: jest.MockedFunction<any>;
   let mockGetDoc: jest.MockedFunction<any>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Reset singleton before each test
     destroyAuthService();
 
     // Get fresh mocks
-    const {
-      getAuthInstance,
-      getFirestoreInstance,
-    } = require("../config/firebase");
-    const { signInAnonymously, signOut } = require("firebase/auth");
-    const { setDoc, getDoc } = require("firebase/firestore");
-
     mockAuth = {
       currentUser: null,
       onAuthStateChanged: jest.fn(),
@@ -64,12 +60,12 @@ describe("AuthService", () => {
       doc: jest.fn(),
     };
 
-    getAuthInstance.mockReturnValue(mockAuth);
-    getFirestoreInstance.mockReturnValue(mockFirestore);
-    mockSignInAnonymously = signInAnonymously;
-    mockSignOut = signOut;
-    mockSetDoc = setDoc;
-    mockGetDoc = getDoc;
+    (getAuthInstance as jest.Mock).mockReturnValue(mockAuth);
+    (getFirestoreInstance as jest.Mock).mockReturnValue(mockFirestore);
+    mockSignInAnonymously = signInAnonymously as jest.Mock;
+    mockSignOut = signOut as jest.Mock;
+    mockSetDoc = setDoc as jest.Mock;
+    mockGetDoc = getDoc as jest.Mock;
 
     // Get fresh instance
     authService = getAuthService();
@@ -353,18 +349,6 @@ describe("AuthService", () => {
         onAuthStateChanged: mockOnAuthStateChanged,
         onError: mockOnError,
       });
-
-      // Simulate auth state change
-      const mockUser = {
-        uid: "test-uid",
-        displayName: "Test User",
-        isAnonymous: true,
-        createdAt: new Date(),
-        lastActiveAt: new Date(),
-        whisperCount: 0,
-        totalReactions: 0,
-        profileColor: "#FF0000",
-      };
 
       // This would normally be called by the Firebase auth listener
       // For testing, we'll just verify the callback is set

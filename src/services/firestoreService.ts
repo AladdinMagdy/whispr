@@ -668,7 +668,12 @@ export class FirestoreService {
   /**
    * Like a comment
    */
-  async likeComment(commentId: string, userId: string): Promise<void> {
+  async likeComment(
+    commentId: string,
+    userId: string,
+    userDisplayName?: string,
+    userProfileColor?: string
+  ): Promise<void> {
     try {
       const commentRef = doc(
         this.firestore,
@@ -687,11 +692,27 @@ export class FirestoreService {
 
       if (likeSnapshot.empty) {
         // User hasn't liked this comment yet - add like
-        await addDoc(collection(this.firestore, "commentLikes"), {
+        const likeData: {
+          commentId: string;
+          userId: string;
+          createdAt: FieldValue;
+          userDisplayName?: string;
+          userProfileColor?: string;
+        } = {
           commentId,
           userId,
           createdAt: serverTimestamp(),
-        });
+        };
+
+        // Add user display info if provided
+        if (userDisplayName) {
+          likeData.userDisplayName = userDisplayName;
+        }
+        if (userProfileColor) {
+          likeData.userProfileColor = userProfileColor;
+        }
+
+        await addDoc(collection(this.firestore, "commentLikes"), likeData);
 
         // Increment comment like count
         await updateDoc(commentRef, {

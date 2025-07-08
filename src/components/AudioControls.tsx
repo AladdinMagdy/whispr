@@ -1,77 +1,159 @@
-import React from "react";
+import React, { useMemo, useCallback, useEffect, useRef } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { Whisper } from "../types";
+import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
 
 interface AudioControlsProps {
   isPlaying: boolean;
-  progress: number;
-  duration: number;
   onPlayPause: () => void;
   onReplay: () => void;
   whisper: Whisper;
+  progressRef?: React.MutableRefObject<number>;
+  durationRef?: React.MutableRefObject<number>;
 }
 
-const AudioControls: React.FC<AudioControlsProps> = ({
-  isPlaying,
-  progress,
-  duration,
-  onPlayPause,
-  onReplay,
-  whisper,
-}) => {
-  const formatTime = (seconds: number = 0): string => {
-    const m = Math.floor(seconds / 60)
-      .toString()
-      .padStart(2, "0");
-    const s = Math.floor(seconds % 60)
-      .toString()
-      .padStart(2, "0");
-    return `${m}:${s}`;
-  };
+// Lightweight progress bar component that updates directly without re-renders
+const ProgressBar: React.FC<{
+  progressRef?: React.MutableRefObject<number>;
+  durationRef?: React.MutableRefObject<number>;
+}> = React.memo(({ progressRef, durationRef }) => {
+  // Add performance monitoring
+  usePerformanceMonitor("ProgressBar");
 
-  const progressPercentage = duration > 0 ? (progress / duration) * 100 : 0;
+  const progressFillRef = useRef<View>(null);
+  const progressTextRef = useRef<Text>(null);
+  const durationTextRef = useRef<Text>(null);
+  const lastProgressRef = useRef(0);
+  const lastDurationRef = useRef(0);
+
+  // Update progress directly without state changes
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!progressRef || !durationRef) return;
+
+      const currentProgress = progressRef.current;
+      const currentDuration = durationRef.current;
+
+      // Only update if values actually changed
+      if (
+        currentProgress !== lastProgressRef.current ||
+        currentDuration !== lastDurationRef.current
+      ) {
+        lastProgressRef.current = currentProgress;
+        lastDurationRef.current = currentDuration;
+
+        const formatTime = (seconds: number = 0): string => {
+          const m = Math.floor(seconds / 60)
+            .toString()
+            .padStart(2, "0");
+          const s = Math.floor(seconds % 60)
+            .toString()
+            .padStart(2, "0");
+          return `${m}:${s}`;
+        };
+
+        const progressPercentage =
+          currentDuration > 0 ? (currentProgress / currentDuration) * 100 : 0;
+
+        // Update progress bar width directly
+        if (progressFillRef.current) {
+          progressFillRef.current.setNativeProps({
+            style: { width: `${progressPercentage}%` },
+          });
+        }
+
+        // Update time text directly
+        if (progressTextRef.current) {
+          progressTextRef.current.setNativeProps({
+            text: formatTime(currentProgress),
+          });
+        }
+
+        if (durationTextRef.current) {
+          durationTextRef.current.setNativeProps({
+            text: formatTime(currentDuration),
+          });
+        }
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [progressRef, durationRef]);
 
   return (
-    <View style={styles.container}>
-      {/* User info */}
-      <View style={styles.userInfo}>
-        <Text style={styles.userName}>
-          {whisper.userDisplayName || "Anonymous"}
-        </Text>
-        <Text style={styles.whisperInfo}>
-          {whisper.whisperPercentage?.toFixed(1) || "0"}% whisper •{" "}
-          {formatTime(duration)}
-        </Text>
+    <View style={styles.progressContainer}>
+      <View style={styles.progressBar}>
+        <View
+          ref={progressFillRef}
+          style={[styles.progressFill, { width: "0%" }]}
+        />
       </View>
-
-      {/* Progress bar */}
-      <View style={styles.progressContainer}>
-        <View style={styles.progressBar}>
-          <View
-            style={[styles.progressFill, { width: `${progressPercentage}%` }]}
-          />
-        </View>
-        <View style={styles.timeInfo}>
-          <Text style={styles.timeText}>{formatTime(progress)}</Text>
-          <Text style={styles.timeText}>{formatTime(duration)}</Text>
-        </View>
-      </View>
-
-      {/* Control buttons */}
-      <View style={styles.controlsContainer}>
-        {/* Replay button */}
-        <TouchableOpacity style={styles.replayButton} onPress={onReplay}>
-          <Text style={styles.replayButtonText}>🔄</Text>
-        </TouchableOpacity>
-
-        {/* Play/Pause button */}
-        <TouchableOpacity style={styles.playButton} onPress={onPlayPause}>
-          <Text style={styles.playButtonText}>{isPlaying ? "⏸️" : "▶️"}</Text>
-        </TouchableOpacity>
+      <View style={styles.timeInfo}>
+        <Text ref={progressTextRef} style={styles.timeText}>
+          0:00
+        </Text>
+        <Text ref={durationTextRef} style={styles.timeText}>
+          0:00
+        </Text>
       </View>
     </View>
   );
-};
+});
+
+ProgressBar.displayName = "ProgressBar";
+
+const AudioControls: React.FC<AudioControlsProps> = React.memo(
+  ({ isPlaying, onPlayPause, onReplay, whisper, progressRef, durationRef }) => {
+    // Add performance monitoring
+    usePerformanceMonitor("AudioControls");
+
+    // Memoize user info to prevent re-renders
+    const userInfo = useMemo(
+      () => ({
+        userName: whisper.userDisplayName || "Mysterious Whisperer",
+        whisperInfo: `${whisper.whisperPercentage?.toFixed(1) || "0"}% whisper`,
+      }),
+      [whisper.userDisplayName, whisper.whisperPercentage]
+    );
+
+    // Memoize callback functions
+    const handlePlayPause = useCallback(() => {
+      onPlayPause();
+    }, [onPlayPause]);
+
+    const handleReplay = useCallback(() => {
+      onReplay();
+    }, [onReplay]);
+
+    return (
+      <View style={styles.container}>
+        {/* User info */}
+        <View style={styles.userInfo}>
+          <Text style={styles.userName}>{userInfo.userName}</Text>
+          <Text style={styles.whisperInfo}>{userInfo.whisperInfo}</Text>
+        </View>
+
+        {/* Progress bar - separate component for performance */}
+        <ProgressBar progressRef={progressRef} durationRef={durationRef} />
+
+        {/* Control buttons */}
+        <View style={styles.controlsContainer}>
+          {/* Replay button */}
+          <TouchableOpacity style={styles.replayButton} onPress={handleReplay}>
+            <Text style={styles.replayButtonText}>🔄</Text>
+          </TouchableOpacity>
+
+          {/* Play/Pause button */}
+          <TouchableOpacity style={styles.playButton} onPress={handlePlayPause}>
+            <Text style={styles.playButtonText}>{isPlaying ? "⏸️" : "▶️"}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+);
+
+AudioControls.displayName = "AudioControls";
 
 const styles = StyleSheet.create({
   container: {
@@ -104,31 +186,32 @@ const styles = StyleSheet.create({
   },
   progressContainer: {
     width: "100%",
+    height: 40,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    borderRadius: 20,
     marginBottom: 20,
+    overflow: "hidden",
   },
   progressBar: {
-    height: 4,
-    backgroundColor: "rgba(255, 255, 255, 0.3)",
-    borderRadius: 2,
+    height: "100%",
+    backgroundColor: "rgba(255, 255, 255, 0.5)",
+    borderRadius: 20,
     overflow: "hidden",
   },
   progressFill: {
     height: "100%",
-    backgroundColor: "#fff",
-    borderRadius: 2,
+    backgroundColor: "rgba(255, 255, 255, 1)",
   },
   timeInfo: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginTop: 8,
+    alignItems: "center",
+    paddingHorizontal: 10,
   },
   timeText: {
-    fontSize: 12,
+    fontSize: 16,
     color: "#fff",
-    opacity: 0.8,
-    textShadowColor: "rgba(0, 0, 0, 0.8)",
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+    opacity: 0.9,
   },
   controlsContainer: {
     flexDirection: "row",

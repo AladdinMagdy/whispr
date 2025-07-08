@@ -29,7 +29,7 @@ export const usePerformanceMonitor = (componentName: string) => {
     };
   }, []); // Empty dependency array - only runs on mount/unmount
 
-  // Track render performance - runs on every render but with proper cleanup
+  // Track render performance - runs on every render but efficiently
   useEffect(() => {
     if (!isMounted.current) return;
 
@@ -51,7 +51,7 @@ export const usePerformanceMonitor = (componentName: string) => {
     // Update last render time and reset timer for next render
     lastRenderTime.current = renderTime;
     renderStartTime.current = currentTime;
-  }); // No dependency array - runs on every render but with proper state management
+  }); // No dependency array - runs on every render but efficiently
 
   // Return performance data for external monitoring
   return {

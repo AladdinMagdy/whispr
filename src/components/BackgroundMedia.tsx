@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { View, Image, StyleSheet } from "react-native";
 import { Whisper } from "../types";
 
@@ -6,37 +6,52 @@ interface BackgroundMediaProps {
   whisper: Whisper;
 }
 
-const BackgroundMedia: React.FC<BackgroundMediaProps> = ({ whisper }) => {
-  // Generate a background image based on user profile color
-  const getBackgroundImage = () => {
-    const userColor = whisper.userProfileColor || "#007AFF";
-    const userName = whisper.userDisplayName || "Anonymous";
+const BackgroundMedia: React.FC<BackgroundMediaProps> = React.memo(
+  ({ whisper }) => {
+    // Memoize the background image URL to prevent unnecessary re-renders
+    const backgroundImageUrl = useMemo(() => {
+      const userColor = whisper.userProfileColor || "#007AFF";
+      const userName = whisper.userDisplayName || "Mysterious Whisperer";
 
-    // Create a gradient-like background using UI Avatars API
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(
-      userName
-    )}&background=${userColor.replace("#", "")}&color=fff&size=400&bold=true`;
-  };
+      // Create a gradient-like background using UI Avatars API
+      return `https://ui-avatars.com/api/?name=${encodeURIComponent(
+        userName
+      )}&background=${userColor.replace("#", "")}&color=fff&size=400&bold=true`;
+    }, [whisper.userProfileColor, whisper.userDisplayName]);
 
-  return (
-    <View style={styles.backgroundContainer}>
-      {/* Background image */}
-      <Image
-        source={{ uri: getBackgroundImage() }}
-        style={styles.backgroundImage}
-        resizeMode="cover"
-      />
+    return (
+      <View style={styles.backgroundContainer}>
+        {/* Background image */}
+        <Image
+          source={{ uri: backgroundImageUrl }}
+          style={styles.backgroundImage}
+          resizeMode="cover"
+          // Performance optimizations
+          fadeDuration={200}
+          key={backgroundImageUrl}
+        />
 
-      {/* Gradient overlay for better text readability */}
-      <View style={styles.gradientOverlay} />
+        {/* Gradient overlay for better text readability */}
+        <View style={styles.gradientOverlay} />
 
-      {/* Audio visualizer placeholder */}
-      <View style={styles.audioVisualizer}>
-        {/* TODO: Add real-time audio visualizer */}
+        {/* Audio visualizer placeholder */}
+        <View style={styles.audioVisualizer}>
+          {/* TODO: Add real-time audio visualizer */}
+        </View>
       </View>
-    </View>
-  );
-};
+    );
+  },
+  (prevProps, nextProps) => {
+    // Custom comparison function to prevent unnecessary re-renders
+    return (
+      prevProps.whisper.userProfileColor ===
+        nextProps.whisper.userProfileColor &&
+      prevProps.whisper.userDisplayName === nextProps.whisper.userDisplayName
+    );
+  }
+);
+
+BackgroundMedia.displayName = "BackgroundMedia";
 
 const styles = StyleSheet.create({
   backgroundContainer: {

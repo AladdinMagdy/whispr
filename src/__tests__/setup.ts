@@ -1,5 +1,8 @@
 import "react-native-gesture-handler/jestSetup";
 
+// Declare global for TypeScript
+declare const global: any;
+
 // jest-expo handles most Expo SDK mocking automatically
 // We only need to mock our specific dependencies
 
@@ -48,7 +51,7 @@ jest.mock("@react-native-async-storage/async-storage", () =>
 );
 
 // Mock console methods to reduce noise in tests
-global.console = {
+(global as any).console = {
   ...console,
   log: jest.fn(),
   debug: jest.fn(),

@@ -7,6 +7,7 @@ import {
   FirestoreService,
   getFirestoreService,
 } from "../services/firestoreService";
+import { addDoc, getDocs } from "firebase/firestore";
 
 // Mock the entire firebase/firestore module
 jest.mock("firebase/firestore", () => ({
@@ -107,8 +108,7 @@ describe("FirestoreService", () => {
 
   describe("Error Handling", () => {
     test("should handle errors gracefully in createWhisper", async () => {
-      const { addDoc } = require("firebase/firestore");
-      addDoc.mockRejectedValue(new Error("Test error"));
+      (addDoc as jest.Mock).mockRejectedValue(new Error("Test error"));
 
       const service = getFirestoreService();
 
@@ -124,8 +124,7 @@ describe("FirestoreService", () => {
     });
 
     test("should handle errors gracefully in getWhispers", async () => {
-      const { getDocs } = require("firebase/firestore");
-      getDocs.mockRejectedValue(new Error("Test error"));
+      (getDocs as jest.Mock).mockRejectedValue(new Error("Test error"));
 
       const service = getFirestoreService();
 
@@ -135,8 +134,7 @@ describe("FirestoreService", () => {
     });
 
     test("should handle unknown errors", async () => {
-      const { addDoc } = require("firebase/firestore");
-      addDoc.mockRejectedValue("Unknown error");
+      (addDoc as jest.Mock).mockRejectedValue("Unknown error");
 
       const service = getFirestoreService();
 
@@ -180,7 +178,7 @@ describe("FirestoreService", () => {
 
     test("should have correct deleteWhisper signature", () => {
       const service = getFirestoreService();
-      expect(service.deleteWhisper).toHaveLength(2);
+      expect(service.deleteWhisper).toHaveLength(1);
     });
 
     test("should have correct updateTranscription signature", () => {

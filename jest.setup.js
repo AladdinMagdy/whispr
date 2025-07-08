@@ -2,7 +2,6 @@
 
 const path = require('path');
 const fs = require('fs');
-const { configure } = require('@testing-library/react-native');
 const { TextEncoder, TextDecoder } = require('util');
 
 // Load test environment variables
@@ -28,10 +27,7 @@ if (fs.existsSync(testEnvPath)) {
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 process.env.EXPO_PUBLIC_APP_ENV = process.env.EXPO_PUBLIC_APP_ENV || 'test';
 
-// Configure testing library
-configure({
-  testIdAttribute: 'testID',
-});
+// Testing library configuration moved to setup.ts
 
 // Mock expo-av
 jest.mock('expo-av', () => ({

@@ -50,6 +50,8 @@ export interface CommentLike {
   id: string;
   commentId: string;
   userId: string;
+  userDisplayName?: string;
+  userProfileColor?: string;
   createdAt: Date;
 }
 

@@ -4,7 +4,6 @@
  */
 
 import {
-  RecordingService,
   getRecordingService,
   resetRecordingService,
   destroyRecordingService,
@@ -92,7 +91,6 @@ describe("RecordingService", () => {
     service.setCallbacks({ onAudioLevelChange, onDurationChange });
     // Simulate metering event
     service["audioLevels"] = [];
-    const fakeEvent = { currentMetering: 0.05, currentPosition: 1000 };
     service["recordingStartTime"] = Date.now() - 1000;
     // Manually call the listener logic
     // (simulate what addRecordBackListener would do)
