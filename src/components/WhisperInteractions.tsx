@@ -141,16 +141,16 @@ const CommentItem = React.memo<CommentItemProps>(
     const [commentLikesLastDoc, setCommentLikesLastDoc] =
       useState<unknown>(null);
 
-    const interactionService = getInteractionService();
-    const firestoreService = getFirestoreService();
+    // Use refs to prevent infinite loops
+    const interactionServiceRef = useRef(getInteractionService());
+    const firestoreServiceRef = useRef(getFirestoreService());
 
     // Load comment like state on mount
     useEffect(() => {
       const loadCommentLikeState = async () => {
         try {
-          const isLiked = await interactionService.hasUserLikedComment(
-            comment.id
-          );
+          const isLiked =
+            await interactionServiceRef.current.hasUserLikedComment(comment.id);
           setIsLiked(isLiked);
           setLikeCount(comment.likes);
         } catch (error) {
@@ -161,14 +161,14 @@ const CommentItem = React.memo<CommentItemProps>(
       };
 
       loadCommentLikeState();
-    }, [comment.id, comment.likes, interactionService]);
+    }, [comment.id, comment.likes]); // Remove service dependencies
 
     // Real-time comment likes modal
     useEffect(() => {
       let unsubscribe: (() => void) | undefined;
       if (showCommentLikes) {
         setLoadingCommentLikes(true);
-        unsubscribe = firestoreService.subscribeToCommentLikes(
+        unsubscribe = firestoreServiceRef.current.subscribeToCommentLikes(
           comment.id,
           (likes) => {
             setCommentLikes(likes);
@@ -179,32 +179,20 @@ const CommentItem = React.memo<CommentItemProps>(
       return () => {
         if (unsubscribe) unsubscribe();
       };
-    }, [showCommentLikes, comment.id, firestoreService]);
+    }, [showCommentLikes, comment.id]); // Remove service dependency
 
     const handleLike = useCallback(async () => {
       try {
-        const result = await interactionService.toggleCommentLike(comment.id);
+        const result = await interactionServiceRef.current.toggleCommentLike(
+          comment.id
+        );
         setIsLiked(result.isLiked);
         setLikeCount(result.count);
         onLikeComment(comment.id);
-
-        // Refresh the comment data to ensure we have the latest count
-        setTimeout(async () => {
-          try {
-            const currentComment = await interactionService.getComment(
-              comment.id
-            );
-            if (currentComment) {
-              setLikeCount(currentComment.likes);
-            }
-          } catch (error) {
-            console.error("Error refreshing comment like count:", error);
-          }
-        }, 1000); // Small delay to ensure server has updated
       } catch (error) {
         console.error("Error liking comment:", error);
       }
-    }, [comment.id, interactionService, onLikeComment]);
+    }, [comment.id, onLikeComment]);
 
     const handleDelete = useCallback(() => {
       Alert.alert(
@@ -227,7 +215,7 @@ const CommentItem = React.memo<CommentItemProps>(
         setLoadingCommentLikes(true);
 
         try {
-          const result = await interactionService.getCommentLikes(
+          const result = await interactionServiceRef.current.getCommentLikes(
             comment.id,
             20,
             reset ? null : commentLikesLastDoc
@@ -247,13 +235,7 @@ const CommentItem = React.memo<CommentItemProps>(
           setLoadingCommentLikes(false);
         }
       },
-      [
-        comment.id,
-        interactionService,
-        loadingCommentLikes,
-        commentLikes,
-        commentLikesLastDoc,
-      ]
+      [comment.id, loadingCommentLikes, commentLikes, commentLikesLastDoc]
     );
 
     const handleShowCommentLikes = useCallback(() => {
@@ -422,13 +404,18 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
     const [commentsHasMore, setCommentsHasMore] = useState(true);
     const [commentsLastDoc, setCommentsLastDoc] = useState<unknown>(null);
 
-    const interactionService = getInteractionService();
-    const firestoreService = getFirestoreService();
+    // Use refs to prevent infinite loops
+    const interactionServiceRef = useRef(getInteractionService());
+    const firestoreServiceRef = useRef(getFirestoreService());
+    const likesLoadedRef = useRef(false);
+    const loadLikesRef = useRef<((reset?: boolean) => Promise<void>) | null>(
+      null
+    );
 
     // Real-time like and comment count for whisper
     useEffect(() => {
       const whisperDocRef = doc(
-        firestoreService["firestore"],
+        firestoreServiceRef.current["firestore"],
         "whispers",
         whisper.id
       );
@@ -440,17 +427,18 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
         }
       });
       return () => unsubscribe();
-    }, [whisper.id, firestoreService]);
+    }, [whisper.id]);
 
     // Real-time comments modal
     useEffect(() => {
       let unsubscribe: (() => void) | undefined;
       if (showComments) {
         setLoadingComments(true);
-        unsubscribe = firestoreService.subscribeToComments(
+        unsubscribe = firestoreServiceRef.current.subscribeToComments(
           whisper.id,
-          (comments) => {
-            setComments(comments);
+          (newComments) => {
+            // Simply replace the comments array - the server has the authoritative data
+            setComments(newComments);
             setLoadingComments(false);
           }
         );
@@ -458,14 +446,14 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
       return () => {
         if (unsubscribe) unsubscribe();
       };
-    }, [showComments, whisper.id, firestoreService]);
+    }, [showComments, whisper.id]);
 
     // Real-time likes modal
     useEffect(() => {
       let unsubscribe: (() => void) | undefined;
       if (showLikes) {
         setLoadingLikes(true);
-        unsubscribe = firestoreService.subscribeToWhisperLikes(
+        unsubscribe = firestoreServiceRef.current.subscribeToWhisperLikes(
           whisper.id,
           (likes) => {
             setLikes(likes);
@@ -476,7 +464,7 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
       return () => {
         if (unsubscribe) unsubscribe();
       };
-    }, [showLikes, whisper.id, firestoreService]);
+    }, [showLikes, whisper.id]);
 
     // Check if user has liked this whisper and update counts when whisper changes
     useEffect(() => {
@@ -486,9 +474,11 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
         setCommentCount(whisper.replies);
 
         // Check if user has liked this whisper (cached)
-        if (user) {
+        if (user?.uid) {
           try {
-            const hasLiked = await interactionService.hasUserLiked(whisper.id);
+            const hasLiked = await interactionServiceRef.current.hasUserLiked(
+              whisper.id
+            );
             setIsLiked(hasLiked);
           } catch (error) {
             console.error("Error loading like state:", error);
@@ -500,7 +490,57 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
       };
 
       loadLikeState();
-    }, [whisper.id, whisper.likes, whisper.replies, user, interactionService]);
+    }, [whisper.id, whisper.likes, whisper.replies, user?.uid]); // Use user?.uid instead of user
+
+    // Load paginated likes with deduplication
+    const loadLikes = useCallback(
+      async (reset = false) => {
+        if (loadingLikes) return;
+        setLoadingLikes(true);
+
+        try {
+          const result = await interactionServiceRef.current.getLikes(
+            whisper.id,
+            20,
+            reset ? null : likesLastDoc
+          );
+
+          if (reset) {
+            setLikes(result.likes);
+          } else {
+            // Deduplicate likes by ID
+            const existingIds = new Set(likes.map((l) => l.id));
+            const newLikes = result.likes.filter((l) => !existingIds.has(l.id));
+            setLikes((prev) => [...prev, ...newLikes]);
+          }
+
+          setLikesHasMore(result.hasMore);
+          setLikesLastDoc(result.lastDoc);
+        } catch (error) {
+          console.error("Error loading likes:", error);
+          Alert.alert("Error", "Failed to load likes");
+        } finally {
+          setLoadingLikes(false);
+        }
+      },
+      [loadingLikes, whisper.id, likes, likesLastDoc] // Remove interactionServiceRef dependency
+    );
+
+    // Store the function in ref to avoid dependency issues
+    loadLikesRef.current = loadLikes;
+
+    // Reset likes when modal opens - use ref to prevent infinite loop
+    useEffect(() => {
+      if (showLikes && !likesLoadedRef.current) {
+        setLikes([]);
+        setLikesHasMore(true);
+        setLikesLastDoc(null);
+        likesLoadedRef.current = true;
+        loadLikesRef.current?.(true);
+      } else if (!showLikes) {
+        likesLoadedRef.current = false;
+      }
+    }, [showLikes, whisper.id]); // Now we don't need loadLikes dependency
 
     const handleLike = async () => {
       if (!user) {
@@ -510,10 +550,12 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
 
       try {
         // Use optimized interaction service with caching and optimistic updates
-        const result = await interactionService.toggleLike(whisper.id);
+        const result = await interactionServiceRef.current.toggleLike(
+          whisper.id
+        );
 
         setIsLiked(result.isLiked);
-        setLikeCount(result.count);
+        // Don't set like count here - let the real-time listener handle it
         onLikeChange?.(result.isLiked, result.count);
       } catch (error) {
         console.error("Error liking whisper:", error);
@@ -526,7 +568,7 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
       if (loadingComments) return;
       setLoadingComments(true);
       try {
-        const result = await interactionService.getComments(
+        const result = await interactionServiceRef.current.getComments(
           whisper.id,
           20,
           null
@@ -565,28 +607,15 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
       setSubmittingComment(true);
       try {
         const text = newComment.trim();
-        const result = await interactionService.addComment(whisper.id, text);
+        await interactionServiceRef.current.addComment(whisper.id, text);
 
         setNewComment("");
-        // Optimistically update comment count and list
+        // Optimistically update comment count
         setCommentCount((prev) => prev + 1);
         onCommentChange?.(commentCount + 1);
-        setComments((prev) => [
-          {
-            id: result.commentId,
-            whisperId: whisper.id,
-            userId: user.uid,
-            userDisplayName: user.displayName,
-            userProfileColor: user.profileColor,
-            text,
-            likes: 0,
-            createdAt: new Date(),
-            isEdited: false,
-          },
-          ...prev,
-        ]);
-        // Optionally, reload from server in background
-        setTimeout(() => loadInitialComments(), 1500);
+
+        // Don't add optimistic comment to UI - let the real-time listener handle it
+        // This prevents the duplicate issue entirely
       } catch (error) {
         console.error("Error adding comment:", error);
         Alert.alert("Error", "Failed to add comment");
@@ -599,7 +628,7 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
       if (!user) return;
 
       try {
-        const result = await interactionService.deleteComment(
+        const result = await interactionServiceRef.current.deleteComment(
           commentId,
           whisper.id
         );
@@ -621,9 +650,8 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
     const handleValidateLikeCount = async () => {
       try {
         console.log("🔍 Validating like count for whisper:", whisper.id);
-        const actualCount = await firestoreService.validateAndFixLikeCount(
-          whisper.id
-        );
+        const actualCount =
+          await firestoreServiceRef.current.validateAndFixLikeCount(whisper.id);
 
         // Update local state
         setLikeCount(actualCount);
@@ -639,52 +667,18 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
       }
     };
 
-    // Load paginated likes with deduplication
-    const loadLikes = useCallback(
-      async (reset = false) => {
-        if (loadingLikes) return;
-        setLoadingLikes(true);
-
-        try {
-          const result = await interactionService.getLikes(
-            whisper.id,
-            20,
-            reset ? null : likesLastDoc
-          );
-
-          if (reset) {
-            setLikes(result.likes);
-          } else {
-            // Deduplicate likes by ID
-            const existingIds = new Set(likes.map((l) => l.id));
-            const newLikes = result.likes.filter((l) => !existingIds.has(l.id));
-            setLikes((prev) => [...prev, ...newLikes]);
-          }
-
-          setLikesHasMore(result.hasMore);
-          setLikesLastDoc(result.lastDoc);
-        } catch (error) {
-          console.error("Error loading likes:", error);
-          Alert.alert("Error", "Failed to load likes");
-        } finally {
-          setLoadingLikes(false);
-        }
-      },
-      [loadingLikes, interactionService, whisper.id, likes, likesLastDoc]
-    );
-
     // Load paginated comments with deduplication
     const loadMoreComments = async () => {
       if (loadingComments || !commentsHasMore) return;
       setLoadingComments(true);
       try {
-        const result = await interactionService.getComments(
+        const result = await interactionServiceRef.current.getComments(
           whisper.id,
           20,
           commentsLastDoc
         );
 
-        // Deduplicate comments by ID
+        // Deduplicate comments by ID to prevent duplicates
         const existingIds = new Set(comments.map((c) => c.id));
         const newComments = result.comments.filter(
           (c) => !existingIds.has(c.id)
@@ -700,16 +694,6 @@ const WhisperInteractions = React.memo<WhisperInteractionsProps>(
         setLoadingComments(false);
       }
     };
-
-    // Reset likes/comments when modal opens
-    useEffect(() => {
-      if (showLikes) {
-        setLikes([]);
-        setLikesHasMore(true);
-        setLikesLastDoc(null);
-        loadLikes(true);
-      }
-    }, [showLikes, whisper.id, loadLikes]);
 
     return (
       <View style={styles.container}>
