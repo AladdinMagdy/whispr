@@ -49,8 +49,14 @@ const FeedScreen = () => {
   const flatListRef = useRef<FlatList<Whisper>>(null);
 
   // FeedStore for persistent caching
-  const { whispers, lastDoc, hasMore, isCacheValid, addNewWhisper } =
-    useFeedStore();
+  const {
+    whispers,
+    lastDoc,
+    hasMore,
+    isCacheValid,
+    addNewWhisper,
+    updateWhisper,
+  } = useFeedStore();
 
   // Helper function to format time
   const formatTime = useCallback((seconds: number): string => {
@@ -258,21 +264,36 @@ const FeedScreen = () => {
     [currentIndex]
   );
 
+  // Callback to update whisper data in the store
+  const handleWhisperUpdate = useCallback(
+    (updatedWhisper: { id: string; replies: number }) => {
+      updateWhisper(updatedWhisper);
+    },
+    [updateWhisper]
+  );
+
   // Memoize render item function to prevent unnecessary re-renders
   const renderItem = useCallback(
     ({ item, index }: ListRenderItemInfo<Whisper>) => {
       // Use a function to get current index to avoid dependency issues
       const getIsActive = () => currentIndex === index;
+      console.log(
+        "[FeedScreen] renderItem:",
+        item.id,
+        "replies:",
+        item.replies
+      );
       return (
         <AudioSlide
           key={item.id}
           whisper={item}
           isVisible={true}
           isActive={getIsActive()}
+          onWhisperUpdate={handleWhisperUpdate}
         />
       );
     },
-    [currentIndex] // Keep this dependency but the issue is elsewhere
+    [currentIndex, handleWhisperUpdate] // Keep this dependency but the issue is elsewhere
   );
 
   // Memoize key extractor

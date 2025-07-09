@@ -56,6 +56,7 @@ interface FeedState {
   isCacheValid: () => boolean;
   clearCache: () => void;
   addNewWhisper: (whisper: Whisper) => void;
+  updateWhisper: (updatedWhisper: Partial<Whisper> & { id: string }) => void;
   updateCache: (
     whispers: Whisper[],
     lastDoc: QueryDocumentSnapshot<DocumentData> | null,
@@ -106,6 +107,24 @@ export const useFeedStore = create<FeedState>()(
         const updatedWhispers = [whisper, ...whispers.slice(0, 19)]; // Keep only 20
         set({ whispers: updatedWhispers });
         console.log("➕ New whisper added to feed cache");
+      },
+
+      updateWhisper: (updatedWhisper) => {
+        const { whispers } = get();
+        const before = whispers.find((w) => w.id === updatedWhisper.id);
+        const updatedWhispers = whispers.map((whisper) =>
+          whisper.id === updatedWhisper.id
+            ? { ...whisper, ...updatedWhisper } // Merge with existing whisper data
+            : whisper
+        );
+        const after = updatedWhispers.find((w) => w.id === updatedWhisper.id);
+        set({ whispers: updatedWhispers });
+        console.log(
+          "[FeedStore] updateWhisper: before=",
+          before,
+          "after=",
+          after
+        );
       },
 
       updateCache: (whispers, lastDoc, hasMore) => {

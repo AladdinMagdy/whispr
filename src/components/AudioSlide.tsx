@@ -37,11 +37,18 @@ interface AudioSlideProps {
   whisper: Whisper;
   isVisible: boolean;
   isActive: boolean;
+  onWhisperUpdate?: (updatedWhisper: { id: string; replies: number }) => void;
   forceCleanupOnUnmount?: boolean; // test-only
 }
 
 const AudioSlide: React.FC<AudioSlideProps> = React.memo(
-  ({ whisper, isVisible, isActive, forceCleanupOnUnmount }) => {
+  ({
+    whisper,
+    isVisible,
+    isActive,
+    onWhisperUpdate,
+    forceCleanupOnUnmount,
+  }) => {
     // Add performance monitoring
     usePerformanceMonitor("AudioSlide");
 
@@ -320,10 +327,13 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
           />
 
           {/* Whisper interactions */}
-          <WhisperInteractions whisper={whisper} />
+          <WhisperInteractions
+            whisper={whisper}
+            onWhisperUpdate={onWhisperUpdate}
+          />
         </>
       ),
-      [isPlaying, whisper, handlePlayPause, handleReplay]
+      [isPlaying, whisper, handlePlayPause, handleReplay, onWhisperUpdate]
     );
 
     return <View style={styles.slide}>{renderContent}</View>;
@@ -332,6 +342,8 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
     // Custom comparison function to prevent unnecessary re-renders
     return (
       prevProps.whisper.id === nextProps.whisper.id &&
+      prevProps.whisper.likes === nextProps.whisper.likes &&
+      prevProps.whisper.replies === nextProps.whisper.replies &&
       prevProps.isVisible === nextProps.isVisible &&
       prevProps.isActive === nextProps.isActive
     );
