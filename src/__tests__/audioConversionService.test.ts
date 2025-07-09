@@ -1,4 +1,5 @@
 import { AudioConversionService } from "../services/audioConversionService";
+import * as fileUtils from "../utils/fileUtils";
 import * as FileSystem from "expo-file-system";
 
 // Mock expo-file-system
@@ -113,10 +114,7 @@ describe("AudioConversionService", () => {
 
     it("should return false on error", async () => {
       // Mock extractFileExtension to throw
-      const spy = jest.spyOn(
-        AudioConversionService as any,
-        "extractFileExtension"
-      );
+      const spy = jest.spyOn(fileUtils, "extractFileExtension");
       spy.mockImplementation(() => {
         throw new Error("Test error");
       });
@@ -124,56 +122,47 @@ describe("AudioConversionService", () => {
       const audioUri = "file://test.mp3";
       const result = await AudioConversionService.isCompatibleFormat(audioUri);
       expect(result).toBe(false);
+      spy.mockRestore();
     });
   });
 
   describe("extractFileExtension", () => {
     it("should extract extension from simple URL", () => {
-      const result = (AudioConversionService as any).extractFileExtension(
-        "file://test.mp3"
-      );
+      const result = fileUtils.extractFileExtension("file://test.mp3");
       expect(result).toBe("mp3");
     });
 
     it("should handle URLs with query parameters", () => {
-      const result = (AudioConversionService as any).extractFileExtension(
+      const result = fileUtils.extractFileExtension(
         "https://example.com/audio.mp3?token=abc"
       );
       expect(result).toBe("mp3");
     });
 
     it("should handle URLs with multiple dots", () => {
-      const result = (AudioConversionService as any).extractFileExtension(
-        "file://my.audio.file.mp3"
-      );
+      const result = fileUtils.extractFileExtension("file://my.audio.file.mp3");
       expect(result).toBe("mp3");
     });
 
     it("should return empty string for URLs without extension", () => {
-      const result = (AudioConversionService as any).extractFileExtension(
+      const result = fileUtils.extractFileExtension(
         "https://example.com/audio"
-      );
-      expect(result).toBe("com/audio");
-    });
-
-    it("should return empty string for URLs ending with dot", () => {
-      const result = (AudioConversionService as any).extractFileExtension(
-        "file://test."
       );
       expect(result).toBe("");
     });
 
+    it("should return empty string for URLs ending with dot", () => {
+      const result = fileUtils.extractFileExtension("file://test.");
+      expect(result).toBe("");
+    });
+
     it("should handle case and return lowercase", () => {
-      const result = (AudioConversionService as any).extractFileExtension(
-        "file://test.MP3"
-      );
+      const result = fileUtils.extractFileExtension("file://test.MP3");
       expect(result).toBe("mp3");
     });
 
     it("should return empty string on error", () => {
-      const result = (AudioConversionService as any).extractFileExtension(
-        null as any
-      );
+      const result = fileUtils.extractFileExtension(null as any);
       expect(result).toBe("");
     });
   });
@@ -297,7 +286,7 @@ describe("AudioConversionService", () => {
       );
       expect(result).toEqual({
         isValid: false,
-        error: "File too large: 30.00MB (max 25MB)",
+        error: "File too large: 30 MB (max 25MB)",
         size: 30 * 1024 * 1024,
         format: "mp3",
       });
@@ -370,14 +359,14 @@ describe("AudioConversionService", () => {
     });
 
     it("should handle URLs with only query parameters", () => {
-      const result = (AudioConversionService as any).extractFileExtension(
+      const result = fileUtils.extractFileExtension(
         "https://example.com/?param=value"
       );
-      expect(result).toBe("com/");
+      expect(result).toBe("");
     });
 
     it("should handle URLs with multiple query parameters", () => {
-      const result = (AudioConversionService as any).extractFileExtension(
+      const result = fileUtils.extractFileExtension(
         "https://example.com/audio.mp3?param1=value1&param2=value2"
       );
       expect(result).toBe("mp3");

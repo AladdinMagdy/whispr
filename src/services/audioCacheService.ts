@@ -3,10 +3,10 @@
  * Downloads and caches audio files locally for faster playback
  */
 
-import * as DefaultFileSystem from "expo-file-system";
-import type { FileInfo } from "expo-file-system";
+import * as FileSystem from "expo-file-system";
+import { getFileExtension } from "../utils/fileUtils";
 
-// Local type definition for audio tracks
+// Types
 export interface AudioTrack {
   id: string;
   title: string;
@@ -30,6 +30,14 @@ interface AudioCacheState {
   isPreloading: boolean;
 }
 
+interface FileInfo {
+  exists: boolean;
+  size?: number;
+}
+
+// Default file system for dependency injection
+const DefaultFileSystem = FileSystem;
+
 // Utility: Hash string for filename
 export function hashString(str: string): string {
   let hash = 0;
@@ -39,12 +47,6 @@ export function hashString(str: string): string {
     hash = hash & hash; // Convert to 32-bit integer
   }
   return Math.abs(hash).toString(36);
-}
-
-// Utility: Get file extension from URL
-export function getFileExtension(url: string): string {
-  const match = url.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
-  return match ? `.${match[1]}` : ".mp3";
 }
 
 export class AudioCacheService {
@@ -198,6 +200,102 @@ export class AudioCacheService {
   }
 
   /**
+   * Handle local file caching
+   */
+  private async handleLocalFileCache(
+    originalUrl: string,
+    localPath: string
+  ): Promise<string> {
+    // Local file, just copy it to cache if not already there
+    if (originalUrl !== localPath) {
+      await this.fileSystem.copyAsync({ from: originalUrl, to: localPath });
+    }
+
+    const fileInfo = (await this.fileSystem.getInfoAsync(localPath, {
+      size: true,
+    })) as FileInfo;
+
+    const fileSize =
+      fileInfo.exists && typeof fileInfo.size === "number" ? fileInfo.size : 0;
+
+    await this.manageCacheSize(fileSize);
+
+    const cachedAudio: CachedAudio = {
+      originalUrl,
+      localPath,
+      downloadTime: Date.now(),
+      fileSize,
+    };
+
+    this.state.cachedFiles.set(originalUrl, cachedAudio);
+    this.state.currentCacheSize += fileSize;
+    await this.saveCacheMetadata();
+
+    console.log(
+      `✅ Local audio cached: ${originalUrl} (${(
+        fileSize /
+        1024 /
+        1024
+      ).toFixed(2)}MB)`
+    );
+
+    return localPath;
+  }
+
+  /**
+   * Handle remote file downloading
+   */
+  private async handleRemoteFileDownload(
+    originalUrl: string,
+    localPath: string
+  ): Promise<string> {
+    // Remote file, download
+    const result = await this.fileSystem.downloadAsync(originalUrl, localPath);
+
+    if (result.status !== 200) {
+      console.error(`❌ Download failed with status: ${result.status}`);
+      return originalUrl;
+    }
+
+    // Get file info for size calculation
+    const fileInfo = (await this.fileSystem.getInfoAsync(localPath, {
+      size: true,
+    })) as FileInfo;
+
+    if (!fileInfo.exists) {
+      console.error("❌ Downloaded file not found");
+      return originalUrl;
+    }
+
+    const fileSize = typeof fileInfo.size === "number" ? fileInfo.size : 0;
+
+    // Manage cache size before adding new file
+    await this.manageCacheSize(fileSize);
+
+    // Add to cache
+    const cachedAudio: CachedAudio = {
+      originalUrl,
+      localPath,
+      downloadTime: Date.now(),
+      fileSize,
+    };
+
+    this.state.cachedFiles.set(originalUrl, cachedAudio);
+    this.state.currentCacheSize += fileSize;
+
+    // Save metadata
+    await this.saveCacheMetadata();
+
+    console.log(
+      `✅ Audio cached: ${originalUrl} (${(fileSize / 1024 / 1024).toFixed(
+        2
+      )}MB)`
+    );
+
+    return localPath;
+  }
+
+  /**
    * Download and cache audio file
    */
   private async downloadAndCache(originalUrl: string): Promise<string> {
@@ -210,80 +308,9 @@ export class AudioCacheService {
       const localPath = `${this.cacheDir}${fileHash}${fileExtension}`;
 
       if (originalUrl.startsWith("file://")) {
-        // Local file, just copy it to cache if not already there
-        if (originalUrl !== localPath) {
-          await this.fileSystem.copyAsync({ from: originalUrl, to: localPath });
-        }
-        const fileInfo = (await this.fileSystem.getInfoAsync(localPath, {
-          size: true,
-        })) as FileInfo;
-        const fileSize =
-          fileInfo.exists && typeof fileInfo.size === "number"
-            ? fileInfo.size
-            : 0;
-        await this.manageCacheSize(fileSize);
-        const cachedAudio: CachedAudio = {
-          originalUrl,
-          localPath,
-          downloadTime: Date.now(),
-          fileSize,
-        };
-        this.state.cachedFiles.set(originalUrl, cachedAudio);
-        this.state.currentCacheSize += fileSize;
-        await this.saveCacheMetadata();
-        console.log(
-          `✅ Local audio cached: ${originalUrl} (${(
-            fileSize /
-            1024 /
-            1024
-          ).toFixed(2)}MB)`
-        );
-        return localPath;
+        return await this.handleLocalFileCache(originalUrl, localPath);
       } else {
-        // Remote file, download
-        const result = await this.fileSystem.downloadAsync(
-          originalUrl,
-          localPath
-        );
-
-        if (result.status !== 200) {
-          console.error(`❌ Download failed with status: ${result.status}`);
-          return originalUrl;
-        }
-
-        // Get file info for size calculation
-        const fileInfo = (await this.fileSystem.getInfoAsync(localPath, {
-          size: true,
-        })) as FileInfo;
-        if (!fileInfo.exists) {
-          console.error("❌ Downloaded file not found");
-          return originalUrl;
-        }
-        const fileSize = typeof fileInfo.size === "number" ? fileInfo.size : 0;
-
-        // Manage cache size before adding new file
-        await this.manageCacheSize(fileSize);
-
-        // Add to cache
-        const cachedAudio: CachedAudio = {
-          originalUrl,
-          localPath,
-          downloadTime: Date.now(),
-          fileSize,
-        };
-
-        this.state.cachedFiles.set(originalUrl, cachedAudio);
-        this.state.currentCacheSize += fileSize;
-
-        // Save metadata
-        await this.saveCacheMetadata();
-
-        console.log(
-          `✅ Audio cached: ${originalUrl} (${(fileSize / 1024 / 1024).toFixed(
-            2
-          )}MB)`
-        );
-        return localPath;
+        return await this.handleRemoteFileDownload(originalUrl, localPath);
       }
     } catch (error) {
       console.error(`❌ Error downloading audio ${originalUrl}:`, error);
@@ -292,7 +319,7 @@ export class AudioCacheService {
   }
 
   /**
-   * Preload next N tracks intelligently
+   * Preload audio tracks for smooth playback
    */
   async preloadTracks(
     tracks: AudioTrack[],
@@ -300,80 +327,31 @@ export class AudioCacheService {
     preloadCount: number = 5
   ): Promise<void> {
     if (this.state.isPreloading) {
-      console.log("⏳ Already preloading, skipping...");
-      return;
-    }
-
-    // Validate inputs
-    if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
-      console.warn("❌ Invalid tracks array provided to preloadTracks");
-      return;
-    }
-
-    if (typeof currentIndex !== "number" || currentIndex < 0) {
-      console.warn(
-        "❌ Invalid currentIndex provided to preloadTracks:",
-        currentIndex
-      );
-      return;
+      return; // Already preloading
     }
 
     this.state.isPreloading = true;
-    console.log(
-      `🚀 Starting preload of ${preloadCount} tracks from index ${currentIndex}`
-    );
 
     try {
+      const startIndex = Math.max(0, currentIndex);
+      const endIndex = Math.min(tracks.length - 1, currentIndex + preloadCount);
+
       const preloadPromises: Promise<void>[] = [];
 
-      // Preload next N tracks
-      for (let i = 1; i <= preloadCount; i++) {
-        const trackIndex = currentIndex + i;
-        if (trackIndex < tracks.length) {
-          const track = tracks[trackIndex];
-          if (track && track.url) {
-            preloadPromises.push(
-              this.getCachedAudioUrl(track.url)
-                .then(() => {
-                  console.log(
-                    `✅ Preloaded track ${trackIndex}: ${track.title}`
-                  );
-                })
-                .catch((error) => {
-                  console.warn(
-                    `⚠️ Failed to preload track ${trackIndex}:`,
-                    error
-                  );
-                })
-            );
-          }
-        }
-      }
-
-      // Also preload first N tracks if we're at the beginning
-      if (currentIndex < preloadCount) {
-        for (let i = 0; i < preloadCount && i < tracks.length; i++) {
-          if (i !== currentIndex) {
-            const track = tracks[i];
-            if (track && track.url) {
-              preloadPromises.push(
-                this.getCachedAudioUrl(track.url)
-                  .then(() => {
-                    console.log(`✅ Preloaded track ${i}: ${track.title}`);
-                  })
-                  .catch((error) => {
-                    console.warn(`⚠️ Failed to preload track ${i}:`, error);
-                  })
-              );
-            }
-          }
+      for (let i = startIndex; i <= endIndex; i++) {
+        const track = tracks[i];
+        if (track && track.url) {
+          preloadPromises.push(
+            this.getCachedAudioUrl(track.url).then(() => {
+              console.log(`📦 Preloaded track: ${track.id}`);
+            })
+          );
         }
       }
 
       await Promise.allSettled(preloadPromises);
-      console.log("🎉 Preload completed");
     } catch (error) {
-      console.error("❌ Error during preload:", error);
+      console.error("❌ Error preloading tracks:", error);
     } finally {
       this.state.isPreloading = false;
     }
@@ -422,22 +400,20 @@ export class AudioCacheService {
    */
   async clearCache(): Promise<void> {
     try {
-      console.log("🗑️ Clearing audio cache...");
+      console.log("🧹 Clearing audio cache...");
 
       // Delete all cached files
       for (const [url, cached] of this.state.cachedFiles) {
         try {
           await this.fileSystem.deleteAsync(cached.localPath);
         } catch (error) {
-          console.error(`❌ Error deleting ${url}:`, error);
+          console.warn(`⚠️ Error deleting cached file ${url}:`, error);
         }
       }
 
-      // Reset state
+      // Clear state
       this.state.cachedFiles.clear();
       this.state.currentCacheSize = 0;
-      this.state.preloadQueue = [];
-      this.state.isPreloading = false;
 
       // Save empty metadata
       await this.saveCacheMetadata();
@@ -457,14 +433,12 @@ export class AudioCacheService {
     maxSize: number;
     usagePercentage: number;
   } {
-    const usagePercentage =
-      (this.state.currentCacheSize / this.state.maxCacheSize) * 100;
-
     return {
       fileCount: this.state.cachedFiles.size,
       totalSize: this.state.currentCacheSize,
       maxSize: this.state.maxCacheSize,
-      usagePercentage,
+      usagePercentage:
+        (this.state.currentCacheSize / this.state.maxCacheSize) * 100,
     };
   }
 

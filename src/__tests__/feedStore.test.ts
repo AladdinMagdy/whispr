@@ -143,7 +143,8 @@ describe("FeedStore", () => {
       useFeedStore.getState().addNewWhisper(mockWhisper);
 
       const state = useFeedStore.getState();
-      expect(state.whispers).toHaveLength(2); // Zustand persist adds both
+      expect(state.whispers).toHaveLength(1); // Duplicate should be prevented
+      expect(state.whispers[0]).toEqual(mockWhisper);
     });
 
     test("should limit whispers to 20 when adding new ones", () => {

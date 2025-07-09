@@ -47,6 +47,7 @@ const FeedScreen = () => {
   const { user } = useAuth();
   const firestoreService = getFirestoreService();
   const flatListRef = useRef<FlatList<Whisper>>(null);
+  const listenerRef = useRef<(() => void) | null>(null); // Track listener to prevent duplicates
 
   // FeedStore for persistent caching
   const {
@@ -130,7 +131,11 @@ const FeedScreen = () => {
         }
 
         console.log("🔄 Loading fresh whispers from Firestore...");
-        await firestoreService.getWhispers();
+        const result = await firestoreService.getWhispers();
+
+        // Update the store with the fetched data
+        const { updateCache } = useFeedStore.getState();
+        updateCache(result.whispers, result.lastDoc, result.hasMore);
 
         // Update cache
         setRetryCount(0);
@@ -161,6 +166,12 @@ const FeedScreen = () => {
   useEffect(() => {
     if (!user || !isAppActive) return;
 
+    // Prevent multiple listeners
+    if (listenerRef.current) {
+      console.log("🔄 Listener already exists, skipping duplicate setup");
+      return;
+    }
+
     console.log("🔄 Setting up real-time whisper listener...");
 
     const unsubscribe = firestoreService.subscribeToNewWhispers(
@@ -190,9 +201,15 @@ const FeedScreen = () => {
       new Date(Date.now() - 60000) // Listen to whispers from the last minute
     );
 
+    // Store the unsubscribe function
+    listenerRef.current = unsubscribe;
+
     return () => {
       console.log("🔄 Cleaning up real-time whisper listener");
-      unsubscribe();
+      if (listenerRef.current) {
+        listenerRef.current();
+        listenerRef.current = null;
+      }
     };
   }, [user, firestoreService, isAppActive, addNewWhisper]);
 
@@ -202,10 +219,16 @@ const FeedScreen = () => {
 
     try {
       setLoadingMore(true);
-      await firestoreService.getWhispers({
+      const result = await firestoreService.getWhispers({
         limit: 20,
         startAfter: lastDoc,
       });
+
+      // Append new whispers to existing ones
+      const { whispers: existingWhispers, updateCache } =
+        useFeedStore.getState();
+      const combinedWhispers = [...existingWhispers, ...result.whispers];
+      updateCache(combinedWhispers, result.lastDoc, result.hasMore);
     } catch (err) {
       console.error("Error loading more whispers:", err);
     } finally {
@@ -238,6 +261,17 @@ const FeedScreen = () => {
     );
     return () => subscription?.remove();
   }, []);
+
+  // Clean up listener when user changes
+  useEffect(() => {
+    return () => {
+      if (listenerRef.current) {
+        console.log("🔄 Cleaning up listener due to user change");
+        listenerRef.current();
+        listenerRef.current = null;
+      }
+    };
+  }, [user]);
 
   // Handle viewable items changed with debouncing
   const viewableItemsChangedRef = useRef<ReturnType<typeof setTimeout> | null>(

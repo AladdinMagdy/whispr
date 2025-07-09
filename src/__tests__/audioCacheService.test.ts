@@ -20,8 +20,8 @@ import {
   getAudioCacheService,
   resetAudioCacheService,
   hashString,
-  getFileExtension,
 } from "../services/audioCacheService";
+import { getFileExtension } from "../utils/fileUtils";
 import * as FileSystem from "expo-file-system";
 
 const mockFileSystem = FileSystem as jest.Mocked<typeof FileSystem>;

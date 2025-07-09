@@ -3,20 +3,18 @@
  * Handles audio file uploads to Firebase Storage and Firestore document creation
  */
 
-import { getStorageInstance, getAuthInstance } from "../config/firebase";
-import { ref, getDownloadURL, uploadBytesResumable } from "firebase/storage";
-import { onAuthStateChanged } from "firebase/auth";
+import { StorageService } from "./storageService";
+import { getFirestoreService } from "./firestoreService";
+import { getAuthService } from "./authService";
+
 import {
-  WHISPER_VALIDATION,
-  WHISPER_ERROR_MESSAGES,
-} from "../constants/whisperValidation";
-import {
-  getFirestoreService,
-  WhisperUploadData as FirestoreWhisperUploadData,
-} from "./firestoreService";
+  formatFileSize,
+  generateUniqueFilename,
+  isValidAudioFormat,
+} from "../utils/fileUtils";
 
 export interface UploadProgress {
-  progress: number; // 0-100
+  progress: number;
   bytesTransferred: number;
   totalBytes: number;
 }
@@ -27,26 +25,17 @@ export interface WhisperUploadData {
   whisperPercentage: number;
   averageLevel: number;
   confidence: number;
-  transcription?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface WhisperDocument {
-  id: string;
-  userId: string;
-  audioUrl: string;
-  duration: number;
-  whisperPercentage: number;
-  averageLevel: number;
-  confidence: number;
-  transcription?: string;
-  metadata?: Record<string, unknown>;
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 export class UploadService {
   private static instance: UploadService;
+  private firestoreService: ReturnType<typeof getFirestoreService>;
+  private authService: ReturnType<typeof getAuthService>;
+
+  private constructor() {
+    this.firestoreService = getFirestoreService();
+    this.authService = getAuthService();
+  }
 
   static getInstance(): UploadService {
     if (!UploadService.instance) {
@@ -56,234 +45,109 @@ export class UploadService {
   }
 
   /**
-   * Get current authenticated user
+   * Upload whisper audio and metadata
    */
-  private async getCurrentUser(): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const auth = getAuthInstance();
-      const unsubscribe = onAuthStateChanged(auth, (user) => {
-        unsubscribe();
-        if (user) {
-          resolve(user.uid);
-        } else {
-          reject(new Error("User not authenticated"));
-        }
-      });
-    });
-  }
-
-  /**
-   * Upload audio file to Firebase Storage
-   */
-  async uploadAudioFile(
-    audioUri: string,
-    onProgress?: (progress: UploadProgress) => void
-  ): Promise<string> {
+  async uploadWhisper(uploadData: WhisperUploadData): Promise<string> {
     try {
-      // Get current user
-      const userId = await this.getCurrentUser();
-
-      // Get Firebase Storage instance
-      const storage = getStorageInstance();
-
-      // Create unique filename
-      const timestamp = Date.now();
-      const filename = `whispers/${userId}/${timestamp}.m4a`;
-      const storageRef = ref(storage, filename);
-
-      // Convert URI to blob
-      const response = await fetch(audioUri);
-      const blob = await response.blob();
-
-      // Upload to Firebase Storage with progress tracking
-      const uploadTask = uploadBytesResumable(storageRef, blob);
-
-      // Monitor upload progress
-      uploadTask.on(
-        "state_changed",
-        (snapshot) => {
-          const progress =
-            (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          onProgress?.({
-            progress,
-            bytesTransferred: snapshot.bytesTransferred,
-            totalBytes: snapshot.totalBytes,
-          });
-        },
-        (error) => {
-          console.error("Upload error:", error);
-          throw error;
-        }
-      );
-
-      // Wait for upload to complete
-      await uploadTask;
-
-      // Get download URL
-      const downloadURL = await getDownloadURL(storageRef);
-      return downloadURL;
-    } catch (error) {
-      console.error("Error uploading audio file:", error);
-      throw new Error(
-        `Failed to upload audio: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
-    }
-  }
-
-  /**
-   * Create Firestore document for the whisper
-   */
-  async createWhisperDocument(
-    audioUrl: string,
-    uploadData: WhisperUploadData
-  ): Promise<string> {
-    try {
-      // Get current user
-      const userId = await this.getCurrentUser();
-
-      // Get user profile data from auth context
-      const auth = getAuthInstance();
-      const user = auth.currentUser;
-
+      const user = await this.authService.getCurrentUser();
       if (!user) {
         throw new Error("User not authenticated");
       }
 
-      // Get user display name and profile color (for now, use default values)
-      const userDisplayName =
-        user.displayName || `Whisperer_${userId.slice(-6)}`;
-      const userProfileColor =
-        "#" + Math.floor(Math.random() * 16777215).toString(16); // Random color
+      console.log("🚀 Starting whisper upload...");
 
-      // Use the new Firestore service
-      const firestoreService = getFirestoreService();
+      // Validate audio file
+      if (!isValidAudioFormat(uploadData.audioUri)) {
+        throw new Error("Invalid audio file format");
+      }
 
-      const whisperUploadData: FirestoreWhisperUploadData = {
-        audioUrl,
-        duration: uploadData.duration,
-        whisperPercentage: uploadData.whisperPercentage,
-        averageLevel: uploadData.averageLevel,
-        confidence: uploadData.confidence,
-      };
-
-      const documentId = await firestoreService.createWhisper(
-        userId,
-        userDisplayName,
-        userProfileColor,
-        whisperUploadData
+      // Upload audio file to storage using StorageService
+      const audioUrl = await StorageService.uploadAudio(
+        {
+          uri: uploadData.audioUri,
+          duration: uploadData.duration,
+          volume: uploadData.averageLevel,
+          isWhisper: uploadData.whisperPercentage > 0.5,
+          timestamp: new Date(),
+        },
+        user.uid
       );
 
-      console.log("Whisper document created with ID:", documentId);
-      return documentId;
+      console.log("✅ Audio uploaded successfully");
+
+      // Create whisper document in Firestore
+      const whisperId = await this.firestoreService.createWhisper(
+        user.uid,
+        user.displayName || "Anonymous",
+        user.profileColor || "#007AFF",
+        {
+          audioUrl,
+          duration: uploadData.duration,
+          whisperPercentage: uploadData.whisperPercentage,
+          averageLevel: uploadData.averageLevel,
+          confidence: uploadData.confidence,
+        }
+      );
+
+      console.log("✅ Whisper created successfully:", whisperId);
+
+      return whisperId;
     } catch (error) {
-      console.error("Error creating whisper document:", error);
-      throw new Error(
-        `Failed to create whisper document: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
-    }
-  }
-
-  /**
-   * Complete whisper upload process
-   */
-  async uploadWhisper(
-    uploadData: WhisperUploadData,
-    onProgress?: (progress: UploadProgress) => void
-  ): Promise<{ audioUrl: string; documentId: string }> {
-    try {
-      // Step 1: Upload audio file
-      console.log("Uploading audio file...");
-      const audioUrl = await this.uploadAudioFile(
-        uploadData.audioUri,
-        onProgress
-      );
-
-      // Step 2: Create Firestore document
-      console.log("Creating whisper document...");
-      const documentId = await this.createWhisperDocument(audioUrl, uploadData);
-
-      return {
-        audioUrl,
-        documentId,
-      };
-    } catch (error) {
-      console.error("Error in complete whisper upload:", error);
+      console.error("❌ Error uploading whisper:", error);
       throw error;
     }
   }
 
   /**
-   * Validate upload data before uploading
+   * Delete whisper and associated audio file
    */
-  validateUploadData(uploadData: WhisperUploadData): {
-    isValid: boolean;
-    errors: string[];
-  } {
-    const errors: string[] = [];
+  async deleteWhisper(whisperId: string): Promise<void> {
+    try {
+      const user = await this.authService.getCurrentUser();
+      if (!user) {
+        throw new Error("User not authenticated");
+      }
 
-    if (!uploadData.audioUri) {
-      errors.push("Audio URI is required");
+      // Get whisper data to find audio URL
+      const whisper = await this.firestoreService.getWhisper(whisperId);
+      if (!whisper) {
+        throw new Error("Whisper not found");
+      }
+
+      // Check if user owns the whisper
+      if (whisper.userId !== user.uid) {
+        throw new Error("Not authorized to delete this whisper");
+      }
+
+      // Delete from Firestore first
+      await this.firestoreService.deleteWhisper(whisperId);
+
+      // Delete audio file from storage
+      if (whisper.audioUrl) {
+        await StorageService.deleteAudio(whisper.audioUrl);
+      }
+
+      console.log("✅ Whisper deleted successfully");
+    } catch (error) {
+      console.error("❌ Error deleting whisper:", error);
+      throw error;
     }
-
-    if (uploadData.duration < WHISPER_VALIDATION.RECORDING.MIN_DURATION) {
-      errors.push(WHISPER_ERROR_MESSAGES.DURATION_TOO_SHORT);
-    }
-
-    if (
-      uploadData.duration >
-      WHISPER_VALIDATION.RECORDING.MAX_DURATION +
-        WHISPER_VALIDATION.RECORDING.DURATION_TOLERANCE
-    ) {
-      errors.push(WHISPER_ERROR_MESSAGES.DURATION_TOO_LONG);
-    }
-
-    if (
-      uploadData.whisperPercentage < WHISPER_VALIDATION.MIN_WHISPER_PERCENTAGE
-    ) {
-      errors.push(
-        WHISPER_ERROR_MESSAGES.INSUFFICIENT_WHISPER(
-          WHISPER_VALIDATION.MIN_WHISPER_PERCENTAGE * 100
-        )
-      );
-    }
-
-    if (uploadData.averageLevel > WHISPER_VALIDATION.MAX_AVERAGE_LEVEL) {
-      errors.push(
-        WHISPER_ERROR_MESSAGES.AVERAGE_LEVEL_TOO_HIGH(
-          WHISPER_VALIDATION.MAX_AVERAGE_LEVEL * 100
-        )
-      );
-    }
-
-    if (uploadData.confidence < WHISPER_VALIDATION.MIN_CONFIDENCE) {
-      errors.push(WHISPER_ERROR_MESSAGES.CONFIDENCE_TOO_LOW);
-    }
-
-    return {
-      isValid: errors.length === 0,
-      errors,
-    };
   }
 
   /**
-   * Get upload statistics for a user
+   * Update whisper transcription
    */
-  async getUserUploadStats(): Promise<{
-    totalWhispers: number;
-    totalDuration: number;
-    averageConfidence: number;
-  }> {
-    // This would typically query Firestore for user's whispers
-    // For now, return mock data
-    return {
-      totalWhispers: 0,
-      totalDuration: 0,
-      averageConfidence: 0,
-    };
+  async updateTranscription(
+    whisperId: string,
+    transcription: string
+  ): Promise<void> {
+    try {
+      await this.firestoreService.updateTranscription(whisperId, transcription);
+      console.log("✅ Transcription updated successfully");
+    } catch (error) {
+      console.error("❌ Error updating transcription:", error);
+      throw error;
+    }
   }
 }
 
@@ -301,15 +165,7 @@ export const UploadUtils = {
   /**
    * Format file size for display
    */
-  formatFileSize(bytes: number): string {
-    if (bytes === 0) return "0 Bytes";
-
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-  },
+  formatFileSize,
 
   /**
    * Format upload progress for display
@@ -323,20 +179,10 @@ export const UploadUtils = {
   /**
    * Generate unique filename
    */
-  generateFilename(userId: string, extension: string = "m4a"): string {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 15);
-    return `whispers/${userId}/${timestamp}_${random}.${extension}`;
-  },
+  generateFilename: generateUniqueFilename,
 
   /**
    * Validate audio file format
    */
-  isValidAudioFormat(filename: string): boolean {
-    const validExtensions = [".m4a", ".mp3", ".wav", ".aac"];
-    const extension = filename
-      .toLowerCase()
-      .substring(filename.lastIndexOf("."));
-    return validExtensions.includes(extension);
-  },
+  isValidAudioFormat,
 };

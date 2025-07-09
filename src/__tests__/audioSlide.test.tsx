@@ -22,6 +22,13 @@ jest.mock("expo-av", () => ({
   },
 }));
 
+// Mock React Navigation
+jest.mock("@react-navigation/native", () => ({
+  useRoute: jest.fn(() => ({
+    name: "FeedScreen", // Default to FeedScreen for tests
+  })),
+}));
+
 // Mock components
 jest.mock("../components/BackgroundMedia", () => {
   return function MockBackgroundMedia() {
@@ -142,7 +149,6 @@ describe("AudioSlide", () => {
       playAsync: jest.fn(),
       pauseAsync: jest.fn(),
       unloadAsync: jest.fn().mockImplementation(() => {
-         
         console.log("unloadAsync called");
         return Promise.resolve();
       }),
@@ -188,7 +194,7 @@ describe("AudioSlide", () => {
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     // Debug log
-     
+
     console.log("unloadAsync calls:", mockSound.unloadAsync.mock.calls.length);
     expect(mockSound.unloadAsync).toHaveBeenCalled();
   });

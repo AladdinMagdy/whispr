@@ -34,48 +34,38 @@ const ProgressBar: React.FC<{
       const currentProgress = progressRef.current;
       const currentDuration = durationRef.current;
 
-      // Only update if values actually changed
+      // Only update if values have changed significantly
       if (
-        currentProgress !== lastProgressRef.current ||
-        currentDuration !== lastDurationRef.current
+        Math.abs(currentProgress - lastProgressRef.current) > 0.01 ||
+        Math.abs(currentDuration - lastDurationRef.current) > 0.01
       ) {
-        lastProgressRef.current = currentProgress;
-        lastDurationRef.current = currentDuration;
-
-        const formatTime = (seconds: number = 0): string => {
-          const m = Math.floor(seconds / 60)
-            .toString()
-            .padStart(2, "0");
-          const s = Math.floor(seconds % 60)
-            .toString()
-            .padStart(2, "0");
-          return `${m}:${s}`;
-        };
-
-        const progressPercentage =
-          currentDuration > 0 ? (currentProgress / currentDuration) * 100 : 0;
-
-        // Update progress bar width directly
-        if (progressFillRef.current) {
+        // Update progress fill
+        if (progressFillRef.current && currentDuration > 0) {
+          const progressPercent = (currentProgress / currentDuration) * 100;
           progressFillRef.current.setNativeProps({
-            style: { width: `${progressPercentage}%` },
+            style: { width: `${progressPercent}%` },
           });
         }
 
-        // Update time text directly
+        // Update time text
         if (progressTextRef.current) {
+          const progressTime = formatTime(currentProgress);
           progressTextRef.current.setNativeProps({
-            text: formatTime(currentProgress),
+            text: progressTime,
           });
         }
 
         if (durationTextRef.current) {
+          const durationTime = formatTime(currentDuration);
           durationTextRef.current.setNativeProps({
-            text: formatTime(currentDuration),
+            text: durationTime,
           });
         }
+
+        lastProgressRef.current = currentProgress;
+        lastDurationRef.current = currentDuration;
       }
-    }, 100);
+    }, 250); // Update every 250ms for smooth progress
 
     return () => clearInterval(interval);
   }, [progressRef, durationRef]);
@@ -83,10 +73,7 @@ const ProgressBar: React.FC<{
   return (
     <View style={styles.progressContainer}>
       <View style={styles.progressBar}>
-        <View
-          ref={progressFillRef}
-          style={[styles.progressFill, { width: "0%" }]}
-        />
+        <View ref={progressFillRef} style={styles.progressFill} />
       </View>
       <View style={styles.timeInfo}>
         <Text ref={progressTextRef} style={styles.timeText}>
@@ -102,58 +89,93 @@ const ProgressBar: React.FC<{
 
 ProgressBar.displayName = "ProgressBar";
 
+// Extracted UserInfo component
+const UserInfo: React.FC<{ whisper: Whisper }> = React.memo(({ whisper }) => {
+  const userInfo = useMemo(
+    () => ({
+      userName: whisper.userDisplayName || "Mysterious Whisperer",
+      whisperInfo: `${whisper.whisperPercentage?.toFixed(1) || "0"}% whisper`,
+    }),
+    [whisper.userDisplayName, whisper.whisperPercentage]
+  );
+
+  return (
+    <View style={styles.userInfo}>
+      <Text style={styles.userName}>{userInfo.userName}</Text>
+      <Text style={styles.whisperInfo}>{userInfo.whisperInfo}</Text>
+    </View>
+  );
+});
+
+UserInfo.displayName = "UserInfo";
+
+// Extracted ControlButtons component
+const ControlButtons: React.FC<{
+  isPlaying: boolean;
+  onPlayPause: () => void;
+  onReplay: () => void;
+}> = React.memo(({ isPlaying, onPlayPause, onReplay }) => {
+  const handlePlayPause = useCallback(() => {
+    onPlayPause();
+  }, [onPlayPause]);
+
+  const handleReplay = useCallback(() => {
+    onReplay();
+  }, [onReplay]);
+
+  return (
+    <View style={styles.controlsContainer}>
+      {/* Replay button */}
+      <TouchableOpacity style={styles.replayButton} onPress={handleReplay}>
+        <Text style={styles.replayButtonText}>🔄</Text>
+      </TouchableOpacity>
+
+      {/* Play/Pause button */}
+      <TouchableOpacity style={styles.playButton} onPress={handlePlayPause}>
+        <Text style={styles.playButtonText}>{isPlaying ? "⏸️" : "▶️"}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+});
+
+ControlButtons.displayName = "ControlButtons";
+
 const AudioControls: React.FC<AudioControlsProps> = React.memo(
   ({ isPlaying, onPlayPause, onReplay, whisper, progressRef, durationRef }) => {
     // Add performance monitoring
     usePerformanceMonitor("AudioControls");
 
-    // Memoize user info to prevent re-renders
-    const userInfo = useMemo(
-      () => ({
-        userName: whisper.userDisplayName || "Mysterious Whisperer",
-        whisperInfo: `${whisper.whisperPercentage?.toFixed(1) || "0"}% whisper`,
-      }),
-      [whisper.userDisplayName, whisper.whisperPercentage]
-    );
-
-    // Memoize callback functions
-    const handlePlayPause = useCallback(() => {
-      onPlayPause();
-    }, [onPlayPause]);
-
-    const handleReplay = useCallback(() => {
-      onReplay();
-    }, [onReplay]);
-
     return (
       <View style={styles.container}>
         {/* User info */}
-        <View style={styles.userInfo}>
-          <Text style={styles.userName}>{userInfo.userName}</Text>
-          <Text style={styles.whisperInfo}>{userInfo.whisperInfo}</Text>
-        </View>
+        <UserInfo whisper={whisper} />
 
         {/* Progress bar - separate component for performance */}
         <ProgressBar progressRef={progressRef} durationRef={durationRef} />
 
         {/* Control buttons */}
-        <View style={styles.controlsContainer}>
-          {/* Replay button */}
-          <TouchableOpacity style={styles.replayButton} onPress={handleReplay}>
-            <Text style={styles.replayButtonText}>🔄</Text>
-          </TouchableOpacity>
-
-          {/* Play/Pause button */}
-          <TouchableOpacity style={styles.playButton} onPress={handlePlayPause}>
-            <Text style={styles.playButtonText}>{isPlaying ? "⏸️" : "▶️"}</Text>
-          </TouchableOpacity>
-        </View>
+        <ControlButtons
+          isPlaying={isPlaying}
+          onPlayPause={onPlayPause}
+          onReplay={onReplay}
+        />
       </View>
     );
   }
 );
 
 AudioControls.displayName = "AudioControls";
+
+// Helper function for time formatting
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const s = Math.floor(seconds % 60)
+    .toString()
+    .padStart(2, "0");
+  return `${m}:${s}`;
+}
 
 const styles = StyleSheet.create({
   container: {

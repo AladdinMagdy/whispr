@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import { View, StyleSheet, Dimensions } from "react-native";
 import { Audio, AVPlaybackStatus } from "expo-av";
+import { useRoute } from "@react-navigation/native";
 import BackgroundMedia from "./BackgroundMedia";
 import AudioControls from "./AudioControls";
 import WhisperInteractions from "./WhisperInteractions";
@@ -51,6 +52,10 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
   }) => {
     // Add performance monitoring
     usePerformanceMonitor("AudioSlide");
+
+    // Get navigation state to check if we're on upload screen
+    const route = useRoute();
+    const isOnFeedScreen = route.name === "FeedScreen";
 
     const [isPlaying, setIsPlaying] = useState(false);
     const [isLoaded, setIsLoaded] = useState(false);
@@ -213,7 +218,7 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
           );
 
           // If this slide is already active when audio loads, start playing immediately
-          if (isActiveRef.current && isVisibleRef.current) {
+          if (isActiveRef.current && isVisibleRef.current && isOnFeedScreen) {
             console.log(
               `Slide was active when audio loaded, starting playback immediately`
             );
@@ -265,7 +270,8 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
         isVisible &&
         isLoaded &&
         !isInitializing &&
-        !initializationRef.current
+        !initializationRef.current &&
+        isOnFeedScreen
       ) {
         console.log(`Auto-playing audio for slide: ${whisperIdRef.current}`);
         playAudio();
@@ -273,7 +279,15 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
         console.log(`Pausing audio for slide: ${whisperIdRef.current}`);
         pauseAudio();
       }
-    }, [isActive, isVisible, isLoaded, isInitializing, playAudio, pauseAudio]);
+    }, [
+      isActive,
+      isVisible,
+      isLoaded,
+      isInitializing,
+      playAudio,
+      pauseAudio,
+      isOnFeedScreen,
+    ]);
 
     const replayAudio = useCallback(async () => {
       try {

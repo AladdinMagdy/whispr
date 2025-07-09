@@ -104,6 +104,16 @@ export const useFeedStore = create<FeedState>()(
 
       addNewWhisper: (whisper) => {
         const { whispers } = get();
+
+        // Check if whisper already exists to prevent duplicates
+        const existingWhisper = whispers.find((w) => w.id === whisper.id);
+        if (existingWhisper) {
+          console.log(
+            `⚠️ Whisper ${whisper.id} already exists in cache, skipping duplicate`
+          );
+          return;
+        }
+
         const updatedWhispers = [whisper, ...whispers.slice(0, 19)]; // Keep only 20
         set({ whispers: updatedWhispers });
         console.log("➕ New whisper added to feed cache");

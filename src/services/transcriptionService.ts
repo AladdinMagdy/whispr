@@ -1,13 +1,16 @@
-import { TranscriptionResponse } from "@/types";
-import { API_ENDPOINTS } from "@/constants";
-import { env } from "@/config/environment";
 import { AudioConversionService } from "./audioConversionService";
+import { extractFileExtension } from "../utils/fileUtils";
 
 export interface TranscriptionOptions {
   language?: string;
   prompt?: string;
   responseFormat?: "json" | "text" | "srt" | "verbose_json" | "vtt";
   temperature?: number;
+}
+
+export interface TranscriptionResponse {
+  text: string;
+  language?: string;
 }
 
 export class TranscriptionService {
@@ -17,7 +20,8 @@ export class TranscriptionService {
    * Initialize the transcription service with API key
    */
   static initialize(): void {
-    this.apiKey = env.openai.apiKey;
+    // Initialize with API key from environment
+    this.apiKey = process.env.OPENAI_API_KEY || null;
   }
 
   /**
@@ -85,69 +89,57 @@ export class TranscriptionService {
       formData.append("file", audioBlobWithMimeType, `audio.${fileExtension}`);
       formData.append("model", "whisper-1");
 
+      // Add optional parameters
       if (options.language) {
         formData.append("language", options.language);
       }
-
       if (options.prompt) {
         formData.append("prompt", options.prompt);
       }
-
       if (options.responseFormat) {
         formData.append("response_format", options.responseFormat);
       }
-
       if (options.temperature !== undefined) {
         formData.append("temperature", options.temperature.toString());
       }
 
-      console.log("Sending request to Whisper API...");
-
-      // Make API request
-      const response = await fetch(API_ENDPOINTS.TRANSCRIPTION, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: formData,
-      });
-
-      console.log("response", response);
+      // Make the API request
+      const response = await fetch(
+        "https://api.openai.com/v1/audio/transcriptions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: formData,
+        }
+      );
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        const errorMessage = errorData.error?.message || response.statusText;
-
-        console.error("Whisper API error:", {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorData,
-        });
-
-        // Handle specific format errors
-        if (errorMessage.includes("Invalid file format")) {
-          console.warn(
-            `Audio format ${fileExtension} not supported by Whisper API`
-          );
-          throw new Error(
-            `Audio format not supported. Please try recording again with a different format.`
-          );
-        }
-
-        throw new Error(`Transcription failed: ${errorMessage}`);
+        throw new Error(
+          `Transcription failed: ${response.status} ${
+            response.statusText
+          } - ${JSON.stringify(errorData)}`
+        );
       }
 
       const result = await response.json();
-      console.log("Whisper API response:", result);
 
-      return {
-        text: result.text || "",
-        confidence: result.confidence || 0,
-        language: result.language || "en",
-      };
+      // Handle different response formats
+      if (options.responseFormat === "verbose_json") {
+        return {
+          text: result.text,
+          language: result.language,
+        };
+      } else {
+        return {
+          text: result.text || result,
+        };
+      }
     } catch (error) {
-      console.error("Transcription error:", error);
-      throw new Error("Failed to transcribe audio");
+      console.error("Error transcribing audio:", error);
+      throw error;
     }
   }
 
@@ -155,70 +147,42 @@ export class TranscriptionService {
    * Get MIME type for file extension
    */
   private static getMimeTypeForExtension(extension: string): string {
-    const mimeTypes: Record<string, string> = {
+    const mimeTypes: { [key: string]: string } = {
       mp3: "audio/mpeg",
-      m4a: "audio/mp4",
       wav: "audio/wav",
+      m4a: "audio/mp4",
       mp4: "audio/mp4",
-      webm: "audio/webm",
       flac: "audio/flac",
       ogg: "audio/ogg",
-      oga: "audio/ogg",
+      webm: "audio/webm",
     };
 
-    return mimeTypes[extension] || "audio/mpeg";
+    return mimeTypes[extension.toLowerCase()] || "audio/mpeg";
   }
 
   /**
-   * Get the best file extension for Whisper API based on the original format
+   * Get best file extension for Whisper API
    */
   private static getBestFileExtension(
     originalUrl: string,
     detectedFormat: string
   ): string {
-    // Use the detected format directly - Whisper API supports m4a
-    const format =
-      detectedFormat || this.extractFileExtension(originalUrl) || "mp4";
+    // Whisper API prefers certain formats
+    const preferredFormats = ["mp3", "wav", "flac", "m4a"];
 
-    // Whisper API supported formats: ['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm']
-    const supportedFormats = [
-      "flac",
-      "m4a",
-      "mp3",
-      "mp4",
-      "mpeg",
-      "mpga",
-      "oga",
-      "ogg",
-      "wav",
-      "webm",
-    ];
-
-    // If the detected format is supported, use it directly
-    if (supportedFormats.includes(format)) {
-      return format;
+    // If the detected format is preferred, use it
+    if (preferredFormats.includes(detectedFormat)) {
+      return detectedFormat;
     }
 
-    // Fallback to mp4 for unsupported formats
+    // Otherwise, try to detect from URL
+    const urlExtension = extractFileExtension(originalUrl);
+    if (preferredFormats.includes(urlExtension)) {
+      return urlExtension;
+    }
+
+    // Fallback to mp4 if not supported
     return "mp4";
-  }
-
-  /**
-   * Extract file extension from URL, handling query parameters
-   */
-  private static extractFileExtension(url: string): string {
-    try {
-      // Remove query parameters first
-      const urlWithoutQuery = url.split("?")[0];
-
-      // Get the file extension
-      const extension = urlWithoutQuery.split(".").pop()?.toLowerCase();
-
-      return extension || "";
-    } catch (error) {
-      console.error("Error extracting file extension:", error);
-      return "";
-    }
   }
 
   /**
@@ -397,7 +361,7 @@ export class TranscriptionService {
       const result = await this.transcribeAudio(audioUrl, {
         responseFormat: "verbose_json",
       });
-      return result.language;
+      return result.language || "en";
     } catch (error) {
       console.error("Error detecting language:", error);
       return "en"; // Default to English
@@ -408,11 +372,11 @@ export class TranscriptionService {
    * Check if transcription service is available
    */
   static isAvailable(): boolean {
-    return !!this.apiKey || !!env.openai.apiKey;
+    return !!(this.apiKey || process.env.OPENAI_API_KEY);
   }
 
   /**
-   * Estimate transcription cost
+   * Estimate cost for transcription (approximate)
    */
   static estimateCost(audioDurationSeconds: number): number {
     // Whisper API pricing: $0.006 per minute

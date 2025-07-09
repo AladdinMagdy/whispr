@@ -15,6 +15,7 @@ import {
   RecordingUtils,
 } from "../services/recordingService";
 import { getUploadService } from "../services/uploadService";
+import { validateUploadData } from "../utils/fileUtils";
 import {
   WHISPER_VALIDATION,
   WHISPER_COLORS,
@@ -357,8 +358,7 @@ const RecordScreen = () => {
       };
 
       // Validate upload data
-      const uploadValidation =
-        uploadServiceInstance.validateUploadData(uploadData);
+      const uploadValidation = validateUploadData(uploadData);
       if (!uploadValidation.isValid) {
         Alert.alert(
           "Upload Validation Failed",
@@ -368,12 +368,7 @@ const RecordScreen = () => {
       }
 
       // Upload to Firebase
-      await uploadServiceInstance.uploadWhisper(uploadData, (progress) => {
-        setRecordingState((prev) => ({
-          ...prev,
-          uploadProgress: progress.progress,
-        }));
-      });
+      await uploadServiceInstance.uploadWhisper(uploadData);
 
       // Increment user's whisper count
       await incrementWhisperCount();

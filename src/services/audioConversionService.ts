@@ -1,4 +1,5 @@
 import * as FileSystem from "expo-file-system";
+import { extractFileExtension, formatFileSize } from "../utils/fileUtils";
 
 export interface AudioConversionOptions {
   targetFormat?: "mp3" | "wav" | "m4a";
@@ -39,7 +40,7 @@ export class AudioConversionService {
   static async isCompatibleFormat(audioUri: string): Promise<boolean> {
     try {
       // Check file extension - handle URLs with query parameters
-      const extension = this.extractFileExtension(audioUri);
+      const extension = extractFileExtension(audioUri);
 
       // Whisper API supported formats (from OpenAI docs)
       const supportedFormats = [
@@ -63,24 +64,6 @@ export class AudioConversionService {
   }
 
   /**
-   * Extract file extension from URL, handling query parameters
-   */
-  private static extractFileExtension(url: string): string {
-    try {
-      // Remove query parameters first
-      const urlWithoutQuery = url.split("?")[0];
-
-      // Get the file extension
-      const extension = urlWithoutQuery.split(".").pop()?.toLowerCase();
-
-      return extension || "";
-    } catch (error) {
-      console.error("Error extracting file extension:", error);
-      return "";
-    }
-  }
-
-  /**
    * Get audio file metadata
    */
   static async getAudioMetadata(audioUri: string): Promise<{
@@ -89,7 +72,7 @@ export class AudioConversionService {
     duration?: number;
   }> {
     try {
-      const extension = this.extractFileExtension(audioUri);
+      const extension = extractFileExtension(audioUri);
 
       // Check if it's a local file or HTTP/HTTPS URL
       if (audioUri.startsWith("http://") || audioUri.startsWith("https://")) {
@@ -121,6 +104,28 @@ export class AudioConversionService {
   }
 
   /**
+   * Check if file is too large for transcription
+   */
+  private static isFileTooLarge(size: number, isHttpUrl: boolean): boolean {
+    if (isHttpUrl) return false; // Can't check size for HTTP URLs
+    return size > 25 * 1024 * 1024; // 25MB limit
+  }
+
+  /**
+   * Get file size error message
+   */
+  private static getFileSizeErrorMessage(size: number): string {
+    return `File too large: ${formatFileSize(size)} (max 25MB)`;
+  }
+
+  /**
+   * Get format error message
+   */
+  private static getFormatErrorMessage(extension: string): string {
+    return `Unsupported format: ${extension}`;
+  }
+
+  /**
    * Validate audio file for transcription
    */
   static async validateForTranscription(audioUrl: string): Promise<{
@@ -137,21 +142,21 @@ export class AudioConversionService {
       const isHttpUrl =
         audioUrl.startsWith("http://") || audioUrl.startsWith("https://");
 
-      if (!isHttpUrl && metadata.size > 25 * 1024 * 1024) {
+      // Check file size
+      if (this.isFileTooLarge(metadata.size, isHttpUrl)) {
         return {
           isValid: false,
-          error: `File too large: ${(metadata.size / (1024 * 1024)).toFixed(
-            2
-          )}MB (max 25MB)`,
+          error: this.getFileSizeErrorMessage(metadata.size),
           size: metadata.size,
           format: metadata.extension,
         };
       }
 
+      // Check format compatibility
       if (!isCompatible) {
         return {
           isValid: false,
-          error: `Unsupported format: ${metadata.extension}`,
+          error: this.getFormatErrorMessage(metadata.extension),
           size: metadata.size,
           format: metadata.extension,
         };
