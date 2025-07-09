@@ -5,23 +5,12 @@ import {
   CommentLikeData,
 } from "../services/firestoreService";
 import { Comment } from "../types";
+import { debounce } from "../utils/debounce";
 
 interface UseCommentLikesProps {
   comment: Comment;
   onLikeComment: (commentId: string) => void;
 }
-
-// Debounce utility function
-const debounce = <T extends (...args: any[]) => any>(
-  func: T,
-  delay: number
-): ((...args: Parameters<T>) => void) => {
-  let timeoutId: ReturnType<typeof setTimeout>;
-  return (...args: Parameters<T>) => {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => func(...args), delay);
-  };
-};
 
 export const useCommentLikes = ({
   comment,

@@ -3,24 +3,13 @@ import { Alert } from "react-native";
 import { getInteractionService } from "../services/interactionService";
 import { getFirestoreService } from "../services/firestoreService";
 import { Whisper, Like } from "../types";
+import { debounce } from "../utils/debounce";
 
 interface UseWhisperLikesProps {
   whisper: Whisper;
   onLikeChange?: (isLiked: boolean, newLikeCount: number) => void;
   onWhisperUpdate?: (updatedWhisper: Whisper) => void;
 }
-
-// Debounce utility function
-const debounce = <T extends (...args: any[]) => any>(
-  func: T,
-  delay: number
-): ((...args: Parameters<T>) => void) => {
-  let timeoutId: ReturnType<typeof setTimeout>;
-  return (...args: Parameters<T>) => {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => func(...args), delay);
-  };
-};
 
 export const useWhisperLikes = ({
   whisper,
