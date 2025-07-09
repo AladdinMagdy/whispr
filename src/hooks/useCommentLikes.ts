@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { getInteractionService } from "../services/interactionService";
 import {
   getFirestoreService,
@@ -11,6 +11,18 @@ interface UseCommentLikesProps {
   onLikeComment: (commentId: string) => void;
 }
 
+// Debounce utility function
+const debounce = <T extends (...args: any[]) => any>(
+  func: T,
+  delay: number
+): ((...args: Parameters<T>) => void) => {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  return (...args: Parameters<T>) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => func(...args), delay);
+  };
+};
+
 export const useCommentLikes = ({
   comment,
   onLikeComment,
@@ -22,7 +34,14 @@ export const useCommentLikes = ({
   const [loadingCommentLikes, setLoadingCommentLikes] = useState(false);
   const [commentLikesHasMore, setCommentLikesHasMore] = useState(true);
   const [commentLikesLastDoc, setCommentLikesLastDoc] = useState<unknown>(null);
-  const [isLikeInProgress, setIsLikeInProgress] = useState(false);
+
+  // Track original user like state for smart server requests
+  const [originalUserLikeState, setOriginalUserLikeState] = useState(false);
+  const [pendingServerUpdate, setPendingServerUpdate] = useState(false);
+
+  // Track the "settled" state - what the user wants after rapid toggling
+  const [settledUserState, setSettledUserState] = useState(false);
+  const [isUserSettled, setIsUserSettled] = useState(true);
 
   const interactionServiceRef = useRef(getInteractionService());
   const firestoreServiceRef = useRef(getFirestoreService());
@@ -35,10 +54,14 @@ export const useCommentLikes = ({
           comment.id
         );
         setIsLiked(isLiked);
+        setOriginalUserLikeState(isLiked); // Track original state
+        setSettledUserState(isLiked); // Initialize settled state
         setLikeCount(comment.likes);
       } catch (error) {
         console.error("Error loading comment like state:", error);
         setIsLiked(false);
+        setOriginalUserLikeState(false);
+        setSettledUserState(false); // Initialize settled state
         setLikeCount(comment.likes);
       }
     };
@@ -64,41 +87,125 @@ export const useCommentLikes = ({
     };
   }, [showCommentLikes, comment.id]);
 
-  const handleLike = useCallback(async () => {
-    // Prevent rapid clicks
-    if (isLikeInProgress) {
-      console.log("Comment like operation already in progress, ignoring click");
+  // Smart server update function - only sends when user has "settled"
+  const sendSettledServerUpdate = useCallback(async () => {
+    if (pendingServerUpdate || !isUserSettled) {
+      console.log(
+        "⏭️ Skipping comment server update - pending or user not settled"
+      );
       return;
     }
 
-    setIsLikeInProgress(true);
+    // Only send if settled state differs from original state
+    if (settledUserState === originalUserLikeState) {
+      console.log(
+        "⏭️ Comment settled state matches original, no server update needed"
+      );
+      return;
+    }
 
-    // Optimistic update - update UI immediately
-    const newIsLiked = !isLiked;
-    const newLikeCount = newIsLiked
+    setPendingServerUpdate(true);
+    try {
+      console.log(
+        `🔄 Sending settled comment server update: ${originalUserLikeState} -> ${settledUserState}`
+      );
+      await interactionServiceRef.current.toggleCommentLike(comment.id);
+
+      // Update original state after successful server update
+      setOriginalUserLikeState(settledUserState);
+      console.log(
+        `✅ Settled comment server update successful, original state updated to: ${settledUserState}`
+      );
+    } catch (error) {
+      console.error("Error updating comment like on server:", error);
+
+      // Check if it's the "already in progress" error
+      if (
+        error instanceof Error &&
+        error.message.includes("already in progress")
+      ) {
+        console.log(
+          "⏭️ Comment like operation already in progress, this is expected for rapid clicks"
+        );
+        // Reset pending flag so we can try again later
+        setPendingServerUpdate(false);
+        return;
+      }
+
+      // For other errors, revert optimistic update
+      console.log("❌ Comment server error, reverting optimistic update");
+      setIsLiked(originalUserLikeState);
+      setLikeCount((prev) =>
+        originalUserLikeState ? prev + 1 : Math.max(0, prev - 1)
+      );
+    } finally {
+      setPendingServerUpdate(false);
+    }
+  }, [
+    comment.id,
+    originalUserLikeState,
+    settledUserState,
+    isUserSettled,
+    pendingServerUpdate,
+  ]);
+
+  // Use ref to prevent debounced function recreation
+  const sendSettledServerUpdateRef = useRef(sendSettledServerUpdate);
+  sendSettledServerUpdateRef.current = sendSettledServerUpdate;
+
+  // Debounced function to mark user as "settled" after rapid clicking stops
+  const debouncedSettleUser = useMemo(
+    () =>
+      debounce(() => {
+        console.log(
+          "🎯 User has settled on comment, checking if server update needed"
+        );
+        setIsUserSettled(true);
+        // Use a small delay to ensure state is updated
+        setTimeout(() => {
+          sendSettledServerUpdateRef.current();
+        }, 50);
+      }, 1000), // Wait 1 second after last click before considering user "settled"
+    [] // Empty dependency array - function never recreates
+  );
+
+  const handleLike = useCallback(() => {
+    // Optimistic update - immediate UI response
+    const newUserLikeState = !isLiked;
+    const newLikeCount = newUserLikeState
       ? likeCount + 1
       : Math.max(0, likeCount - 1);
 
-    setIsLiked(newIsLiked);
+    console.log(
+      `🎯 User comment like action: ${isLiked} -> ${newUserLikeState}`
+    );
+    console.log(
+      `📊 Original comment state: ${originalUserLikeState}, New state: ${newUserLikeState}`
+    );
+
+    // Update UI immediately
+    setIsLiked(newUserLikeState);
     setLikeCount(newLikeCount);
     onLikeComment(comment.id);
 
-    try {
-      // Call server after optimistic update
-      await interactionServiceRef.current.toggleCommentLike(comment.id);
+    // Update the "settled" state to what user wants
+    setSettledUserState(newUserLikeState);
+    setIsUserSettled(false); // Mark user as not settled (still clicking)
 
-      // The real-time listener will sync the actual state from the server
-      // No need to update state here as the listener handles it
-    } catch (error) {
-      console.error("Error liking comment:", error);
+    // Start the settle timer
+    debouncedSettleUser();
 
-      // Revert optimistic update on error
-      setIsLiked(!newIsLiked);
-      setLikeCount(newIsLiked ? Math.max(0, likeCount - 1) : likeCount + 1);
-    } finally {
-      setIsLikeInProgress(false);
-    }
-  }, [comment.id, isLiked, likeCount, onLikeComment, isLikeInProgress]);
+    console.log(
+      `🎯 Updated comment settled state to: ${newUserLikeState}, waiting for user to settle...`
+    );
+  }, [
+    comment.id,
+    isLiked,
+    likeCount,
+    originalUserLikeState,
+    onLikeComment,
+    debouncedSettleUser,
+  ]);
 
   const loadCommentLikes = useCallback(
     async (reset = false) => {
@@ -143,7 +250,7 @@ export const useCommentLikes = ({
     commentLikes,
     loadingCommentLikes,
     commentLikesHasMore,
-    isLikeInProgress,
+    pendingServerUpdate,
 
     // Actions
     handleLike,

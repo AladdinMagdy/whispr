@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 import { getInteractionService } from "../services/interactionService";
 import { getFirestoreService } from "../services/firestoreService";
@@ -9,6 +9,18 @@ interface UseWhisperLikesProps {
   onLikeChange?: (isLiked: boolean, newLikeCount: number) => void;
   onWhisperUpdate?: (updatedWhisper: Whisper) => void;
 }
+
+// Debounce utility function
+const debounce = <T extends (...args: any[]) => any>(
+  func: T,
+  delay: number
+): ((...args: Parameters<T>) => void) => {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  return (...args: Parameters<T>) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => func(...args), delay);
+  };
+};
 
 export const useWhisperLikes = ({
   whisper,
@@ -23,8 +35,15 @@ export const useWhisperLikes = ({
   const [likesHasMore, setLikesHasMore] = useState(true);
   const [likesLastDoc, setLikesLastDoc] = useState<unknown>(null);
   const [likesLoaded, setLikesLoaded] = useState(false);
-  const [isLikeInProgress, setIsLikeInProgress] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
+
+  // Track original user like state for smart server requests
+  const [originalUserLikeState, setOriginalUserLikeState] = useState(false);
+  const [pendingServerUpdate, setPendingServerUpdate] = useState(false);
+
+  // Track the "settled" state - what the user wants after rapid toggling
+  const [settledUserState, setSettledUserState] = useState(false);
+  const [isUserSettled, setIsUserSettled] = useState(true);
 
   const interactionServiceRef = useRef(getInteractionService());
   const firestoreServiceRef = useRef(getFirestoreService());
@@ -46,6 +65,8 @@ export const useWhisperLikes = ({
         );
         setIsLiked(isLikedResult);
         setLikeCount(countResult);
+        setOriginalUserLikeState(isLikedResult); // Track original state
+        setSettledUserState(isLikedResult); // Initialize settled state
         onLikeChange?.(isLikedResult, countResult);
         // Update whisper data if count differs from stored data
         if (countResult !== whisperLikes && onWhisperUpdate) {
@@ -57,6 +78,8 @@ export const useWhisperLikes = ({
         console.error("Error loading like state:", error);
         setIsLiked(false);
         setLikeCount(whisperLikes || 0);
+        setOriginalUserLikeState(false);
+        setSettledUserState(false); // Initialize settled state
         onLikeChange?.(false, whisperLikes || 0);
         setIsInitialized(true);
       }
@@ -151,35 +174,124 @@ export const useWhisperLikes = ({
     whisper,
   ]);
 
-  const handleLike = useCallback(async () => {
-    if (isLikeInProgress) {
-      console.log("Like operation already in progress, ignoring click");
+  // Smart server update function - only sends when user has "settled"
+  const sendSettledServerUpdate = useCallback(async () => {
+    if (pendingServerUpdate || !isUserSettled) {
+      console.log("⏭️ Skipping server update - pending or user not settled");
       return;
     }
-    setIsLikeInProgress(true);
-    const newIsLiked = !isLiked;
-    const newLikeCount = newIsLiked
-      ? likeCount + 1
-      : Math.max(0, likeCount - 1);
-    setIsLiked(newIsLiked);
-    setLikeCount(newLikeCount);
-    onLikeChange?.(newIsLiked, newLikeCount);
+
+    // Only send if settled state differs from original state
+    if (settledUserState === originalUserLikeState) {
+      console.log("⏭️ Settled state matches original, no server update needed");
+      return;
+    }
+
+    setPendingServerUpdate(true);
     try {
+      console.log(
+        `🔄 Sending settled server update: ${originalUserLikeState} -> ${settledUserState}`
+      );
       await interactionServiceRef.current.toggleLike(whisperId);
-      // The real-time listener will sync the actual state from the server
+
+      // Update original state after successful server update
+      setOriginalUserLikeState(settledUserState);
+      console.log(
+        `✅ Settled server update successful, original state updated to: ${settledUserState}`
+      );
     } catch (error) {
-      console.error("Error liking whisper:", error);
-      Alert.alert("Error", "Failed to like whisper");
-      setIsLiked(!newIsLiked);
-      setLikeCount(newIsLiked ? Math.max(0, likeCount - 1) : likeCount + 1);
+      console.error("Error updating like on server:", error);
+
+      // Check if it's the "already in progress" error
+      if (
+        error instanceof Error &&
+        error.message.includes("already in progress")
+      ) {
+        console.log(
+          "⏭️ Like operation already in progress, this is expected for rapid clicks"
+        );
+        // Reset pending flag so we can try again later
+        setPendingServerUpdate(false);
+        return;
+      }
+
+      // For other errors, show alert and revert optimistic update
+      Alert.alert("Error", "Failed to update like");
+
+      // Revert optimistic update on failure
+      setIsLiked(originalUserLikeState);
+      setLikeCount((prev) =>
+        originalUserLikeState ? prev + 1 : Math.max(0, prev - 1)
+      );
       onLikeChange?.(
-        !newIsLiked,
-        newIsLiked ? Math.max(0, likeCount - 1) : likeCount + 1
+        originalUserLikeState,
+        originalUserLikeState ? likeCount + 1 : Math.max(0, likeCount - 1)
       );
     } finally {
-      setIsLikeInProgress(false);
+      setPendingServerUpdate(false);
     }
-  }, [isLiked, likeCount, onLikeChange, isLikeInProgress, whisperId]);
+  }, [
+    whisperId,
+    originalUserLikeState,
+    settledUserState,
+    isUserSettled,
+    pendingServerUpdate,
+    likeCount,
+    onLikeChange,
+  ]);
+
+  // Use ref to prevent debounced function recreation
+  const sendSettledServerUpdateRef = useRef(sendSettledServerUpdate);
+  sendSettledServerUpdateRef.current = sendSettledServerUpdate;
+
+  // Debounced function to mark user as "settled" after rapid clicking stops
+  const debouncedSettleUser = useMemo(
+    () =>
+      debounce(() => {
+        console.log("🎯 User has settled, checking if server update needed");
+        setIsUserSettled(true);
+        // Use a small delay to ensure state is updated
+        setTimeout(() => {
+          sendSettledServerUpdateRef.current();
+        }, 50);
+      }, 1000), // Wait 1 second after last click before considering user "settled"
+    [] // Empty dependency array - function never recreates
+  );
+
+  const handleLike = useCallback(() => {
+    // Optimistic update - immediate UI response
+    const newUserLikeState = !isLiked;
+    const newLikeCount = newUserLikeState
+      ? likeCount + 1
+      : Math.max(0, likeCount - 1);
+
+    console.log(`🎯 User like action: ${isLiked} -> ${newUserLikeState}`);
+    console.log(
+      `📊 Original state: ${originalUserLikeState}, New state: ${newUserLikeState}`
+    );
+
+    // Update UI immediately
+    setIsLiked(newUserLikeState);
+    setLikeCount(newLikeCount);
+    onLikeChange?.(newUserLikeState, newLikeCount);
+
+    // Update the "settled" state to what user wants
+    setSettledUserState(newUserLikeState);
+    setIsUserSettled(false); // Mark user as not settled (still clicking)
+
+    // Start the settle timer
+    debouncedSettleUser();
+
+    console.log(
+      `🎯 Updated settled state to: ${newUserLikeState}, waiting for user to settle...`
+    );
+  }, [
+    isLiked,
+    likeCount,
+    originalUserLikeState,
+    onLikeChange,
+    debouncedSettleUser,
+  ]);
 
   const loadLikes = useCallback(
     async (reset = false) => {
@@ -253,8 +365,8 @@ export const useWhisperLikes = ({
     loadingLikes,
     likesHasMore,
     likesLoaded,
-    isLikeInProgress,
     isInitialized,
+    pendingServerUpdate,
 
     // Actions
     handleLike,
