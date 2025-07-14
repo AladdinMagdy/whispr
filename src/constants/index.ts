@@ -300,6 +300,7 @@ export const CONTENT_MODERATION = {
     ENABLE_REAL_TIME_MODERATION: true, // Real-time moderation enabled
     ENABLE_REPUTATION_SYSTEM: true, // Reputation system enabled
     ENABLE_REPORTING_SYSTEM: true, // Reporting system enabled
+    ENABLE_ADVANCED_SPAM_DETECTION: true, // Advanced spam/scam detection enabled
   },
 
   // API thresholds

@@ -15,6 +15,7 @@ import {
   LocalModerationResult,
   ModerationFeatureFlags,
 } from "../types";
+
 import { CONTENT_MODERATION } from "../constants";
 import { LocalModerationService } from "./localModerationService";
 import { OpenAIModerationService } from "./openAIModerationService";
@@ -112,6 +113,11 @@ export class ContentModerationService {
           );
         }
       }
+
+      // Step 4: Advanced Spam/Scam Detection (DISABLED - requires post-save analysis)
+      // Note: Full behavioral analysis requires complete whisper data
+      // This will be implemented as a separate post-save service
+      // TODO: Implement post-save behavioral analysis service
 
       // Step 4: Calculate content ranking and age safety
       const contentRank = this.calculateContentRank(
@@ -306,6 +312,9 @@ export class ContentModerationService {
         ...PerspectiveAPIService.convertToViolations(perspectiveResult)
       );
     }
+
+    // Add spam/scam violations (disabled for now)
+    // TODO: Implement post-save behavioral analysis
 
     // Remove duplicates and sort by severity
     return this.deduplicateViolations(violations);

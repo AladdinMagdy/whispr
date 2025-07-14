@@ -362,6 +362,7 @@ export interface ModerationFeatureFlags {
   ENABLE_REAL_TIME_MODERATION: boolean;
   ENABLE_REPUTATION_SYSTEM: boolean;
   ENABLE_REPORTING_SYSTEM: boolean;
+  ENABLE_ADVANCED_SPAM_DETECTION: boolean;
 }
 
 // Reporting System Types
