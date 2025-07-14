@@ -30,6 +30,8 @@ export interface Whisper {
   createdAt: Date;
   transcription?: string;
   isTranscribed: boolean;
+  // Content moderation fields
+  moderationResult?: ModerationResult;
 }
 
 // New types for comments/interactions

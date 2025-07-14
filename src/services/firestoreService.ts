@@ -143,6 +143,8 @@ export class FirestoreService {
         limit: limitCount = 20,
         startAfter: startAfterDoc,
         userId,
+        isMinor,
+        contentPreferences,
       } = options;
 
       let q = query(
@@ -150,6 +152,19 @@ export class FirestoreService {
         orderBy("createdAt", "desc"),
         limit(limitCount)
       );
+
+      // Apply age-based content filtering
+      if (isMinor) {
+        // Minors only see G and PG content
+        q = query(q, where("moderationResult.contentRank", "in", ["G", "PG"]));
+      } else if (contentPreferences && !contentPreferences.allowAdultContent) {
+        // Adults with strict filtering see G, PG, and PG13 content
+        q = query(
+          q,
+          where("moderationResult.contentRank", "in", ["G", "PG", "PG13"])
+        );
+      }
+      // Adults with allowAdultContent: true see all content (no additional filter)
 
       // Filter by user if specified
       if (userId) {
@@ -181,6 +196,7 @@ export class FirestoreService {
           createdAt: data.createdAt?.toDate() || new Date(),
           transcription: data.transcription,
           isTranscribed: data.isTranscribed || false,
+          moderationResult: data.moderationResult,
         });
       });
 
@@ -213,13 +229,31 @@ export class FirestoreService {
     options: WhisperFeedOptions = {}
   ): () => void {
     try {
-      const { limit: limitCount = 20, userId } = options;
+      const {
+        limit: limitCount = 20,
+        userId,
+        isMinor,
+        contentPreferences,
+      } = options;
 
       let q = query(
         collection(this.firestore, this.whispersCollection),
         orderBy("createdAt", "desc"),
         limit(limitCount)
       );
+
+      // Apply age-based content filtering
+      if (isMinor) {
+        // Minors only see G and PG content
+        q = query(q, where("moderationResult.contentRank", "in", ["G", "PG"]));
+      } else if (contentPreferences && !contentPreferences.allowAdultContent) {
+        // Adults with strict filtering see G, PG, and PG13 content
+        q = query(
+          q,
+          where("moderationResult.contentRank", "in", ["G", "PG", "PG13"])
+        );
+      }
+      // Adults with allowAdultContent: true see all content (no additional filter)
 
       // Filter by user if specified
       if (userId) {
@@ -248,6 +282,7 @@ export class FirestoreService {
               createdAt: data.createdAt?.toDate() || new Date(),
               transcription: data.transcription,
               isTranscribed: data.isTranscribed || false,
+              moderationResult: data.moderationResult,
             });
           });
 
@@ -275,17 +310,32 @@ export class FirestoreService {
    */
   subscribeToNewWhispers(
     callback: (newWhisper: Whisper) => void,
-    sinceTimestamp?: Date
+    sinceTimestamp?: Date,
+    options: WhisperFeedOptions = {}
   ): () => void {
     try {
       // Listen to whispers created after the given timestamp
       const startTime = sinceTimestamp || new Date(Date.now() - 60000); // Default: last minute
+      const { isMinor, contentPreferences } = options;
 
       let q = query(
         collection(this.firestore, this.whispersCollection),
         where("createdAt", ">", startTime),
         orderBy("createdAt", "desc")
       );
+
+      // Apply age-based content filtering
+      if (isMinor) {
+        // Minors only see G and PG content
+        q = query(q, where("moderationResult.contentRank", "in", ["G", "PG"]));
+      } else if (contentPreferences && !contentPreferences.allowAdultContent) {
+        // Adults with strict filtering see G, PG, and PG13 content
+        q = query(
+          q,
+          where("moderationResult.contentRank", "in", ["G", "PG", "PG13"])
+        );
+      }
+      // Adults with allowAdultContent: true see all content (no additional filter)
 
       const unsubscribe = onSnapshot(
         q,
@@ -308,6 +358,7 @@ export class FirestoreService {
                 createdAt: data.createdAt?.toDate() || new Date(),
                 transcription: data.transcription,
                 isTranscribed: data.isTranscribed || false,
+                moderationResult: data.moderationResult,
               };
 
               console.log(`🆕 New whisper detected: ${newWhisper.id}`);
@@ -611,6 +662,7 @@ export class FirestoreService {
         createdAt: data.createdAt?.toDate() || new Date(),
         transcription: data.transcription,
         isTranscribed: data.isTranscribed || false,
+        moderationResult: data.moderationResult,
       };
     } catch (error) {
       console.error("❌ Error fetching whisper:", error);

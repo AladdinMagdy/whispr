@@ -131,7 +131,17 @@ const FeedScreen = () => {
         }
 
         console.log("🔄 Loading fresh whispers from Firestore...");
-        const result = await firestoreService.getWhispers();
+
+        // Prepare age-based filtering options
+        const feedOptions = {
+          isMinor: user?.isMinor || false,
+          contentPreferences: user?.contentPreferences || {
+            allowAdultContent: true,
+            strictFiltering: false,
+          },
+        };
+
+        const result = await firestoreService.getWhispers(feedOptions);
 
         // Update the store with the fetched data
         const { updateCache } = useFeedStore.getState();
@@ -174,6 +184,15 @@ const FeedScreen = () => {
 
     console.log("🔄 Setting up real-time whisper listener...");
 
+    // Prepare age-based filtering options for real-time listener
+    const feedOptions = {
+      isMinor: user?.isMinor || false,
+      contentPreferences: user?.contentPreferences || {
+        allowAdultContent: true,
+        strictFiltering: false,
+      },
+    };
+
     const unsubscribe = firestoreService.subscribeToNewWhispers(
       (newWhisper) => {
         try {
@@ -198,7 +217,8 @@ const FeedScreen = () => {
           console.error("❌ Error processing new whisper:", error);
         }
       },
-      new Date(Date.now() - 60000) // Listen to whispers from the last minute
+      new Date(Date.now() - 60000), // Listen to whispers from the last minute
+      feedOptions
     );
 
     // Store the unsubscribe function
@@ -219,10 +239,18 @@ const FeedScreen = () => {
 
     try {
       setLoadingMore(true);
-      const result = await firestoreService.getWhispers({
+      // Prepare age-based filtering options for pagination
+      const feedOptions = {
         limit: 20,
         startAfter: lastDoc,
-      });
+        isMinor: user?.isMinor || false,
+        contentPreferences: user?.contentPreferences || {
+          allowAdultContent: true,
+          strictFiltering: false,
+        },
+      };
+
+      const result = await firestoreService.getWhispers(feedOptions);
 
       // Append new whispers to existing ones
       const { whispers: existingWhispers, updateCache } =

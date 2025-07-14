@@ -21,6 +21,13 @@ export interface AnonymousUser {
   whisperCount: number;
   totalReactions: number;
   profileColor: string;
+  // Age verification and content preferences
+  age?: number;
+  isMinor?: boolean;
+  contentPreferences?: {
+    allowAdultContent: boolean;
+    strictFiltering: boolean;
+  };
 }
 
 export interface AuthState {
