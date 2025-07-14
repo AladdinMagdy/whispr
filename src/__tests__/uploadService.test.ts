@@ -60,6 +60,44 @@ jest.mock("../services/storageService", () => ({
   },
 }));
 
+jest.mock("../services/transcriptionService", () => ({
+  TranscriptionService: {
+    transcribeAudio: jest.fn().mockResolvedValue({
+      text: "Hello world, this is a test whisper",
+      language: "en",
+    }),
+  },
+}));
+
+jest.mock("../services/contentModerationService", () => ({
+  ContentModerationService: {
+    moderateWhisper: jest.fn().mockResolvedValue({
+      status: "approved",
+      contentRank: "G",
+      isMinorSafe: true,
+      violations: [],
+      confidence: 0.9,
+      moderationTime: 500,
+      apiResults: {},
+      reputationImpact: 0,
+      appealable: false,
+    }),
+  },
+}));
+
+jest.mock("../services/ageVerificationService", () => ({
+  AgeVerificationService: {
+    verifyAge: jest.fn().mockResolvedValue({
+      isVerified: true,
+      age: 25,
+      isMinor: false,
+      verificationMethod: "date_of_birth",
+      confidence: 0.7,
+      requiresAdditionalVerification: false,
+    }),
+  },
+}));
+
 // Mock Firebase functions directly
 jest.mock("firebase/storage", () => ({
   ref: jest.fn(),
@@ -230,6 +268,7 @@ describe("UploadService", () => {
         whisperPercentage: 0.9,
         averageLevel: 0.01,
         confidence: 0.8,
+        userAge: 25, // Required for age verification
       };
       global.fetch = jest.fn().mockResolvedValue({
         blob: jest.fn().mockResolvedValue(new Blob(["mock audio data"])),

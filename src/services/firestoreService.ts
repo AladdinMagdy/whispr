@@ -34,6 +34,8 @@ export interface WhisperUploadData {
   whisperPercentage: number;
   averageLevel: number;
   confidence: number;
+  transcription?: string;
+  moderationResult?: any; // Will be properly typed later
 }
 
 export interface LikeData {
@@ -57,6 +59,12 @@ export interface WhisperFeedOptions {
   lastWhisper?: QueryDocumentSnapshot<DocumentData>;
   userId?: string; // For user-specific feeds
   startAfter?: QueryDocumentSnapshot<DocumentData>; // For pagination
+  userAge?: number; // For age-based filtering
+  isMinor?: boolean; // For minor content filtering
+  contentPreferences?: {
+    allowAdultContent: boolean;
+    strictFiltering: boolean;
+  };
 }
 
 export interface PaginatedWhispersResult {
@@ -99,10 +107,12 @@ export class FirestoreService {
         whisperPercentage: uploadData.whisperPercentage,
         averageLevel: uploadData.averageLevel,
         confidence: uploadData.confidence,
+        transcription: uploadData.transcription,
+        moderationResult: uploadData.moderationResult,
         likes: 0,
         replies: 0,
         createdAt: serverTimestamp(),
-        isTranscribed: false,
+        isTranscribed: !!uploadData.transcription,
       };
 
       const docRef = await addDoc(

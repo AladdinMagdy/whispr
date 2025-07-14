@@ -6,6 +6,9 @@
 import { StorageService } from "./storageService";
 import { getFirestoreService } from "./firestoreService";
 import { getAuthService } from "./authService";
+import { ContentModerationService } from "./contentModerationService";
+import { TranscriptionService } from "./transcriptionService";
+import { AgeVerificationService } from "./ageVerificationService";
 
 import {
   formatFileSize,
@@ -25,6 +28,8 @@ export interface WhisperUploadData {
   whisperPercentage: number;
   averageLevel: number;
   confidence: number;
+  userAge?: number; // Required for age verification
+  dateOfBirth?: Date; // Alternative to userAge
 }
 
 export class UploadService {
@@ -75,7 +80,38 @@ export class UploadService {
 
       console.log("✅ Audio uploaded successfully");
 
-      // Create whisper document in Firestore
+      // Step 1: Transcribe the audio
+      console.log("🎤 Transcribing audio for moderation...");
+      const transcription = await TranscriptionService.transcribeAudio(
+        audioUrl
+      );
+      console.log("✅ Transcription completed:", transcription.text);
+
+      // Step 2: Verify user age
+      console.log("🔍 Verifying user age...");
+      const ageVerification = await AgeVerificationService.verifyAge({
+        age: uploadData.userAge,
+        dateOfBirth: uploadData.dateOfBirth,
+      });
+
+      if (!ageVerification.isVerified) {
+        throw new Error(`Age verification failed: ${ageVerification.reason}`);
+      }
+
+      // Step 3: Moderate the transcription
+      console.log("🛡️ Moderating content...");
+      const moderationResult = await ContentModerationService.moderateWhisper(
+        transcription.text,
+        user.uid,
+        ageVerification.age
+      );
+
+      // Step 4: Check if content was rejected
+      if (moderationResult.status === "rejected") {
+        throw new Error(`Content rejected: ${moderationResult.reason}`);
+      }
+
+      // Step 5: Create whisper document in Firestore with moderation data
       const whisperId = await this.firestoreService.createWhisper(
         user.uid,
         user.displayName || "Anonymous",
@@ -86,6 +122,8 @@ export class UploadService {
           whisperPercentage: uploadData.whisperPercentage,
           averageLevel: uploadData.averageLevel,
           confidence: uploadData.confidence,
+          transcription: transcription.text,
+          moderationResult, // Include moderation data
         }
       );
 
