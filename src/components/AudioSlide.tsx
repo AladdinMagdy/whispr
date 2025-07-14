@@ -55,7 +55,10 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
 
     // Get navigation state to check if we're on upload screen
     const route = useRoute();
-    const isOnFeedScreen = route.name === "FeedScreen";
+    const isOnFeedScreen = useMemo(
+      () => route.name === "FeedScreen",
+      [route.name]
+    );
 
     const [isPlaying, setIsPlaying] = useState(false);
     const [isLoaded, setIsLoaded] = useState(false);
@@ -261,7 +264,12 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
           cleanupAudio();
         }
       };
-    }, [cleanupAudio, onPlaybackStatusUpdate, forceCleanupOnUnmount]);
+    }, [
+      cleanupAudio,
+      onPlaybackStatusUpdate,
+      forceCleanupOnUnmount,
+      isOnFeedScreen,
+    ]);
 
     // Handle visibility and active state changes
     useEffect(() => {

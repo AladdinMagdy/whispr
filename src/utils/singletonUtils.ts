@@ -13,8 +13,10 @@ export function destroySingleton<T>(
   const instance = (serviceClass as unknown as { instance?: T }).instance;
   if (instance) {
     // Call destroyInstance if it exists
-    if (typeof (serviceClass as any).destroyInstance === "function") {
-      (serviceClass as any).destroyInstance();
+    const destroyInstance = (serviceClass as { destroyInstance?: () => void })
+      .destroyInstance;
+    if (typeof destroyInstance === "function") {
+      destroyInstance();
     } else {
       // Fallback: clear the instance
       (serviceClass as unknown as { instance?: T }).instance = undefined;
@@ -30,8 +32,10 @@ export function resetSingleton<T>(
   serviceClass: { instance?: T; resetInstance?: () => void },
   serviceName: string
 ): void {
-  if (typeof (serviceClass as any).resetInstance === "function") {
-    (serviceClass as any).resetInstance();
+  const resetInstance = (serviceClass as { resetInstance?: () => void })
+    .resetInstance;
+  if (typeof resetInstance === "function") {
+    resetInstance();
     console.log(`🔄 ${serviceName} singleton reset successfully`);
   }
 }
