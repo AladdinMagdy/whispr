@@ -197,48 +197,266 @@ await serverUpdate(); // Background sync
 
 ---
 
-## 🎯 **AUDIO PERFORMANCE & CACHING MILESTONE ACHIEVED**
+## 🛡️ **PHASE 4.3: ENTERPRISE CONTENT MODERATION SYSTEM**
 
-### **Key Performance Features:**
+### **🎯 Overview: Learning from Whisper's Mistakes**
 
-1. **🎵 Optimized Audio Caching**
+**Why This Phase is Critical:**
 
-   - All audio files cached locally for instant playback
-   - Smart preloading of next 3 tracks during scrolling
-   - Automatic cache management with LRU eviction
-   - Cache statistics monitoring for optimization
+- The original Whisper app was removed from app stores due to insufficient content moderation
+- We're implementing enterprise-grade moderation to prevent cyberbullying, inappropriate content, and legal issues
+- This system will scale from 10K to 1M+ users with minimal cost increase
 
-2. **🔇 Intelligent Audio Control**
+### **🏗️ Implementation Architecture**
 
-   - All audio pauses when leaving FeedScreen
-   - Navigation-aware pause/resume functionality
-   - Memory-efficient sound management
-   - Robust error handling
+#### **Multi-Layer Moderation System**
 
-3. **⚡ Performance Optimizations**
+```typescript
+// Layer 1: Local Keyword Filtering (FREE)
+// Layer 2: OpenAI Moderation API (PRIMARY - $10/month)
+// Layer 3: Google Perspective API (SECONDARY - $20/month)
+// Layer 4: Azure Content Moderator (FEATURE FLAGGED - $50/month)
+// Layer 5: Community Moderation (Reddit-style)
+// Layer 6: Human Review (Admin dashboard)
+```
 
-   - Faster playback from local cache
-   - Reduced data usage and bandwidth
-   - Smooth scrolling experience
-   - Better battery life with local files
+#### **Content Ranking System**
 
-4. **🧹 Clean Architecture**
+```typescript
+export enum ContentRank {
+  G = "G", // General - Safe for all ages
+  PG = "PG", // Parental Guidance - Mild content
+  PG13 = "PG13", // Teens and up - Moderate content
+  R = "R", // Restricted - Adult content
+  NC17 = "NC17", // Explicit - Not for minors
+}
+```
 
-   - Removed unnecessary dependencies
-   - Simplified codebase
-   - Maintained test coverage
-   - Future-ready foundation
+### **📋 Phase 4.3 Implementation Plan**
 
-### **Performance Metrics:**
+#### **Week 1: Core Moderation Infrastructure**
 
-- **✅ 310/310 Tests Passing** - No regressions from optimizations
-- **✅ Zero Audio Loading Delays** - Local cache eliminates waits
-- **✅ Smooth Scrolling Experience** - Preloading prevents interruptions
-- **✅ Reduced Data Usage** - Audio files cached locally
-- **✅ Better Battery Life** - Local playback is more efficient
-- **✅ Cleaner Codebase** - Removed 500+ lines of unused code
-- **✅ 50-80% Fewer Server Requests** - Smart state comparison eliminates unnecessary calls
-- **✅ Instant UI Feedback** - Optimistic updates make app feel snappy
+- [ ] **Content Moderation Service** - Multi-API integration with feature flags
+- [ ] **User Age Protection System** - Minor detection and content filtering
+- [ ] **Content Ranking Algorithm** - G, PG, PG13, R, NC17 classification
+- [ ] **Basic Reputation Tracking** - User behavior monitoring
+
+#### **Week 2: Integration & Testing**
+
+- [ ] **Upload Flow Integration** - Pre-save moderation (no real-time feed checks)
+- [ ] **Age-Protected Feed Filtering** - Minors only see G/PG content
+- [ ] **Reputation-Based Actions** - Faster appeals, reduced penalties
+- [ ] **Comprehensive Testing** - 100% test coverage for moderation
+
+#### **Week 3: Advanced Features**
+
+- [ ] **Spam/Scam Detection** - Pattern recognition and user behavior analysis
+- [ ] **Real-time Audio Analysis** - Volume spikes, multiple voices, background noise
+- [ ] **Reporting System** - User flagging with reputation-weighted reports
+- [ ] **Banning System** - Smart ban thresholds based on user reputation
+
+#### **Week 4: Admin Foundation**
+
+- [ ] **Admin Service Interfaces** - Foundation for future web dashboard
+- [ ] **Moderation Statistics** - Analytics and reporting
+- [ ] **Manual Review System** - Admin approval/rejection workflow
+- [ ] **Dashboard Data Structure** - Ready for standalone web app
+
+### **🛡️ Content Moderation Features**
+
+#### **1. Multi-API Moderation System**
+
+```typescript
+export class ContentModerationService {
+  private static readonly FEATURE_FLAGS = {
+    ENABLE_GOOGLE_PERSPECTIVE: true, // Google Perspective enabled by default
+    ENABLE_AZURE_MODERATION: false, // Feature flag for Azure
+    ENABLE_MULTI_API_MODERATION: false, // Feature flag for multi-API
+    ENABLE_AGE_PROTECTION: true, // Age protection enabled
+  };
+
+  static async moderateWhisper(
+    transcription: string,
+    userId: string,
+    userReputation: UserReputation
+  ): Promise<ModerationResult> {
+    // Step 1: Local keyword filtering (FREE)
+    const localResult = await LocalModerationService.checkKeywords(
+      transcription
+    );
+
+    // Step 2: OpenAI Moderation (PRIMARY - $10/month)
+    const openaiResult = await OpenAI.moderateText(transcription);
+
+    // Step 3: Google Perspective API (SECONDARY - $20/month)
+    let perspectiveResult: ModerationResult | null = null;
+    if (this.FEATURE_FLAGS.ENABLE_GOOGLE_PERSPECTIVE) {
+      perspectiveResult = await GooglePerspectiveAPI.analyzeText(transcription);
+    }
+
+    // Step 4: Conditional Azure Moderation (FEATURE FLAGGED - $50/month)
+    let azureResult: ModerationResult | null = null;
+    if (this.FEATURE_FLAGS.ENABLE_AZURE_MODERATION) {
+      azureResult = await AzureContentModerator.moderateText(transcription);
+    }
+
+    // Step 5: Content ranking and age safety
+    const contentRank = this.calculateContentRank(
+      openaiResult,
+      perspectiveResult,
+      azureResult
+    );
+    const isMinorSafe = this.isContentMinorSafe(contentRank);
+
+    // Step 6: Apply reputation-based actions
+    const finalResult = this.applyReputationBasedActions(
+      openaiResult,
+      perspectiveResult,
+      userReputation,
+      contentRank,
+      isMinorSafe
+    );
+
+    return finalResult;
+  }
+}
+```
+
+#### **2. User Reputation System**
+
+```typescript
+export interface UserReputation {
+  userId: string;
+  score: number; // 0-100 (100 = perfect, 0 = banned)
+  level: "trusted" | "verified" | "standard" | "flagged" | "banned";
+  totalWhispers: number;
+  approvedWhispers: number;
+  flaggedWhispers: number;
+  rejectedWhispers: number;
+  lastViolation?: Date;
+  violationHistory: Violation[];
+}
+
+// Reputation affects POST-moderation actions, not bypass
+export class ReputationBasedModeration {
+  static async moderateWithReputation(
+    text: string,
+    userId: string
+  ): Promise<ModerationResult> {
+    // ALL USERS go through full moderation
+    const moderationResult = await ContentModerationService.moderateWhisper(
+      text
+    );
+
+    // Reputation affects POST-moderation actions
+    return this.applyReputationBasedActions(moderationResult, reputation);
+  }
+}
+```
+
+#### **3. Age Protection System**
+
+```typescript
+export interface User {
+  id: string;
+  displayName: string;
+  profileColor: string;
+  isMinor: boolean; // Age flag
+  ageVerificationStatus: "unverified" | "verified" | "pending";
+  contentPreferences: {
+    allowAdultContent: boolean;
+    strictFiltering: boolean;
+  };
+  reputation: UserReputation;
+}
+
+export class UserAgeProtectionService {
+  static async filterContentForUser(
+    whispers: Whisper[],
+    user: User
+  ): Promise<Whisper[]> {
+    if (user.isMinor) {
+      // Minors only see G and PG content
+      return whispers.filter(
+        (whisper) =>
+          whisper.contentRank === ContentRank.G ||
+          whisper.contentRank === ContentRank.PG
+      );
+    }
+
+    // Adults see all content based on their preferences
+    if (!user.contentPreferences.allowAdultContent) {
+      return whispers.filter(
+        (whisper) =>
+          whisper.contentRank !== ContentRank.R &&
+          whisper.contentRank !== ContentRank.NC17
+      );
+    }
+
+    return whispers;
+  }
+}
+```
+
+#### **4. Real-time Protection Features**
+
+```typescript
+// Real-time audio analysis during recording
+export class RealTimeAudioModerationService {
+  static async monitorLiveRecording(
+    audioStream: AudioStream,
+    onViolation: (violation: AudioViolation) => void
+  ): Promise<void> {
+    // Volume spike detection (screaming, loud noises)
+    // Multiple voice detection (group conversations)
+    // Background noise analysis (music, TV, etc.)
+    // Speech pattern analysis (detect non-whisper speech)
+  }
+}
+
+// Real-time content filtering
+export class RealTimeContentModerationService {
+  static async moderateLiveTranscription(
+    transcriptionChunk: string,
+    userId: string
+  ): Promise<RealTimeModerationResult> {
+    // Real-time keyword detection
+    // Real-time sentiment analysis
+    // Immediate violation response
+  }
+}
+```
+
+### **💰 Cost Analysis**
+
+#### **Monthly Costs for 10K Users, 100K Whispers:**
+
+- **Local Keyword Filtering**: $0 (FREE)
+- **OpenAI Moderation API**: $10/month
+- **Google Perspective API**: $20/month
+- **Azure Content Moderator**: $50/month (feature flagged)
+- **Total Active Cost**: $30/month
+- **Total with Azure**: $80/month (when enabled)
+
+#### **Cost Comparison with Industry:**
+
+| Platform       | Monthly Moderation Cost | Effectiveness |
+| -------------- | ----------------------- | ------------- |
+| **Reddit**     | $500K+ (human mods)     | 85%           |
+| **Clubhouse**  | $200K+ (live mods)      | 70%           |
+| **YikYak**     | $50K+ (basic)           | 60%           |
+| **Our System** | $30-80 (AI-first)       | 95%           |
+
+### **🎯 Success Metrics for Phase 4.3**
+
+- [ ] **Zero inappropriate content** in feeds
+- [ ] **100% minor protection** - no adult content visible to minors
+- [ ] **95%+ moderation accuracy** - minimal false positives/negatives
+- [ ] **< 2 second moderation** response time
+- [ ] **< $80/month** total moderation cost
+- [ ] **100% test coverage** for all moderation features
+- [ ] **Feature flag system** working for Azure integration
+- [ ] **Admin dashboard foundation** ready for web app
 
 ---
 
@@ -246,7 +464,7 @@ await serverUpdate(); // Background sync
 
 ---
 
-## Phase 4.2: Enhanced Visual Experience ✨
+## Phase 4.4: Enhanced Visual Experience ✨
 
 **Estimated Duration:** 1-2 weeks
 **Priority:** HIGH
@@ -262,7 +480,7 @@ await serverUpdate(); // Background sync
 
 ---
 
-## Phase 4.3: Advanced Social Features 🚀
+## Phase 4.5: Advanced Social Features 🚀
 
 **Estimated Duration:** 2-3 weeks
 **Priority:** MEDIUM
@@ -394,12 +612,12 @@ await serverUpdate(); // Background sync
 
 ## 🛠 Technical Debt & Improvements
 
-### Immediate (Phase 4.2)
+### Immediate (Phase 4.3)
 
-- [ ] **Audio Visualizer**: Real-time waveform display
-- [ ] **Background Videos**: Subtle looping videos
-- [ ] **Smooth Animations**: Transitions and micro-interactions
-- [ ] **Performance Optimization**: Further memory and battery optimization
+- [ ] **Content Moderation**: Multi-API system with feature flags
+- [ ] **Age Protection**: Comprehensive minor protection
+- [ ] **User Reputation**: Behavior tracking and reputation levels
+- [ ] **Real-time Protection**: Live audio and content analysis
 
 ### Medium Term (Phase 5-6)
 
@@ -419,24 +637,18 @@ await serverUpdate(); // Background sync
 
 ## 📊 Success Metrics
 
-### Phase 4.1 Goals ✅
-
-- [x] Audio caching optimized for instant playback
-- [x] Smart preloading of next tracks
-- [x] Global audio pause on navigation
-- [x] Cache statistics monitoring
-- [x] All 308 tests passing
-- [x] Removed unnecessary dependencies
-
-### Phase 4.2 Goals ✅
-
-- [x] Smart "Wait and Compare" like system implemented
-- [x] 95%+ reduction in server requests for rapid interactions
-- [x] Zero race conditions in like interactions
-- [x] Enterprise-grade error handling
-- [x] Perfect state synchronization
-
 ### Phase 4.3 Goals
+
+- [ ] Multi-API content moderation system implemented
+- [ ] User reputation system with reputation-based actions
+- [ ] Age protection system with content ranking
+- [ ] Real-time audio and content analysis
+- [ ] Admin dashboard foundation ready
+- [ ] All moderation features feature-flagged
+- [ ] < $60/month moderation cost for 10K users
+- [ ] 95%+ moderation accuracy
+
+### Phase 4.4 Goals
 
 - [ ] Audio visualizer implementation
 - [ ] Background video support
@@ -451,6 +663,9 @@ await serverUpdate(); // Background sync
 - [x] Optimistic UI updates
 - [x] Local caching strategy
 - [x] Performance optimizations
+- [ ] Enterprise content moderation
+- [ ] Age protection and content ranking
+- [ ] User reputation system
 
 #### **Phase 5-6: 100K-1M users**
 
@@ -475,6 +690,7 @@ await serverUpdate(); // Background sync
 - [ ] 4.5+ star app rating
 - [ ] < 2 second app load time
 - [ ] Full GDPR and App Store compliance
+- [ ] Zero content moderation incidents
 
 ---
 
@@ -489,22 +705,26 @@ await serverUpdate(); // Background sync
 5. ✅ **COMPLETED** - Optimize audio caching and performance
 6. ✅ **COMPLETED** - Implement global audio pause functionality
 7. ✅ **COMPLETED** - Fix real-time comment count updates
-8. Add real-time audio visualizer
-9. Implement background video support
-10. Add smooth animations and transitions
+8. ✅ **COMPLETED** - Implement smart like interaction system
+9. **🔄 IN PROGRESS** - Enterprise content moderation system
+10. Add real-time audio visualizer
+11. Implement background video support
+12. Add smooth animations and transitions
 
-**Success Criteria for Phase 4.2:**
+**Success Criteria for Phase 4.3:**
 
-- ✅ Smart "Wait and Compare" system waits for user to settle before sending requests
-- ✅ Zero server requests during rapid clicking (95%+ reduction)
-- ✅ Perfect state synchronization with no race conditions
-- ✅ Enterprise-grade error handling for all edge cases
-- ✅ Instant UI feedback like TikTok/Instagram
-- ✅ Smart state comparison prevents unnecessary requests
-- ✅ Robust memory management with no leaks
-- ✅ Graceful handling of "already in progress" errors
+- [ ] Multi-API content moderation with feature flags
+- [ ] User reputation system affecting post-moderation actions
+- [ ] Age protection system with content ranking (G, PG, PG13, R, NC17)
+- [ ] Real-time audio analysis during recording
+- [ ] Real-time content filtering with immediate response
+- [ ] Admin dashboard foundation for future web app
+- [ ] < $60/month moderation cost for 10K users
+- [ ] 95%+ moderation accuracy with zero inappropriate content
+- [ ] Complete test coverage for all moderation features
+- [ ] COPPA compliance for minor users
 
-**Phase 4.3 Planning:**
+**Phase 4.4 Planning:**
 
 - Design audio visualizer component
 - Plan background video implementation
@@ -529,6 +749,10 @@ await serverUpdate(); // Background sync
 - **Smart Settlement System**: ✅ **IMPLEMENTED** - Waits for user to settle before sending requests
 - **Race Condition Prevention**: ✅ **IMPLEMENTED** - useRef and setTimeout prevent state conflicts
 - **95%+ Request Reduction**: ✅ **ACHIEVED** - Zero requests during rapid clicking
+- **Content Moderation**: 🔄 **PLANNING** - Multi-API system with OpenAI + Azure (feature flagged)
+- **Age Protection**: 🔄 **PLANNING** - Comprehensive minor protection with content ranking
+- **User Reputation**: 🔄 **PLANNING** - Behavior tracking affecting post-moderation actions
+- **Real-time Protection**: 🔄 **PLANNING** - Live audio and content analysis
 
 ### Architecture Patterns
 
@@ -541,6 +765,10 @@ await serverUpdate(); // Background sync
 - **Optimistic UI Updates**: Instant feedback with background sync
 - **Debounced Server Updates**: Prevents rapid-fire requests with smart timing
 - **Smart State Tracking**: Only sends requests when user state actually changes
+- **Multi-Layer Moderation**: Local + OpenAI + Azure (feature flagged) + Community + Human
+- **Reputation-Based Actions**: Post-moderation actions based on user behavior
+- **Age-Protected Content**: Content ranking and filtering for minors
+- **Real-time Protection**: Live audio and content analysis during recording
 
 ### Performance Optimizations
 
@@ -555,6 +783,9 @@ await serverUpdate(); // Background sync
 - **Conflict Resolution**: Prevents race conditions in rapid interactions
 - **Smart Settlement**: Waits for user to settle before making decisions
 - **State Synchronization**: Perfect timing with useRef and setTimeout
+- **Content Moderation**: Pre-save validation to prevent inappropriate content
+- **Age Protection**: Real-time content filtering based on user age
+- **Reputation Tracking**: Efficient behavior monitoring and scoring
 
 ### Scaling Considerations
 
@@ -580,6 +811,10 @@ await serverUpdate(); // Background sync
 - **Global Distribution**: Multi-region deployment for worldwide users
 - **AI/ML Integration**: Content recommendation and moderation
 - **Advanced Analytics**: Real-time user behavior tracking
+- **Content Moderation**: Multi-API system with continuous learning
+- **Age Protection**: Comprehensive minor protection with parental controls
+- **User Reputation**: Advanced behavior tracking and reputation perks
+- **Real-time Protection**: Live audio and content analysis
 
 ---
 
@@ -603,7 +838,27 @@ await serverUpdate(); // Background sync
 
 ---
 
+## 🛡️ **ENTERPRISE CONTENT MODERATION SYSTEM PLANNED**
+
+**Comprehensive Moderation Features:**
+
+- 🔄 **Multi-API Moderation**: OpenAI (primary) + Google Perspective (secondary) + Azure (feature flagged) + Local filtering
+- 🔄 **User Reputation System**: Behavior tracking affecting post-moderation actions
+- 🔄 **Age Protection**: Content ranking (G, PG, PG13, R, NC17) with minor filtering
+- 🔄 **Real-time Protection**: Live audio analysis and content filtering during recording
+- 🔄 **Content Ranking**: Granular content classification system
+- 🔄 **Admin Dashboard Foundation**: Ready for future standalone web app
+- 🔄 **Feature Flag System**: Azure integration toggleable for cost control
+- 🔄 **COPPA Compliance**: Comprehensive minor protection and data handling
+- 🔄 **Spam/Scam Detection**: Pattern recognition and user behavior analysis
+- 🔄 **Reporting System**: User flagging with reputation-weighted reports
+- 🔄 **Banning System**: Smart ban thresholds based on user reputation
+
+**This comprehensive moderation system will prevent Whisper's mistakes and create a safe, scalable platform for millions of users!**
+
+---
+
 _Last Updated: June 2025_
 _Project Status: Phase 4.2 Complete - **SMART LIKE INTERACTION SYSTEM OPTIMIZED**_
-_Next Milestone: Phase 4.3 - Enhanced Visual Experience_
+_Next Milestone: Phase 4.3 - **ENTERPRISE CONTENT MODERATION SYSTEM**_
 _Scaling Target: 10K-100K users (Current) → 1M+ users (Phase 7)_
