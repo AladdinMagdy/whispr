@@ -40,6 +40,9 @@ import {
   ReportCategory,
   ReportStatus,
   ReportPriority,
+  Appeal,
+  AppealStatus,
+  Suspension,
 } from "@/types";
 import { FIRESTORE_COLLECTIONS } from "@/constants";
 import type { ViolationRecord } from "@/types";
@@ -1524,8 +1527,7 @@ export class FirestoreService {
   async adjustUserReputationScore(
     userId: string,
     newScore: number,
-    reason: string,
-    adminId: string
+    reason: string
   ): Promise<void> {
     try {
       const reputation = await this.getUserReputation(userId);
@@ -1548,7 +1550,6 @@ export class FirestoreService {
             severity: "medium",
             timestamp: new Date(),
             resolved: false,
-            moderatorId: adminId,
             notes: `Admin adjustment: ${oldScore} → ${newScore}. Reason: ${reason}`,
           },
         ],
@@ -1858,6 +1859,323 @@ export class FirestoreService {
           error instanceof Error ? error.message : "Unknown error"
         }`
       );
+    }
+  }
+
+  // Appeal methods
+  async saveAppeal(appeal: Appeal): Promise<void> {
+    try {
+      await setDoc(doc(this.firestore, "appeals", appeal.id), {
+        ...appeal,
+        submittedAt: Timestamp.fromDate(appeal.submittedAt),
+        reviewedAt: appeal.reviewedAt
+          ? Timestamp.fromDate(appeal.reviewedAt)
+          : null,
+        createdAt: Timestamp.fromDate(appeal.createdAt),
+        updatedAt: Timestamp.fromDate(appeal.updatedAt),
+      });
+      console.log("✅ Appeal saved successfully:", appeal.id);
+    } catch (error) {
+      console.error("❌ Error saving appeal:", error);
+      throw new Error(
+        `Failed to save appeal: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  async getAppeal(appealId: string): Promise<Appeal | null> {
+    try {
+      const docRef = doc(this.firestore, "appeals", appealId);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        return {
+          ...data,
+          submittedAt: data.submittedAt?.toDate() || new Date(),
+          reviewedAt: data.reviewedAt?.toDate(),
+          createdAt: data.createdAt?.toDate() || new Date(),
+          updatedAt: data.updatedAt?.toDate() || new Date(),
+        } as Appeal;
+      }
+
+      return null;
+    } catch (error) {
+      console.error("❌ Error getting appeal:", error);
+      return null;
+    }
+  }
+
+  async getUserAppeals(userId: string): Promise<Appeal[]> {
+    try {
+      const q = query(
+        collection(this.firestore, "appeals"),
+        where("userId", "==", userId),
+        orderBy("createdAt", "desc")
+      );
+
+      const querySnapshot = await getDocs(q);
+      const appeals: Appeal[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        appeals.push({
+          ...data,
+          submittedAt: data.submittedAt?.toDate() || new Date(),
+          reviewedAt: data.reviewedAt?.toDate(),
+          createdAt: data.createdAt?.toDate() || new Date(),
+          updatedAt: data.updatedAt?.toDate() || new Date(),
+        } as Appeal);
+      });
+
+      return appeals;
+    } catch (error) {
+      console.error("❌ Error getting user appeals:", error);
+      return [];
+    }
+  }
+
+  async getPendingAppeals(): Promise<Appeal[]> {
+    try {
+      const q = query(
+        collection(this.firestore, "appeals"),
+        where("status", "==", AppealStatus.PENDING),
+        orderBy("submittedAt", "asc")
+      );
+
+      const querySnapshot = await getDocs(q);
+      const appeals: Appeal[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        appeals.push({
+          ...data,
+          submittedAt: data.submittedAt?.toDate() || new Date(),
+          reviewedAt: data.reviewedAt?.toDate(),
+          createdAt: data.createdAt?.toDate() || new Date(),
+          updatedAt: data.updatedAt?.toDate() || new Date(),
+        } as Appeal);
+      });
+
+      return appeals;
+    } catch (error) {
+      console.error("❌ Error getting pending appeals:", error);
+      return [];
+    }
+  }
+
+  async updateAppeal(
+    appealId: string,
+    updates: Partial<Appeal>
+  ): Promise<void> {
+    try {
+      const updateData: UpdateData<Appeal> = {
+        ...updates,
+        updatedAt: Timestamp.fromDate(new Date()),
+      };
+
+      if (updates.reviewedAt) {
+        updateData.reviewedAt = Timestamp.fromDate(updates.reviewedAt);
+      }
+
+      await updateDoc(doc(this.firestore, "appeals", appealId), updateData);
+      console.log("✅ Appeal updated successfully:", appealId);
+    } catch (error) {
+      console.error("❌ Error updating appeal:", error);
+      throw new Error(
+        `Failed to update appeal: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  async getAllAppeals(): Promise<Appeal[]> {
+    try {
+      const q = query(
+        collection(this.firestore, "appeals"),
+        orderBy("createdAt", "desc")
+      );
+
+      const querySnapshot = await getDocs(q);
+      const appeals: Appeal[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        appeals.push({
+          ...data,
+          submittedAt: data.submittedAt?.toDate() || new Date(),
+          reviewedAt: data.reviewedAt?.toDate(),
+          createdAt: data.createdAt?.toDate() || new Date(),
+          updatedAt: data.updatedAt?.toDate() || new Date(),
+        } as Appeal);
+      });
+
+      return appeals;
+    } catch (error) {
+      console.error("❌ Error getting all appeals:", error);
+      return [];
+    }
+  }
+
+  // Suspension methods
+  async saveSuspension(suspension: Suspension): Promise<void> {
+    try {
+      await setDoc(doc(this.firestore, "suspensions", suspension.id), {
+        ...suspension,
+        startDate: Timestamp.fromDate(suspension.startDate),
+        endDate: Timestamp.fromDate(suspension.endDate),
+        createdAt: Timestamp.fromDate(suspension.createdAt),
+        updatedAt: Timestamp.fromDate(suspension.updatedAt),
+      });
+      console.log("✅ Suspension saved successfully:", suspension.id);
+    } catch (error) {
+      console.error("❌ Error saving suspension:", error);
+      throw new Error(
+        `Failed to save suspension: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  async getSuspension(suspensionId: string): Promise<Suspension | null> {
+    try {
+      const docRef = doc(this.firestore, "suspensions", suspensionId);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        return {
+          ...data,
+          startDate: data.startDate?.toDate() || new Date(),
+          endDate: data.endDate?.toDate() || new Date(),
+          createdAt: data.createdAt?.toDate() || new Date(),
+          updatedAt: data.updatedAt?.toDate() || new Date(),
+        } as Suspension;
+      }
+
+      return null;
+    } catch (error) {
+      console.error("❌ Error getting suspension:", error);
+      return null;
+    }
+  }
+
+  async getUserSuspensions(userId: string): Promise<Suspension[]> {
+    try {
+      const q = query(
+        collection(this.firestore, "suspensions"),
+        where("userId", "==", userId),
+        orderBy("createdAt", "desc")
+      );
+
+      const querySnapshot = await getDocs(q);
+      const suspensions: Suspension[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        suspensions.push({
+          ...data,
+          startDate: data.startDate?.toDate() || new Date(),
+          endDate: data.endDate?.toDate() || new Date(),
+          createdAt: data.createdAt?.toDate() || new Date(),
+          updatedAt: data.updatedAt?.toDate() || new Date(),
+        } as Suspension);
+      });
+
+      return suspensions;
+    } catch (error) {
+      console.error("❌ Error getting user suspensions:", error);
+      return [];
+    }
+  }
+
+  async updateSuspension(
+    suspensionId: string,
+    updates: Partial<Suspension>
+  ): Promise<void> {
+    try {
+      const updateData: UpdateData<Suspension> = {
+        ...updates,
+        updatedAt: Timestamp.fromDate(new Date()),
+      };
+
+      if (updates.endDate) {
+        updateData.endDate = Timestamp.fromDate(updates.endDate);
+      }
+
+      await updateDoc(
+        doc(this.firestore, "suspensions", suspensionId),
+        updateData
+      );
+      console.log("✅ Suspension updated successfully:", suspensionId);
+    } catch (error) {
+      console.error("❌ Error updating suspension:", error);
+      throw new Error(
+        `Failed to update suspension: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  async getActiveSuspensions(): Promise<Suspension[]> {
+    try {
+      const q = query(
+        collection(this.firestore, "suspensions"),
+        where("isActive", "==", true),
+        orderBy("createdAt", "desc")
+      );
+
+      const querySnapshot = await getDocs(q);
+      const suspensions: Suspension[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        suspensions.push({
+          ...data,
+          startDate: data.startDate?.toDate() || new Date(),
+          endDate: data.endDate?.toDate() || new Date(),
+          createdAt: data.createdAt?.toDate() || new Date(),
+          updatedAt: data.updatedAt?.toDate() || new Date(),
+        } as Suspension);
+      });
+
+      return suspensions;
+    } catch (error) {
+      console.error("❌ Error getting active suspensions:", error);
+      return [];
+    }
+  }
+
+  async getAllSuspensions(): Promise<Suspension[]> {
+    try {
+      const q = query(
+        collection(this.firestore, "suspensions"),
+        orderBy("createdAt", "desc")
+      );
+
+      const querySnapshot = await getDocs(q);
+      const suspensions: Suspension[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        suspensions.push({
+          ...data,
+          startDate: data.startDate?.toDate() || new Date(),
+          endDate: data.endDate?.toDate() || new Date(),
+          createdAt: data.createdAt?.toDate() || new Date(),
+          updatedAt: data.updatedAt?.toDate() || new Date(),
+        } as Suspension);
+      });
+
+      return suspensions;
+    } catch (error) {
+      console.error("❌ Error getting all suspensions:", error);
+      return [];
     }
   }
 }

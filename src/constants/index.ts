@@ -30,6 +30,10 @@ export const FIRESTORE_COLLECTIONS = {
   WHISPERS: "whispers",
   LIKES: "likes",
   REPLIES: "replies",
+  REPORTS: "reports",
+  APPEALS: "appeals",
+  SUSPENSIONS: "suspensions",
+  REPUTATION: "reputation",
 } as const;
 
 // Storage paths
@@ -103,6 +107,186 @@ export const AGE_VERIFICATION = {
   MINOR_AGE: 18, // Age below which users are considered minors
   VERIFICATION_REQUIRED: true, // Whether age verification is required
   STRICT_ENFORCEMENT: true, // Strict enforcement of age restrictions
+} as const;
+
+// Time constants (in milliseconds)
+export const TIME_CONSTANTS = {
+  // Common time periods
+  ONE_SECOND: 1000,
+  ONE_MINUTE: 60 * 1000,
+  ONE_HOUR: 60 * 60 * 1000,
+  ONE_DAY: 24 * 60 * 60 * 1000,
+  ONE_WEEK: 7 * 24 * 60 * 60 * 1000,
+  ONE_MONTH: 30 * 24 * 60 * 60 * 1000,
+  ONE_YEAR: 365 * 24 * 60 * 60 * 1000,
+
+  // Cache and timeout values
+  CACHE_TTL: 5 * 60 * 1000, // 5 minutes
+  DEBOUNCE_DELAY: 500, // 500ms
+  SETTLEMENT_DELAY: 1000, // 1 second
+  RETRY_DELAYS: [1000, 2000, 4000], // Exponential backoff
+
+  // UI timeouts
+  NEW_WHISPER_INDICATOR_TIMEOUT: 5000, // 5 seconds
+  AUTO_HIDE_TIMEOUT: 5000, // 5 seconds
+
+  // Suspension durations
+  WARNING_DURATION: 0, // No suspension
+  TEMPORARY_SUSPENSION_DURATION: 24 * 60 * 60 * 1000, // 24 hours
+  EXTENDED_SUSPENSION_DURATION: 7 * 24 * 60 * 60 * 1000, // 7 days
+  PERMANENT_SUSPENSION_DURATION: 100 * 365 * 24 * 60 * 60 * 1000, // 100 years (effectively permanent)
+
+  // Appeal time limits
+  TRUSTED_APPEAL_TIME_LIMIT: 0, // No time limit for trusted users
+  VERIFIED_APPEAL_TIME_LIMIT: 7 * 24 * 60 * 60 * 1000, // 7 days
+  STANDARD_APPEAL_TIME_LIMIT: 14 * 24 * 60 * 60 * 1000, // 14 days
+  FLAGGED_APPEAL_TIME_LIMIT: 30 * 24 * 60 * 60 * 1000, // 30 days
+
+  // Auto-resolve times
+  WARNING_AUTO_RESOLVE_TIME: 24 * 60 * 60 * 1000, // 24 hours
+} as const;
+
+// Reputation system constants
+export const REPUTATION_CONSTANTS = {
+  // Score ranges
+  MIN_SCORE: 0,
+  MAX_SCORE: 100,
+
+  // Thresholds for reputation levels
+  TRUSTED_THRESHOLD: 80,
+  VERIFIED_THRESHOLD: 70,
+  STANDARD_THRESHOLD: 50,
+  FLAGGED_THRESHOLD: 25,
+  BANNED_THRESHOLD: 0,
+
+  // Initial scores
+  INITIAL_USER_SCORE: 50,
+  TRUSTED_USER_INITIAL_SCORE: 75,
+
+  // Score adjustments
+  APPROVED_WHISPER_BONUS: 1,
+  FLAGGED_WHISPER_PENALTY: -5,
+  REJECTED_WHISPER_PENALTY: -10,
+  VIOLATION_PENALTY: -15,
+  CRITICAL_VIOLATION_PENALTY: -25,
+  APPEAL_APPROVED_BONUS: 5,
+  APPEAL_REJECTED_PENALTY: -5,
+  SUSPENSION_PENALTY: -5,
+  SUSPENSION_RESTORATION_BONUS: 5,
+
+  // Auto-approval thresholds
+  TRUSTED_AUTO_APPROVAL_CONFIDENCE: 0.5, // 50% confidence for trusted users
+  VERIFIED_AUTO_APPROVAL_CONFIDENCE: 0.5, // 50% confidence for verified users
+} as const;
+
+// Reporting system constants
+export const REPORTING_CONSTANTS = {
+  // Priority thresholds based on reporter reputation
+  PRIORITY_THRESHOLDS: {
+    CRITICAL: 90, // Trusted users can trigger critical priority
+    HIGH: 75, // Verified users can trigger high priority
+    MEDIUM: 50, // Standard users trigger medium priority
+    LOW: 25, // Flagged users trigger low priority
+  },
+
+  // Reputation weight multipliers
+  REPUTATION_WEIGHTS: {
+    trusted: 2.0, // Trusted users' reports carry double weight
+    verified: 1.5, // Verified users' reports carry 1.5x weight
+    standard: 1.0, // Standard users' reports carry normal weight
+    flagged: 0.5, // Flagged users' reports carry half weight
+    banned: 0.0, // Banned users cannot report
+  },
+
+  // Auto-escalation thresholds
+  CRITICAL_PRIORITY_THRESHOLD: 90,
+  HIGH_PRIORITY_THRESHOLD: 75,
+  MEDIUM_PRIORITY_THRESHOLD: 50,
+  LOW_PRIORITY_THRESHOLD: 25,
+} as const;
+
+// Suspension system constants
+export const SUSPENSION_CONSTANTS = {
+  // Default suspension durations
+  DEFAULT_DURATIONS: {
+    WARNING: 0, // No suspension, just warning
+    TEMPORARY: 24 * 60 * 60 * 1000, // 24 hours
+    PERMANENT: 0, // No duration for permanent
+  },
+
+  // Suspension thresholds based on violation count
+  SUSPENSION_THRESHOLDS: {
+    FIRST_VIOLATION: "WARNING",
+    SECOND_VIOLATION: "TEMPORARY",
+    THIRD_VIOLATION: "TEMPORARY",
+    FOURTH_VIOLATION: "PERMANENT",
+  },
+
+  // Violation counts for automatic suspension
+  FIRST_VIOLATION_COUNT: 1,
+  SECOND_VIOLATION_COUNT: 2,
+  THIRD_VIOLATION_COUNT: 3,
+  FOURTH_VIOLATION_COUNT: 4,
+} as const;
+
+// Audio and file constants
+export const AUDIO_FILE_CONSTANTS = {
+  // File size limits
+  MAX_AUDIO_FILE_SIZE: 25 * 1024 * 1024, // 25MB
+  MAX_CACHE_SIZE: 100 * 1024 * 1024, // 100MB
+
+  // Audio processing
+  MAX_AUDIO_DURATION: 30, // seconds
+  MIN_AUDIO_DURATION: 1, // seconds
+  WHISPER_PERCENTAGE_THRESHOLD: 0.5, // 50% to be considered a whisper
+
+  // Audio levels
+  MIN_AUDIO_LEVEL: 0,
+  MAX_AUDIO_LEVEL: 100,
+  NORMALIZED_AUDIO_LEVEL: 1000,
+
+  // Preloading
+  DEFAULT_PRELOAD_COUNT: 5,
+  OPTIMAL_PRELOAD_COUNT: 3,
+} as const;
+
+// Database and pagination constants
+export const DATABASE_CONSTANTS = {
+  // Default limits
+  DEFAULT_LIMIT: 50,
+  MAX_LIMIT: 100,
+  MIN_LIMIT: 10,
+
+  // Cache settings
+  CACHE_EXPIRY_MS: 5 * 60 * 1000, // 5 minutes
+
+  // Pagination
+  DEFAULT_PAGE_SIZE: 20,
+  MAX_PAGE_SIZE: 50,
+} as const;
+
+// UI and interaction constants
+export const INTERACTION_CONSTANTS = {
+  // Debounce delays
+  LIKE_DEBOUNCE_DELAY: 1000, // 1 second
+  SCROLL_DEBOUNCE_DELAY: 500, // 500ms
+
+  // Thresholds
+  END_REACHED_THRESHOLD: 0.5,
+  AUTO_SCROLL_THRESHOLD: 10,
+
+  // Z-index values
+  NEW_WHISPERS_INDICATOR_Z_INDEX: 1000,
+  MODAL_Z_INDEX: 2000,
+  TOAST_Z_INDEX: 3000,
+
+  // Shadow values
+  CARD_SHADOW_OPACITY: 0.25,
+  CARD_SHADOW_RADIUS: 3.84,
+  CARD_ELEVATION: 5,
+
+  // Positioning
+  NEW_WHISPERS_INDICATOR_TOP: 50,
 } as const;
 
 // Content Moderation Constants
@@ -420,4 +604,43 @@ export const CONTENT_MODERATION = {
       maxTextLength: 10000,
     },
   },
+} as const;
+
+// User profile colors
+export const USER_PROFILE_COLORS = [
+  "#4CAF50", // Green
+  "#2196F3", // Blue
+  "#FF5722", // Red
+  "#795548", // Brown
+  "#9C27B0", // Purple
+  "#3F51B5", // Indigo
+  "#FFC107", // Amber
+  "#00BCD4", // Cyan
+  "#FF9800", // Orange
+  "#E91E63", // Pink
+] as const;
+
+// Export all constants as a single object for easy access
+export const CONSTANTS = {
+  AUDIO_CONSTANTS,
+  VOLUME_THRESHOLDS,
+  FIRESTORE_COLLECTIONS,
+  STORAGE_PATHS,
+  UI_CONSTANTS,
+  ANIMATION_CONSTANTS,
+  ERROR_MESSAGES,
+  SUCCESS_MESSAGES,
+  FEATURE_FLAGS,
+  API_ENDPOINTS,
+  APP_METADATA,
+  AGE_VERIFICATION,
+  TIME_CONSTANTS,
+  REPUTATION_CONSTANTS,
+  REPORTING_CONSTANTS,
+  SUSPENSION_CONSTANTS,
+  AUDIO_FILE_CONSTANTS,
+  DATABASE_CONSTANTS,
+  INTERACTION_CONSTANTS,
+  CONTENT_MODERATION,
+  USER_PROFILE_COLORS,
 } as const;

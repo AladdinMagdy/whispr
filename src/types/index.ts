@@ -248,9 +248,8 @@ export interface ViolationRecord {
   severity: "low" | "medium" | "high" | "critical";
   timestamp: Date;
   resolved: boolean;
-  resolution?: "warned" | "flagged" | "rejected" | "banned" | "appealed";
-  moderatorId?: string;
   notes?: string;
+  resolution?: "warned" | "flagged" | "rejected" | "banned" | "appealed";
 }
 
 // API-specific moderation results
@@ -441,4 +440,59 @@ export interface ReportFilters {
   };
   reporterId?: string;
   whisperId?: string;
+}
+
+// New types for appeal system
+export interface Appeal {
+  id: string;
+  userId: string;
+  whisperId: string;
+  violationId: string;
+  reason: string;
+  evidence?: string;
+  status: AppealStatus;
+  submittedAt: Date;
+  reviewedAt?: Date;
+  reviewedBy?: string;
+  resolution?: AppealResolution;
+  resolutionReason?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export enum AppealStatus {
+  PENDING = "pending",
+  UNDER_REVIEW = "under_review",
+  APPROVED = "approved",
+  REJECTED = "rejected",
+  EXPIRED = "expired",
+}
+
+export interface AppealResolution {
+  action: "approve" | "reject" | "partial_approve";
+  reason: string;
+  moderatorId: string;
+  reputationAdjustment: number;
+}
+
+// New types for suspension management
+export interface Suspension {
+  id: string;
+  userId: string;
+  reason: string;
+  type: SuspensionType;
+  duration: number; // in milliseconds
+  startDate: Date;
+  endDate: Date;
+  isActive: boolean;
+  moderatorId?: string;
+  appealable: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export enum SuspensionType {
+  TEMPORARY = "temporary",
+  PERMANENT = "permanent",
+  WARNING = "warning",
 }

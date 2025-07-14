@@ -28,6 +28,7 @@ import AudioSlide, { pauseAllAudioSlides } from "../components/AudioSlide";
 import { useFocusEffect } from "@react-navigation/native";
 import { getAudioCacheService } from "../services/audioCacheService";
 import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
+import { TIME_CONSTANTS, INTERACTION_CONSTANTS } from "../constants";
 
 const { height } = Dimensions.get("window");
 
@@ -157,7 +158,9 @@ const FeedScreen = () => {
 
         // Implement exponential backoff retry (max 3 attempts)
         if (retryAttempt < 3) {
-          const delay = Math.pow(2, retryAttempt) * 1000; // 1s, 2s, 4s
+          const delay =
+            TIME_CONSTANTS.RETRY_DELAYS[retryAttempt] ||
+            TIME_CONSTANTS.RETRY_DELAYS[TIME_CONSTANTS.RETRY_DELAYS.length - 1];
           console.log(`Retrying in ${delay}ms (attempt ${retryAttempt + 1}/3)`);
           setTimeout(() => {
             loadWhispers(forceRefresh, retryAttempt + 1);
@@ -219,7 +222,7 @@ const FeedScreen = () => {
           // Auto-hide the indicator after 5 seconds
           setTimeout(() => {
             setNewWhispersCount(0);
-          }, 5000);
+          }, TIME_CONSTANTS.NEW_WHISPER_INDICATOR_TIMEOUT);
         } catch (error) {
           console.error("❌ Error processing new whisper:", error);
         }
@@ -335,7 +338,7 @@ const FeedScreen = () => {
             setCurrentIndex(newIndex);
           }
         }
-      }, 500); // Increased debounce time to 500ms to reduce re-renders
+      }, INTERACTION_CONSTANTS.SCROLL_DEBOUNCE_DELAY); // Increased debounce time to 500ms to reduce re-renders
     },
     [currentIndex]
   );
@@ -470,7 +473,7 @@ const FeedScreen = () => {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
           onEndReached={loadMoreWhispers}
-          onEndReachedThreshold={0.5}
+          onEndReachedThreshold={INTERACTION_CONSTANTS.END_REACHED_THRESHOLD}
           ListFooterComponent={
             loadingMore ? (
               <View style={styles.loadingMoreContainer}>
@@ -503,7 +506,8 @@ const FeedScreen = () => {
           }}
           maintainVisibleContentPosition={{
             minIndexForVisible: 0,
-            autoscrollToTopThreshold: 10,
+            autoscrollToTopThreshold:
+              INTERACTION_CONSTANTS.AUTO_SCROLL_THRESHOLD,
           }}
         />
       </View>
@@ -563,14 +567,14 @@ const styles = StyleSheet.create({
   // Real-time update styles
   newWhispersIndicator: {
     position: "absolute",
-    top: 50,
+    top: INTERACTION_CONSTANTS.NEW_WHISPERS_INDICATOR_TOP,
     left: 20,
     right: 20,
     backgroundColor: "#007AFF",
     borderRadius: 20,
     paddingVertical: 8,
     paddingHorizontal: 16,
-    zIndex: 1000,
+    zIndex: INTERACTION_CONSTANTS.NEW_WHISPERS_INDICATOR_Z_INDEX,
     shadowColor: "#000",
     shadowOffset: {
       width: 0,

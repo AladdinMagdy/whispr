@@ -15,6 +15,7 @@ import {
 } from "../types";
 import { getFirestoreService } from "./firestoreService";
 import { getReputationService } from "./reputationService";
+import { REPORTING_CONSTANTS } from "../constants";
 
 export interface CreateReportData {
   whisperId: string;
@@ -31,21 +32,12 @@ export class ReportingService {
   private reputationService = getReputationService();
 
   // Priority thresholds based on reporter reputation
-  private static readonly PRIORITY_THRESHOLDS = {
-    CRITICAL: 90, // Trusted users can trigger critical priority
-    HIGH: 75, // Verified users can trigger high priority
-    MEDIUM: 50, // Standard users trigger medium priority
-    LOW: 25, // Flagged users trigger low priority
-  };
+  private static readonly PRIORITY_THRESHOLDS =
+    REPORTING_CONSTANTS.PRIORITY_THRESHOLDS;
 
   // Reputation weight multipliers
-  private static readonly REPUTATION_WEIGHTS = {
-    trusted: 2.0, // Trusted users' reports carry double weight
-    verified: 1.5, // Verified users' reports carry 1.5x weight
-    standard: 1.0, // Standard users' reports carry normal weight
-    flagged: 0.5, // Flagged users' reports carry half weight
-    banned: 0.0, // Banned users cannot report
-  };
+  private static readonly REPUTATION_WEIGHTS =
+    REPORTING_CONSTANTS.REPUTATION_WEIGHTS;
 
   private constructor() {}
 
@@ -337,6 +329,11 @@ export class ReportingService {
 
         case "dismiss":
           // No action needed, just dismiss the report
+          await this.firestoreService.adjustUserReputationScore(
+            report.reporterId,
+            -10,
+            `Report dismissed: ${reason}`
+          );
           break;
 
         default:
@@ -391,8 +388,7 @@ export class ReportingService {
         await this.firestoreService.adjustUserReputationScore(
           whisper.userId,
           0,
-          `Banned due to report: ${reason}`,
-          "system"
+          `Banned due to report: ${reason}`
         );
         console.log(`🚫 User ${whisper.userId} banned: ${reason}`);
       }
