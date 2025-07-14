@@ -82,10 +82,15 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
         isLiked={isLiked}
         likeCount={likeCount}
         commentCount={commentsInitialized ? commentCount : undefined}
+        whisperId={whisper.id}
+        whisperUserDisplayName={whisper.userDisplayName}
         onLike={handleLike}
         onShowComments={handleShowComments}
         onShowLikes={handleShowLikes}
         onValidateLikeCount={handleValidateLikeCount}
+        onReportSubmitted={() => {
+          console.log("Report submitted for whisper:", whisper.id);
+        }}
       />
 
       {/* Likes Modal */}

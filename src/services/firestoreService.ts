@@ -34,6 +34,12 @@ import {
   UserReputation,
   ModerationResult,
   ViolationType,
+  Report,
+  ReportFilters,
+  ReportStats,
+  ReportCategory,
+  ReportStatus,
+  ReportPriority,
 } from "@/types";
 import { FIRESTORE_COLLECTIONS } from "@/constants";
 import type { ViolationRecord } from "@/types";
@@ -1571,6 +1577,288 @@ export class FirestoreService {
     if (score >= 50) return "standard";
     if (score >= 25) return "flagged";
     return "banned";
+  }
+
+  /**
+   * Save a new report to Firestore
+   */
+  async saveReport(report: Report): Promise<void> {
+    try {
+      const reportData = {
+        ...report,
+        createdAt:
+          report.createdAt instanceof Date
+            ? report.createdAt.toISOString()
+            : report.createdAt,
+        updatedAt:
+          report.updatedAt instanceof Date
+            ? report.updatedAt.toISOString()
+            : report.updatedAt,
+        reviewedAt:
+          report.reviewedAt instanceof Date
+            ? report.reviewedAt.toISOString()
+            : report.reviewedAt,
+        resolution: report.resolution
+          ? {
+              ...report.resolution,
+              timestamp:
+                report.resolution.timestamp instanceof Date
+                  ? report.resolution.timestamp.toISOString()
+                  : report.resolution.timestamp,
+            }
+          : undefined,
+      };
+
+      await setDoc(doc(this.firestore, "reports", report.id), reportData);
+
+      console.log("✅ Report saved successfully:", report.id);
+    } catch (error) {
+      console.error("❌ Error saving report:", error);
+      throw new Error(
+        `Failed to save report: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Get reports with filtering
+   */
+  async getReports(filters: ReportFilters = {}): Promise<Report[]> {
+    try {
+      let q = query(
+        collection(this.firestore, "reports"),
+        orderBy("createdAt", "desc")
+      );
+
+      // Apply filters
+      if (filters.status) {
+        q = query(q, where("status", "==", filters.status));
+      }
+      if (filters.category) {
+        q = query(q, where("category", "==", filters.category));
+      }
+      if (filters.priority) {
+        q = query(q, where("priority", "==", filters.priority));
+      }
+      if (filters.reporterId) {
+        q = query(q, where("reporterId", "==", filters.reporterId));
+      }
+      if (filters.whisperId) {
+        q = query(q, where("whisperId", "==", filters.whisperId));
+      }
+
+      const querySnapshot = await getDocs(q);
+      const reports: Report[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        reports.push({
+          id: doc.id,
+          whisperId: data.whisperId,
+          reporterId: data.reporterId,
+          reporterDisplayName: data.reporterDisplayName,
+          reporterReputation: data.reporterReputation,
+          category: data.category,
+          priority: data.priority,
+          status: data.status,
+          reason: data.reason,
+          evidence: data.evidence,
+          createdAt: new Date(data.createdAt),
+          updatedAt: new Date(data.updatedAt),
+          reviewedAt: data.reviewedAt ? new Date(data.reviewedAt) : undefined,
+          reviewedBy: data.reviewedBy,
+          resolution: data.resolution
+            ? {
+                ...data.resolution,
+                timestamp: new Date(data.resolution.timestamp),
+              }
+            : undefined,
+          reputationWeight: data.reputationWeight,
+        });
+      });
+
+      // Apply date range filter in memory if specified
+      if (filters.dateRange) {
+        return reports.filter(
+          (report) =>
+            report.createdAt >= filters.dateRange!.start &&
+            report.createdAt <= filters.dateRange!.end
+        );
+      }
+
+      return reports;
+    } catch (error) {
+      console.error("❌ Error getting reports:", error);
+      throw new Error(
+        `Failed to get reports: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Get a single report by ID
+   */
+  async getReport(reportId: string): Promise<Report | null> {
+    try {
+      const docRef = doc(this.firestore, "reports", reportId);
+      const docSnap = await getDoc(docRef);
+
+      if (!docSnap.exists()) {
+        return null;
+      }
+
+      const data = docSnap.data();
+      return {
+        id: docSnap.id,
+        whisperId: data.whisperId,
+        reporterId: data.reporterId,
+        reporterDisplayName: data.reporterDisplayName,
+        reporterReputation: data.reporterReputation,
+        category: data.category,
+        priority: data.priority,
+        status: data.status,
+        reason: data.reason,
+        evidence: data.evidence,
+        createdAt: new Date(data.createdAt),
+        updatedAt: new Date(data.updatedAt),
+        reviewedAt: data.reviewedAt ? new Date(data.reviewedAt) : undefined,
+        reviewedBy: data.reviewedBy,
+        resolution: data.resolution
+          ? {
+              ...data.resolution,
+              timestamp: new Date(data.resolution.timestamp),
+            }
+          : undefined,
+        reputationWeight: data.reputationWeight,
+      };
+    } catch (error) {
+      console.error("❌ Error getting report:", error);
+      throw new Error(
+        `Failed to get report: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Update a report
+   */
+  async updateReport(
+    reportId: string,
+    updates: Partial<Report>
+  ): Promise<void> {
+    try {
+      const updateData: UpdateData<Report> = {
+        ...updates,
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Handle date fields
+      if (updates.reviewedAt) {
+        updateData.reviewedAt =
+          updates.reviewedAt instanceof Date
+            ? updates.reviewedAt.toISOString()
+            : updates.reviewedAt;
+      }
+
+      if (updates.resolution) {
+        updateData.resolution = {
+          ...updates.resolution,
+          timestamp:
+            updates.resolution.timestamp instanceof Date
+              ? updates.resolution.timestamp.toISOString()
+              : updates.resolution.timestamp,
+        };
+      }
+
+      await updateDoc(doc(this.firestore, "reports", reportId), updateData);
+
+      console.log("✅ Report updated successfully:", reportId);
+    } catch (error) {
+      console.error("❌ Error updating report:", error);
+      throw new Error(
+        `Failed to update report: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Get reporting statistics
+   */
+  async getReportStats(): Promise<ReportStats> {
+    try {
+      const allReports = await this.getReports();
+
+      const reportsByCategory: Record<ReportCategory, number> = {
+        [ReportCategory.HARASSMENT]: 0,
+        [ReportCategory.HATE_SPEECH]: 0,
+        [ReportCategory.VIOLENCE]: 0,
+        [ReportCategory.SEXUAL_CONTENT]: 0,
+        [ReportCategory.SPAM]: 0,
+        [ReportCategory.SCAM]: 0,
+        [ReportCategory.COPYRIGHT]: 0,
+        [ReportCategory.PERSONAL_INFO]: 0,
+        [ReportCategory.MINOR_SAFETY]: 0,
+        [ReportCategory.OTHER]: 0,
+      };
+
+      const reportsByPriority: Record<ReportPriority, number> = {
+        [ReportPriority.LOW]: 0,
+        [ReportPriority.MEDIUM]: 0,
+        [ReportPriority.HIGH]: 0,
+        [ReportPriority.CRITICAL]: 0,
+      };
+
+      let totalResolutionTime = 0;
+      let resolvedCount = 0;
+
+      allReports.forEach((report) => {
+        reportsByCategory[report.category]++;
+        reportsByPriority[report.priority]++;
+
+        if (report.status === ReportStatus.RESOLVED && report.reviewedAt) {
+          const resolutionTime =
+            report.reviewedAt.getTime() - report.createdAt.getTime();
+          totalResolutionTime += resolutionTime;
+          resolvedCount++;
+        }
+      });
+
+      const averageResolutionTime =
+        resolvedCount > 0
+          ? totalResolutionTime / resolvedCount / (1000 * 60 * 60) // Convert to hours
+          : 0;
+
+      return {
+        totalReports: allReports.length,
+        pendingReports: allReports.filter(
+          (r) => r.status === ReportStatus.PENDING
+        ).length,
+        criticalReports: allReports.filter(
+          (r) => r.priority === ReportPriority.CRITICAL
+        ).length,
+        resolvedReports: allReports.filter(
+          (r) => r.status === ReportStatus.RESOLVED
+        ).length,
+        averageResolutionTime,
+        reportsByCategory,
+        reportsByPriority,
+      };
+    } catch (error) {
+      console.error("❌ Error getting report stats:", error);
+      throw new Error(
+        `Failed to get report stats: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
   }
 }
 

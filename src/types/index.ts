@@ -362,4 +362,83 @@ export interface ModerationFeatureFlags {
   ENABLE_AGE_PROTECTION: boolean;
   ENABLE_REAL_TIME_MODERATION: boolean;
   ENABLE_REPUTATION_SYSTEM: boolean;
+  ENABLE_REPORTING_SYSTEM: boolean;
+}
+
+// Reporting System Types
+export enum ReportCategory {
+  HARASSMENT = "harassment",
+  HATE_SPEECH = "hate_speech",
+  VIOLENCE = "violence",
+  SEXUAL_CONTENT = "sexual_content",
+  SPAM = "spam",
+  SCAM = "scam",
+  COPYRIGHT = "copyright",
+  PERSONAL_INFO = "personal_info",
+  MINOR_SAFETY = "minor_safety",
+  OTHER = "other",
+}
+
+export enum ReportStatus {
+  PENDING = "pending",
+  UNDER_REVIEW = "under_review",
+  RESOLVED = "resolved",
+  DISMISSED = "dismissed",
+  ESCALATED = "escalated",
+}
+
+export enum ReportPriority {
+  LOW = "low",
+  MEDIUM = "medium",
+  HIGH = "high",
+  CRITICAL = "critical",
+}
+
+export interface Report {
+  id: string;
+  whisperId: string;
+  reporterId: string;
+  reporterDisplayName: string;
+  reporterReputation: number; // Reputation score of reporter
+  category: ReportCategory;
+  priority: ReportPriority;
+  status: ReportStatus;
+  reason: string;
+  evidence?: string; // Additional context or screenshots
+  createdAt: Date;
+  updatedAt: Date;
+  reviewedAt?: Date;
+  reviewedBy?: string; // Admin ID who reviewed
+  resolution?: ReportResolution;
+  reputationWeight: number; // Calculated weight based on reporter's reputation
+}
+
+export interface ReportResolution {
+  action: "warn" | "flag" | "reject" | "ban" | "dismiss";
+  reason: string;
+  moderatorId: string;
+  timestamp: Date;
+  notes?: string;
+}
+
+export interface ReportStats {
+  totalReports: number;
+  pendingReports: number;
+  criticalReports: number;
+  resolvedReports: number;
+  averageResolutionTime: number; // in hours
+  reportsByCategory: Record<ReportCategory, number>;
+  reportsByPriority: Record<ReportPriority, number>;
+}
+
+export interface ReportFilters {
+  status?: ReportStatus;
+  category?: ReportCategory;
+  priority?: ReportPriority;
+  dateRange?: {
+    start: Date;
+    end: Date;
+  };
+  reporterId?: string;
+  whisperId?: string;
 }

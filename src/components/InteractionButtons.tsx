@@ -1,24 +1,31 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import ReportButton from "./ReportButton";
 
 interface InteractionButtonsProps {
   isLiked: boolean;
   likeCount: number;
   commentCount?: number;
+  whisperId: string;
+  whisperUserDisplayName: string;
   onLike: () => void;
   onShowComments: () => void;
   onShowLikes: () => void;
   onValidateLikeCount: () => void;
+  onReportSubmitted?: () => void;
 }
 
 const InteractionButtons: React.FC<InteractionButtonsProps> = ({
   isLiked,
   likeCount,
   commentCount,
+  whisperId,
+  whisperUserDisplayName,
   onLike,
   onShowComments,
   onShowLikes,
   onValidateLikeCount,
+  onReportSubmitted,
 }) => {
   return (
     <View style={styles.interactionRow}>
@@ -43,6 +50,13 @@ const InteractionButtons: React.FC<InteractionButtonsProps> = ({
       <TouchableOpacity onPress={onShowLikes} style={styles.interactionButton}>
         <Text style={styles.interactionIcon}>👥</Text>
       </TouchableOpacity>
+
+      {/* Report Button */}
+      <ReportButton
+        whisperId={whisperId}
+        whisperUserDisplayName={whisperUserDisplayName}
+        onReportSubmitted={onReportSubmitted}
+      />
 
       {/* Debug: Validate Like Count Button */}
       <TouchableOpacity

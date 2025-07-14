@@ -115,6 +115,7 @@ export const CONTENT_MODERATION = {
     ENABLE_AGE_PROTECTION: true, // Age protection enabled
     ENABLE_REAL_TIME_MODERATION: true, // Real-time moderation enabled
     ENABLE_REPUTATION_SYSTEM: true, // Reputation system enabled
+    ENABLE_REPORTING_SYSTEM: true, // Reporting system enabled
   },
 
   // API thresholds
