@@ -4,6 +4,15 @@ import {
 } from "../services/reputationService";
 import { ViolationType, ModerationStatus, ContentRank } from "../types";
 
+// Mock the Firestore service
+jest.mock("../services/firestoreService", () => ({
+  getFirestoreService: jest.fn(() => ({
+    getUserReputation: jest.fn(),
+    saveUserReputation: jest.fn(),
+    getReputationStats: jest.fn(),
+  })),
+}));
+
 describe("ReputationService", () => {
   let reputationService: ReputationService;
 
@@ -201,6 +210,20 @@ describe("ReputationService", () => {
 
   describe("Reputation Statistics", () => {
     it("should return reputation statistics", async () => {
+      // Mock the Firestore service response
+      const mockStats = {
+        totalUsers: 100,
+        trustedUsers: 10,
+        verifiedUsers: 30,
+        standardUsers: 40,
+        flaggedUsers: 15,
+        bannedUsers: 5,
+        averageScore: 75,
+      };
+
+      const mockFirestoreService = (reputationService as any).firestoreService;
+      mockFirestoreService.getReputationStats.mockResolvedValue(mockStats);
+
       const stats = await reputationService.getReputationStats();
 
       expect(stats).toHaveProperty("totalUsers");
@@ -211,8 +234,7 @@ describe("ReputationService", () => {
       expect(stats).toHaveProperty("bannedUsers");
       expect(stats).toHaveProperty("averageScore");
 
-      // Default values for now
-      expect(stats.totalUsers).toBe(0);
+      expect(stats.totalUsers).toBe(100);
       expect(stats.averageScore).toBe(75);
     });
   });

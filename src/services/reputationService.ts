@@ -4,7 +4,7 @@
  * ALL users go through full moderation - reputation affects POST-moderation actions only
  */
 
-import { UserReputation, ViolationType } from "../types";
+import { UserReputation, ViolationType, ViolationRecord } from "../types";
 import { getFirestoreService } from "./firestoreService";
 
 export interface ReputationAction {
@@ -74,9 +74,20 @@ export class ReputationService {
    */
   async getUserReputation(userId: string): Promise<UserReputation> {
     try {
-      // TODO: Implement Firestore reputation fetching
-      // For now, return default reputation
-      return this.getDefaultReputation(userId);
+      // Try to get existing reputation from Firestore
+      const existingReputation = await this.firestoreService.getUserReputation(
+        userId
+      );
+
+      if (existingReputation) {
+        return existingReputation;
+      }
+
+      // Create default reputation for new users
+      const defaultReputation = this.getDefaultReputation(userId);
+      await this.firestoreService.saveUserReputation(defaultReputation);
+
+      return defaultReputation;
     } catch (error) {
       console.error("❌ Error fetching user reputation:", error);
       return this.getDefaultReputation(userId);
@@ -140,7 +151,31 @@ export class ReputationService {
       // Update reputation score
       const newScore = Math.max(0, reputation.score - impact);
 
-      // TODO: Save updated reputation to Firestore
+      // Create violation record
+      const violationRecord: ViolationRecord = {
+        id: `${userId}-${Date.now()}`,
+        whisperId,
+        violationType,
+        severity,
+        timestamp: new Date(),
+        resolved: false,
+        notes: `Violation recorded: ${violationType} (${severity})`,
+      };
+
+      // Update reputation with new score and violation
+      const updatedReputation: UserReputation = {
+        ...reputation,
+        score: newScore,
+        level: this.getReputationLevel(newScore),
+        flaggedWhispers: reputation.flaggedWhispers + 1,
+        lastViolation: new Date(),
+        violationHistory: [...reputation.violationHistory, violationRecord],
+        updatedAt: new Date(),
+      };
+
+      // Save to Firestore
+      await this.firestoreService.saveUserReputation(updatedReputation);
+
       console.log(`📝 Recorded violation for user ${userId}:`, {
         type: violationType,
         severity,
@@ -164,7 +199,19 @@ export class ReputationService {
       // Small positive impact for successful whispers
       const newScore = Math.min(100, reputation.score + recovery);
 
-      // TODO: Save updated reputation to Firestore
+      // Update reputation with positive impact
+      const updatedReputation: UserReputation = {
+        ...reputation,
+        score: newScore,
+        level: this.getReputationLevel(newScore),
+        approvedWhispers: reputation.approvedWhispers + 1,
+        totalWhispers: reputation.totalWhispers + 1,
+        updatedAt: new Date(),
+      };
+
+      // Save to Firestore
+      await this.firestoreService.saveUserReputation(updatedReputation);
+
       console.log(`✅ Recorded successful whisper for user ${userId}:`, {
         recovery,
         newScore,
@@ -189,7 +236,17 @@ export class ReputationService {
       const newScore = Math.min(100, reputation.score + recoveryPoints);
 
       if (newScore > reputation.score) {
-        // TODO: Save updated reputation to Firestore
+        // Update reputation with recovery
+        const updatedReputation: UserReputation = {
+          ...reputation,
+          score: newScore,
+          level: this.getReputationLevel(newScore),
+          updatedAt: new Date(),
+        };
+
+        // Save to Firestore
+        await this.firestoreService.saveUserReputation(updatedReputation);
+
         console.log(`🔄 Processed reputation recovery for user ${userId}:`, {
           daysSinceViolation: daysSinceLastViolation,
           recoveryRate,
@@ -359,7 +416,8 @@ export class ReputationService {
    */
   async resetReputation(userId: string): Promise<void> {
     try {
-      // TODO: Save default reputation to Firestore
+      const defaultReputation = this.getDefaultReputation(userId);
+      await this.firestoreService.saveUserReputation(defaultReputation);
       console.log(`🔄 Reset reputation for user ${userId}`);
     } catch (error) {
       console.error("❌ Error resetting reputation:", error);
@@ -378,16 +436,12 @@ export class ReputationService {
     bannedUsers: number;
     averageScore: number;
   }> {
-    // TODO: Implement Firestore aggregation
-    return {
-      totalUsers: 0,
-      trustedUsers: 0,
-      verifiedUsers: 0,
-      standardUsers: 0,
-      flaggedUsers: 0,
-      bannedUsers: 0,
-      averageScore: 75,
-    };
+    try {
+      return await this.firestoreService.getReputationStats();
+    } catch (error) {
+      console.error("❌ Error getting reputation stats:", error);
+      throw error;
+    }
   }
 
   // Singleton management

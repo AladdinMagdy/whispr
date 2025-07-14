@@ -23,9 +23,10 @@ import {
   increment,
   Timestamp,
   FieldValue,
+  setDoc,
 } from "firebase/firestore";
 import { getFirestoreInstance } from "@/config/firebase";
-import { Whisper, Comment, Like } from "@/types";
+import { Whisper, Comment, Like, UserReputation } from "@/types";
 import { FIRESTORE_COLLECTIONS } from "@/constants";
 
 export interface WhisperUploadData {
@@ -1177,6 +1178,377 @@ export class FirestoreService {
       console.error("Error setting up comment likes subscription:", error);
       return () => {}; // Return empty function
     }
+  }
+
+  /**
+   * Save user reputation to Firestore
+   */
+  async saveUserReputation(reputation: UserReputation): Promise<void> {
+    try {
+      const reputationRef = doc(
+        this.firestore,
+        "userReputations",
+        reputation.userId
+      );
+      await setDoc(reputationRef, {
+        ...reputation,
+        createdAt: reputation.createdAt.toISOString(),
+        updatedAt: reputation.updatedAt.toISOString(),
+        lastViolation: reputation.lastViolation?.toISOString(),
+        violationHistory: reputation.violationHistory.map((violation) => ({
+          ...violation,
+          timestamp: violation.timestamp.toISOString(),
+        })),
+      });
+      console.log(`✅ User reputation saved for ${reputation.userId}`);
+    } catch (error) {
+      console.error("❌ Error saving user reputation:", error);
+      throw new Error(
+        `Failed to save user reputation: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Get user reputation from Firestore
+   */
+  async getUserReputation(userId: string): Promise<UserReputation | null> {
+    try {
+      const reputationRef = doc(this.firestore, "userReputations", userId);
+      const reputationDoc = await getDoc(reputationRef);
+
+      if (!reputationDoc.exists()) {
+        return null;
+      }
+
+      const data = reputationDoc.data();
+      return {
+        ...data,
+        createdAt: new Date(data.createdAt),
+        updatedAt: new Date(data.updatedAt),
+        lastViolation: data.lastViolation
+          ? new Date(data.lastViolation)
+          : undefined,
+        violationHistory:
+          data.violationHistory?.map((violation: any) => ({
+            ...violation,
+            timestamp: new Date(violation.timestamp),
+          })) || [],
+      } as UserReputation;
+    } catch (error) {
+      console.error("❌ Error getting user reputation:", error);
+      throw new Error(
+        `Failed to get user reputation: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Update user reputation (partial update)
+   */
+  async updateUserReputation(
+    userId: string,
+    updates: Partial<UserReputation>
+  ): Promise<void> {
+    try {
+      const reputationRef = doc(this.firestore, "userReputations", userId);
+      const updateData: any = {
+        ...updates,
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Handle date fields
+      if (updates.lastViolation) {
+        updateData.lastViolation = updates.lastViolation.toISOString();
+      }
+
+      await updateDoc(reputationRef, updateData);
+      console.log(`✅ User reputation updated for ${userId}`);
+    } catch (error) {
+      console.error("❌ Error updating user reputation:", error);
+      throw new Error(
+        `Failed to update user reputation: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Delete user reputation (for admin actions)
+   */
+  async deleteUserReputation(userId: string): Promise<void> {
+    try {
+      const reputationRef = doc(this.firestore, "userReputations", userId);
+      await deleteDoc(reputationRef);
+      console.log(`✅ User reputation deleted for ${userId}`);
+    } catch (error) {
+      console.error("❌ Error deleting user reputation:", error);
+      throw new Error(
+        `Failed to delete user reputation: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Get reputation statistics for admin dashboard
+   */
+  async getReputationStats(): Promise<{
+    totalUsers: number;
+    trustedUsers: number;
+    verifiedUsers: number;
+    standardUsers: number;
+    flaggedUsers: number;
+    bannedUsers: number;
+    averageScore: number;
+  }> {
+    try {
+      const reputationRef = collection(this.firestore, "userReputations");
+      const snapshot = await getDocs(reputationRef);
+
+      let totalUsers = 0;
+      let trustedUsers = 0;
+      let verifiedUsers = 0;
+      let standardUsers = 0;
+      let flaggedUsers = 0;
+      let bannedUsers = 0;
+      let totalScore = 0;
+
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        totalUsers++;
+        totalScore += data.score || 0;
+
+        switch (data.level) {
+          case "trusted":
+            trustedUsers++;
+            break;
+          case "verified":
+            verifiedUsers++;
+            break;
+          case "standard":
+            standardUsers++;
+            break;
+          case "flagged":
+            flaggedUsers++;
+            break;
+          case "banned":
+            bannedUsers++;
+            break;
+        }
+      });
+
+      return {
+        totalUsers,
+        trustedUsers,
+        verifiedUsers,
+        standardUsers,
+        flaggedUsers,
+        bannedUsers,
+        averageScore: totalUsers > 0 ? Math.round(totalScore / totalUsers) : 0,
+      };
+    } catch (error) {
+      console.error("❌ Error getting reputation stats:", error);
+      throw new Error(
+        `Failed to get reputation stats: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Get users by reputation level (for admin dashboard)
+   */
+  async getUsersByReputationLevel(
+    level: UserReputation["level"],
+    limitCount = 50
+  ): Promise<UserReputation[]> {
+    try {
+      const reputationRef = collection(this.firestore, "userReputations");
+      const q = query(
+        reputationRef,
+        where("level", "==", level),
+        orderBy("updatedAt", "desc"),
+        limit(limitCount)
+      );
+
+      const snapshot = await getDocs(q);
+      const reputations: UserReputation[] = [];
+
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        reputations.push({
+          ...data,
+          createdAt: new Date(data.createdAt),
+          updatedAt: new Date(data.updatedAt),
+          lastViolation: data.lastViolation
+            ? new Date(data.lastViolation)
+            : undefined,
+          violationHistory:
+            data.violationHistory?.map((violation: any) => ({
+              ...violation,
+              timestamp: new Date(violation.timestamp),
+            })) || [],
+        } as UserReputation);
+      });
+
+      return reputations;
+    } catch (error) {
+      console.error("❌ Error getting users by reputation level:", error);
+      throw new Error(
+        `Failed to get users by reputation level: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Get users with recent violations (for admin dashboard)
+   */
+  async getUsersWithRecentViolations(
+    daysBack = 7,
+    limitCount = 50
+  ): Promise<UserReputation[]> {
+    try {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+
+      const reputationRef = collection(this.firestore, "userReputations");
+      const q = query(
+        reputationRef,
+        where("lastViolation", ">=", cutoffDate.toISOString()),
+        orderBy("lastViolation", "desc"),
+        limit(limitCount)
+      );
+
+      const snapshot = await getDocs(q);
+      const reputations: UserReputation[] = [];
+
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        reputations.push({
+          ...data,
+          createdAt: new Date(data.createdAt),
+          updatedAt: new Date(data.updatedAt),
+          lastViolation: data.lastViolation
+            ? new Date(data.lastViolation)
+            : undefined,
+          violationHistory:
+            data.violationHistory?.map((violation: any) => ({
+              ...violation,
+              timestamp: new Date(violation.timestamp),
+            })) || [],
+        } as UserReputation);
+      });
+
+      return reputations;
+    } catch (error) {
+      console.error("❌ Error getting users with recent violations:", error);
+      throw new Error(
+        `Failed to get users with recent violations: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Admin: Reset user reputation to default
+   */
+  async resetUserReputation(userId: string): Promise<void> {
+    try {
+      const defaultReputation: UserReputation = {
+        userId,
+        score: 75, // Start with "verified" level
+        level: "verified",
+        totalWhispers: 0,
+        approvedWhispers: 0,
+        flaggedWhispers: 0,
+        rejectedWhispers: 0,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      await this.saveUserReputation(defaultReputation);
+      console.log(`✅ User reputation reset for ${userId}`);
+    } catch (error) {
+      console.error("❌ Error resetting user reputation:", error);
+      throw new Error(
+        `Failed to reset user reputation: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Admin: Manually adjust user reputation score
+   */
+  async adjustUserReputationScore(
+    userId: string,
+    newScore: number,
+    reason: string,
+    adminId: string
+  ): Promise<void> {
+    try {
+      const reputation = await this.getUserReputation(userId);
+      if (!reputation) {
+        throw new Error("User reputation not found");
+      }
+
+      const oldScore = reputation.score;
+      const updatedReputation: UserReputation = {
+        ...reputation,
+        score: Math.max(0, Math.min(100, newScore)), // Clamp between 0-100
+        level: this.getReputationLevel(newScore),
+        updatedAt: new Date(),
+        violationHistory: [
+          ...reputation.violationHistory,
+          {
+            id: `admin-${Date.now()}`,
+            whisperId: "admin-adjustment",
+            violationType: "admin_adjustment" as any,
+            severity: "medium",
+            timestamp: new Date(),
+            resolved: false,
+            moderatorId: adminId,
+            notes: `Admin adjustment: ${oldScore} → ${newScore}. Reason: ${reason}`,
+          },
+        ],
+      };
+
+      await this.saveUserReputation(updatedReputation);
+      console.log(
+        `✅ User reputation score adjusted for ${userId}: ${oldScore} → ${newScore}`
+      );
+    } catch (error) {
+      console.error("❌ Error adjusting user reputation score:", error);
+      throw new Error(
+        `Failed to adjust user reputation score: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Helper: Get reputation level from score
+   */
+  private getReputationLevel(score: number): UserReputation["level"] {
+    if (score >= 90) return "trusted";
+    if (score >= 75) return "verified";
+    if (score >= 50) return "standard";
+    if (score >= 25) return "flagged";
+    return "banned";
   }
 }
 
