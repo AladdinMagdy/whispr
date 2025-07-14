@@ -1208,16 +1208,23 @@ export class FirestoreService {
         "userReputations",
         reputation.userId
       );
-      await setDoc(reputationRef, {
+      // Filter out undefined values before saving to Firestore
+      const reputationData: Record<string, unknown> = {
         ...reputation,
         createdAt: reputation.createdAt.toISOString(),
         updatedAt: reputation.updatedAt.toISOString(),
-        lastViolation: reputation.lastViolation?.toISOString(),
         violationHistory: reputation.violationHistory.map((violation) => ({
           ...violation,
           timestamp: violation.timestamp.toISOString(),
         })),
-      });
+      };
+
+      // Only include lastViolation if it's defined
+      if (reputation.lastViolation) {
+        reputationData.lastViolation = reputation.lastViolation.toISOString();
+      }
+
+      await setDoc(reputationRef, reputationData);
       console.log(`✅ User reputation saved for ${reputation.userId}`);
     } catch (error) {
       console.error("❌ Error saving user reputation:", error);
@@ -1278,8 +1285,15 @@ export class FirestoreService {
     try {
       const reputationRef = doc(this.firestore, "userReputations", userId);
       const { lastViolation, ...otherUpdates } = updates;
-      const updateData: UpdateData<UserReputation> = {
-        ...otherUpdates,
+
+      // Filter out undefined values
+      const filteredUpdates = Object.fromEntries(
+        Object.entries(otherUpdates).filter(([, value]) => value !== undefined)
+      );
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const updateData: Record<string, any> = {
+        ...filteredUpdates,
         updatedAt: new Date().toISOString(),
       };
 
@@ -1585,8 +1599,10 @@ export class FirestoreService {
    */
   async saveReport(report: Report): Promise<void> {
     try {
-      const reportData = {
-        ...report,
+      // Filter out undefined values before saving to Firestore
+      const { evidence, ...reportWithoutEvidence } = report;
+      const reportData: Record<string, unknown> = {
+        ...reportWithoutEvidence,
         createdAt:
           report.createdAt instanceof Date
             ? report.createdAt.toISOString()
@@ -1595,20 +1611,29 @@ export class FirestoreService {
           report.updatedAt instanceof Date
             ? report.updatedAt.toISOString()
             : report.updatedAt,
-        reviewedAt:
+      };
+
+      // Only include optional fields if they're defined
+      if (report.reviewedAt) {
+        reportData.reviewedAt =
           report.reviewedAt instanceof Date
             ? report.reviewedAt.toISOString()
-            : report.reviewedAt,
-        resolution: report.resolution
-          ? {
-              ...report.resolution,
-              timestamp:
-                report.resolution.timestamp instanceof Date
-                  ? report.resolution.timestamp.toISOString()
-                  : report.resolution.timestamp,
-            }
-          : undefined,
-      };
+            : report.reviewedAt;
+      }
+
+      if (report.resolution) {
+        reportData.resolution = {
+          ...report.resolution,
+          timestamp:
+            report.resolution.timestamp instanceof Date
+              ? report.resolution.timestamp.toISOString()
+              : report.resolution.timestamp,
+        };
+      }
+
+      if (evidence !== undefined) {
+        reportData.evidence = evidence;
+      }
 
       await setDoc(doc(this.firestore, "reports", report.id), reportData);
 
@@ -1754,8 +1779,14 @@ export class FirestoreService {
     updates: Partial<Report>
   ): Promise<void> {
     try {
-      const updateData: UpdateData<Report> = {
-        ...updates,
+      // Filter out undefined values
+      const filteredUpdates = Object.fromEntries(
+        Object.entries(updates).filter(([, value]) => value !== undefined)
+      );
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const updateData: Record<string, any> = {
+        ...filteredUpdates,
         updatedAt: new Date().toISOString(),
       };
 

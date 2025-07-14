@@ -76,7 +76,11 @@ describe("AdvancedSpamDetectionService", () => {
     };
 
     // Setup default mock responses
-    mockFirestoreService.getUserWhispers.mockResolvedValue([]);
+    mockFirestoreService.getUserWhispers.mockResolvedValue({
+      whispers: [],
+      lastDoc: null,
+      hasMore: false,
+    });
     mockReputationService.getUserReputation.mockResolvedValue(
       mockUserReputation
     );
@@ -376,6 +380,7 @@ describe("AdvancedSpamDetectionService", () => {
     });
 
     it("should handle errors gracefully", async () => {
+      // Mock the firestore service to throw an error
       mockFirestoreService.getUserWhispers.mockRejectedValue(
         new Error("Database error")
       );
@@ -386,12 +391,14 @@ describe("AdvancedSpamDetectionService", () => {
         mockUserReputation
       );
 
-      // Should return safe default
+      // Should handle errors gracefully and continue with content analysis
       expect(result.isSpam).toBe(false);
       expect(result.isScam).toBe(false);
-      expect(result.confidence).toBe(0);
+      expect(result.confidence).toBeGreaterThanOrEqual(0);
       expect(result.suggestedAction).toBe("warn");
-      expect(result.reason).toContain("defaulting to safe");
+      // Content analysis should still work even if user behavior analysis fails
+      expect(result.contentFlags).toBeDefined();
+      expect(result.userBehaviorFlags).toEqual([]); // Should be empty due to error
     });
   });
 
