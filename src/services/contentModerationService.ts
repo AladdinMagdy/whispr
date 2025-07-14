@@ -19,6 +19,7 @@ import { CONTENT_MODERATION } from "../constants";
 import { LocalModerationService } from "./localModerationService";
 import { OpenAIModerationService } from "./openAIModerationService";
 import { PerspectiveAPIService } from "./perspectiveAPIService";
+import { getReputationService } from "./reputationService";
 
 export class ContentModerationService {
   private static readonly FEATURE_FLAGS: ModerationFeatureFlags =
@@ -32,8 +33,7 @@ export class ContentModerationService {
   static async moderateWhisper(
     transcription: string,
     userId: string,
-    userAge: number,
-    userReputation?: UserReputation
+    userAge: number
   ): Promise<ModerationResult> {
     // Enforce 13+ age restriction
     if (userAge < 13) {
@@ -128,37 +128,40 @@ export class ContentModerationService {
         perspectiveResult
       );
 
-      // Step 6: Apply reputation-based actions
-      const adjustedViolations = this.applyReputationBasedActions(
-        allViolations,
-        userReputation
-      );
-
-      // Step 7: Determine final status
-      const status = this.determineFinalStatus(adjustedViolations);
-
-      const moderationTime = Date.now() - startTime;
-      console.log(`✅ Content moderation completed in ${moderationTime}ms`);
-
-      return {
-        status,
+      // Step 6: Create base moderation result
+      const baseResult = {
+        status: this.determineFinalStatus(allViolations),
         contentRank,
         isMinorSafe,
         violations: allViolations,
         confidence: this.calculateOverallConfidence(allViolations),
-        moderationTime,
+        moderationTime: Date.now() - startTime,
         apiResults: {
           local: localResult,
           openai: openaiResult ?? undefined,
           perspective: perspectiveResult ?? undefined,
         },
-        reputationImpact: this.calculateReputationImpact(
-          allViolations,
-          userReputation
+        appealable: this.isAppealable(
+          this.determineFinalStatus(allViolations),
+          allViolations
         ),
-        appealable: this.isAppealable(status, allViolations),
-        reason: this.generateReason(allViolations, status),
+        reason: this.generateReason(
+          allViolations,
+          this.determineFinalStatus(allViolations)
+        ),
       };
+
+      // Step 7: Apply reputation-based actions
+      const reputationService = getReputationService();
+      const finalResult = await reputationService.applyReputationBasedActions(
+        baseResult,
+        userId
+      );
+
+      console.log(
+        `✅ Content moderation completed in ${finalResult.moderationTime}ms`
+      );
+      return finalResult;
     } catch (error) {
       console.error("❌ Content moderation failed:", error);
       return this.createErrorResult(error, startTime);

@@ -9,6 +9,7 @@ import { getAuthService } from "./authService";
 import { ContentModerationService } from "./contentModerationService";
 import { TranscriptionService } from "./transcriptionService";
 import { AgeVerificationService } from "./ageVerificationService";
+import { getReputationService } from "./reputationService";
 
 import {
   formatFileSize,
@@ -128,6 +129,11 @@ export class UploadService {
       );
 
       console.log("✅ Whisper created successfully:", whisperId);
+
+      // Step 6: Record successful whisper for reputation
+      const reputationService = getReputationService();
+      await reputationService.recordSuccessfulWhisper(user.uid);
+      console.log("✅ Reputation updated");
 
       return whisperId;
     } catch (error) {

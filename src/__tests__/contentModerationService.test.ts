@@ -27,7 +27,8 @@ describe("ContentModerationService", () => {
       expect(result.contentRank).toBe(ContentRank.G);
       expect(result.isMinorSafe).toBe(true);
       expect(result.violations).toHaveLength(0);
-      expect(result.appealable).toBe(false);
+      // With reputation system, clean content is appealable for verified users
+      expect(result.appealable).toBe(true);
     });
 
     it("should reject content with critical violations", async () => {
