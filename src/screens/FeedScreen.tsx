@@ -169,7 +169,14 @@ const FeedScreen = () => {
         setLoading(false);
       }
     },
-    [firestoreService, isCacheValid, whispers.length, setRetryCount]
+    [
+      firestoreService,
+      isCacheValid,
+      whispers.length,
+      setRetryCount,
+      user?.isMinor,
+      user?.contentPreferences,
+    ]
   );
 
   // Set up real-time listener for whispers
@@ -262,7 +269,14 @@ const FeedScreen = () => {
     } finally {
       setLoadingMore(false);
     }
-  }, [hasMore, loadingMore, lastDoc, firestoreService]);
+  }, [
+    hasMore,
+    loadingMore,
+    lastDoc,
+    firestoreService,
+    user?.isMinor,
+    user?.contentPreferences,
+  ]);
 
   // Refresh whispers
   const onRefresh = useCallback(async () => {

@@ -4,7 +4,13 @@
  * ALL users go through full moderation - reputation affects POST-moderation actions only
  */
 
-import { UserReputation, ViolationType, ViolationRecord } from "../types";
+import {
+  UserReputation,
+  ViolationType,
+  ViolationRecord,
+  ModerationResult,
+  Violation,
+} from "../types";
 import { getFirestoreService } from "./firestoreService";
 
 export interface ReputationAction {
@@ -25,7 +31,7 @@ export interface ReputationThresholds {
 }
 
 export class ReputationService {
-  private static instance: ReputationService;
+  private static instance: ReputationService | null;
   private firestoreService = getFirestoreService();
 
   // Reputation thresholds
@@ -98,9 +104,9 @@ export class ReputationService {
    * Apply reputation-based actions to moderation results
    */
   async applyReputationBasedActions(
-    moderationResult: any,
+    moderationResult: ModerationResult,
     userId: string
-  ): Promise<any> {
+  ): Promise<ModerationResult> {
     try {
       const reputation = await this.getUserReputation(userId);
       const reputationLevel = this.getReputationLevel(reputation.score);
@@ -274,15 +280,18 @@ export class ReputationService {
    * Calculate reputation impact for a moderation result
    */
   private calculateReputationImpact(
-    moderationResult: any,
+    moderationResult: ModerationResult,
     reputationLevel: string
   ): number {
     const baseImpact =
-      moderationResult.violations?.reduce((total: number, violation: any) => {
-        return (
-          total + (ReputationService.VIOLATION_IMPACT[violation.type] || 10)
-        );
-      }, 0) || 0;
+      moderationResult.violations?.reduce(
+        (total: number, violation: Violation) => {
+          return (
+            total + (ReputationService.VIOLATION_IMPACT[violation.type] || 10)
+          );
+        },
+        0
+      ) || 0;
 
     // Apply reputation-based multiplier
     const multiplier = this.getPenaltyMultiplier(reputationLevel);
@@ -312,7 +321,7 @@ export class ReputationService {
    * Check if violation is appealable based on reputation
    */
   private isAppealable(
-    moderationResult: any,
+    moderationResult: ModerationResult,
     reputationLevel: string
   ): boolean {
     // Banned users cannot appeal
@@ -320,7 +329,7 @@ export class ReputationService {
 
     // Critical violations are rarely appealable
     const hasCriticalViolation = moderationResult.violations?.some(
-      (v: any) => v.severity === "critical"
+      (v: Violation) => v.severity === "critical"
     );
 
     if (hasCriticalViolation && reputationLevel === "flagged") return false;
@@ -450,7 +459,7 @@ export class ReputationService {
   }
 
   static destroyInstance(): void {
-    ReputationService.instance = null as any;
+    ReputationService.instance = null;
   }
 }
 

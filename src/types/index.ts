@@ -211,6 +211,10 @@ export interface ModerationResult {
   reputationImpact: number;
   appealable: boolean;
   reason?: string;
+  // Properties added by reputation service
+  appealTimeLimit?: number;
+  penaltyMultiplier?: number;
+  autoAppealThreshold?: number;
 }
 
 export interface Violation {

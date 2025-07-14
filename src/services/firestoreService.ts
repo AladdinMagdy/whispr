@@ -24,10 +24,19 @@ import {
   Timestamp,
   FieldValue,
   setDoc,
+  UpdateData,
 } from "firebase/firestore";
 import { getFirestoreInstance } from "@/config/firebase";
-import { Whisper, Comment, Like, UserReputation } from "@/types";
+import {
+  Whisper,
+  Comment,
+  Like,
+  UserReputation,
+  ModerationResult,
+  ViolationType,
+} from "@/types";
 import { FIRESTORE_COLLECTIONS } from "@/constants";
+import type { ViolationRecord } from "@/types";
 
 export interface WhisperUploadData {
   audioUrl: string;
@@ -36,7 +45,7 @@ export interface WhisperUploadData {
   averageLevel: number;
   confidence: number;
   transcription?: string;
-  moderationResult?: any; // Will be properly typed later
+  moderationResult?: ModerationResult;
 }
 
 export interface LikeData {
@@ -1232,9 +1241,12 @@ export class FirestoreService {
           ? new Date(data.lastViolation)
           : undefined,
         violationHistory:
-          data.violationHistory?.map((violation: any) => ({
+          data.violationHistory?.map((violation: ViolationRecord) => ({
             ...violation,
-            timestamp: new Date(violation.timestamp),
+            timestamp:
+              typeof violation.timestamp === "string"
+                ? new Date(violation.timestamp)
+                : violation.timestamp,
           })) || [],
       } as UserReputation;
     } catch (error) {
@@ -1256,14 +1268,18 @@ export class FirestoreService {
   ): Promise<void> {
     try {
       const reputationRef = doc(this.firestore, "userReputations", userId);
-      const updateData: any = {
-        ...updates,
+      const { lastViolation, ...otherUpdates } = updates;
+      const updateData: UpdateData<UserReputation> = {
+        ...otherUpdates,
         updatedAt: new Date().toISOString(),
       };
 
       // Handle date fields
-      if (updates.lastViolation) {
-        updateData.lastViolation = updates.lastViolation.toISOString();
+      if (lastViolation) {
+        updateData.lastViolation =
+          lastViolation instanceof Date
+            ? lastViolation.toISOString()
+            : new Date(lastViolation).toISOString();
       }
 
       await updateDoc(reputationRef, updateData);
@@ -1392,9 +1408,12 @@ export class FirestoreService {
             ? new Date(data.lastViolation)
             : undefined,
           violationHistory:
-            data.violationHistory?.map((violation: any) => ({
+            data.violationHistory?.map((violation: ViolationRecord) => ({
               ...violation,
-              timestamp: new Date(violation.timestamp),
+              timestamp:
+                typeof violation.timestamp === "string"
+                  ? new Date(violation.timestamp)
+                  : violation.timestamp,
             })) || [],
         } as UserReputation);
       });
@@ -1442,9 +1461,12 @@ export class FirestoreService {
             ? new Date(data.lastViolation)
             : undefined,
           violationHistory:
-            data.violationHistory?.map((violation: any) => ({
+            data.violationHistory?.map((violation: ViolationRecord) => ({
               ...violation,
-              timestamp: new Date(violation.timestamp),
+              timestamp:
+                typeof violation.timestamp === "string"
+                  ? new Date(violation.timestamp)
+                  : violation.timestamp,
             })) || [],
         } as UserReputation);
       });
@@ -1516,7 +1538,7 @@ export class FirestoreService {
           {
             id: `admin-${Date.now()}`,
             whisperId: "admin-adjustment",
-            violationType: "admin_adjustment" as any,
+            violationType: "admin_adjustment" as ViolationType,
             severity: "medium",
             timestamp: new Date(),
             resolved: false,

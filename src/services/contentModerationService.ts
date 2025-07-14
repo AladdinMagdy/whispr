@@ -149,6 +149,7 @@ export class ContentModerationService {
           allViolations,
           this.determineFinalStatus(allViolations)
         ),
+        reputationImpact: 0,
       };
 
       // Step 7: Apply reputation-based actions

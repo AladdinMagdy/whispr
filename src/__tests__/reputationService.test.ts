@@ -2,7 +2,12 @@ import {
   ReputationService,
   getReputationService,
 } from "../services/reputationService";
-import { ViolationType, ModerationStatus, ContentRank } from "../types";
+import {
+  ViolationType,
+  ModerationStatus,
+  ContentRank,
+  Violation,
+} from "../types";
 
 // Mock the Firestore service
 jest.mock("../services/firestoreService", () => ({
@@ -92,7 +97,7 @@ describe("ReputationService", () => {
   describe("Reputation-Based Actions", () => {
     it("should apply reputation actions to moderation results", async () => {
       const moderationResult = {
-        status: ModerationStatus.APPROVED,
+        status: ModerationStatus.PENDING,
         contentRank: ContentRank.PG,
         isMinorSafe: true,
         violations: [
@@ -100,8 +105,15 @@ describe("ReputationService", () => {
             type: ViolationType.SPAM,
             severity: "low",
             confidence: 0.8,
-          },
+            description: "Spam detected",
+            suggestedAction: "warn",
+          } as Violation,
         ],
+        confidence: 1,
+        moderationTime: 0.5,
+        apiResults: {},
+        reputationImpact: 0,
+        appealable: true,
       };
 
       const result = await reputationService.applyReputationBasedActions(
@@ -147,8 +159,15 @@ describe("ReputationService", () => {
             type: ViolationType.HATE_SPEECH,
             severity: "high",
             confidence: 0.9,
-          },
+            description: "Hate speech detected",
+            suggestedAction: "reject",
+          } as Violation,
         ],
+        confidence: 1,
+        moderationTime: 0.5,
+        apiResults: {},
+        reputationImpact: 0,
+        appealable: false,
       };
 
       const result = await reputationService.applyReputationBasedActions(
@@ -293,6 +312,12 @@ describe("ReputationService", () => {
         status: ModerationStatus.APPROVED,
         contentRank: ContentRank.G,
         isMinorSafe: true,
+        violations: [],
+        confidence: 1,
+        moderationTime: 0.5,
+        apiResults: {},
+        reputationImpact: 0,
+        appealable: true,
       };
 
       // Mock an error in getUserReputation
