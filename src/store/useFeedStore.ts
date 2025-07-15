@@ -36,15 +36,13 @@ const createSafeAsyncStorage = () => ({
   },
 });
 
-interface FeedState {
-  // Cached whispers
+export interface FeedState {
   whispers: Whisper[];
   lastDoc: QueryDocumentSnapshot<DocumentData> | null;
   hasMore: boolean;
-
-  // Cache metadata
   lastLoadTime: number;
-  cacheExpiryMs: number; // 5 minutes default
+  cacheExpiryMs: number;
+  reportedWhispers: Set<string>; // Track reported whispers that should remain blurred
 
   // Actions
   setWhispers: (whispers: Whisper[]) => void;
@@ -63,6 +61,11 @@ interface FeedState {
     hasMore: boolean
   ) => void;
 
+  // Reported whispers management
+  markWhisperAsReported: (whisperId: string) => void;
+  unmarkWhisperAsReported: (whisperId: string) => void;
+  isWhisperReported: (whisperId: string) => boolean;
+
   // Singleton management
   resetInstance: () => void;
   destroyInstance: () => void;
@@ -77,6 +80,7 @@ export const useFeedStore = create<FeedState>()(
       hasMore: true,
       lastLoadTime: 0,
       cacheExpiryMs: 5 * 60 * 1000, // 5 minutes
+      reportedWhispers: new Set<string>(),
 
       // State setters
       setWhispers: (whispers) => set({ whispers }),
@@ -147,6 +151,28 @@ export const useFeedStore = create<FeedState>()(
         console.log("🔄 Feed cache updated:", whispers.length);
       },
 
+      // Reported whispers management
+      markWhisperAsReported: (whisperId) => {
+        const { reportedWhispers } = get();
+        const newReportedWhispers = new Set(reportedWhispers);
+        newReportedWhispers.add(whisperId);
+        set({ reportedWhispers: newReportedWhispers });
+        console.log(`🚨 Whisper ${whisperId} marked as reported`);
+      },
+
+      unmarkWhisperAsReported: (whisperId) => {
+        const { reportedWhispers } = get();
+        const newReportedWhispers = new Set(reportedWhispers);
+        newReportedWhispers.delete(whisperId);
+        set({ reportedWhispers: newReportedWhispers });
+        console.log(`✅ Whisper ${whisperId} unmarked as reported`);
+      },
+
+      isWhisperReported: (whisperId) => {
+        const { reportedWhispers } = get();
+        return reportedWhispers.has(whisperId);
+      },
+
       // Singleton management
       resetInstance: () => {
         set({
@@ -177,7 +203,14 @@ export const useFeedStore = create<FeedState>()(
         lastDoc: state.lastDoc,
         hasMore: state.hasMore,
         lastLoadTime: state.lastLoadTime,
+        reportedWhispers: Array.from(state.reportedWhispers), // Convert Set to Array for persistence
       }),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          // Convert Array back to Set
+          state.reportedWhispers = new Set(state.reportedWhispers || []);
+        }
+      },
     }
   )
 );

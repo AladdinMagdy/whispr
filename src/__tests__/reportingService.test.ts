@@ -41,6 +41,9 @@ describe("ReportingService", () => {
     jest.clearAllMocks();
     ReportingService.resetInstance();
     reportingService = getReportingService();
+
+    // Set default mock for getReports to return empty array
+    mockFirestoreService.getReports.mockResolvedValue([]);
   });
 
   afterEach(() => {

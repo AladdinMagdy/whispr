@@ -63,6 +63,49 @@ export class ReportingService {
         throw new Error("Banned users cannot submit reports");
       }
 
+      // Check for existing reports from the same user on the same content
+      const existingReports = await this.firestoreService.getReports({
+        whisperId: data.whisperId,
+        reporterId: data.reporterId,
+      });
+
+      // If user has already reported this content, check if it's a different category
+      if (existingReports.length > 0) {
+        const existingReport = existingReports[0]; // Get the most recent one
+
+        // If same category, provide feedback but allow the report
+        if (existingReport.category === data.category) {
+          console.log(
+            `📝 User ${data.reporterId} reporting same content again with same category: ${data.category}`
+          );
+
+          // Update the existing report with new information
+          const updatedReport: Report = {
+            ...existingReport,
+            reason: `${existingReport.reason}\n\n--- Additional Report ---\n${data.reason}`,
+            updatedAt: new Date(),
+            // Increase priority if this is a repeat report
+            priority: this.escalatePriority(existingReport.priority),
+          };
+
+          await this.firestoreService.updateReport(
+            existingReport.id,
+            updatedReport
+          );
+
+          console.log(
+            `📝 Updated existing report: ${existingReport.id} with escalated priority`
+          );
+
+          return updatedReport;
+        } else {
+          // Different category - create new report but link to existing one
+          console.log(
+            `📝 User ${data.reporterId} reporting same content with different category: ${existingReport.category} → ${data.category}`
+          );
+        }
+      }
+
       // Calculate priority based on reporter reputation and category
       const priority = this.calculatePriority(
         reporterReputation,
@@ -395,6 +438,109 @@ export class ReportingService {
     } catch (error) {
       console.error("❌ Error banning user:", error);
       throw error;
+    }
+  }
+
+  /**
+   * Escalate priority for repeat reports
+   */
+  private escalatePriority(currentPriority: ReportPriority): ReportPriority {
+    switch (currentPriority) {
+      case ReportPriority.LOW:
+        return ReportPriority.MEDIUM;
+      case ReportPriority.MEDIUM:
+        return ReportPriority.HIGH;
+      case ReportPriority.HIGH:
+        return ReportPriority.CRITICAL;
+      case ReportPriority.CRITICAL:
+        return ReportPriority.CRITICAL; // Already at max
+      default:
+        return ReportPriority.MEDIUM;
+    }
+  }
+
+  /**
+   * Check if a user has already reported specific content
+   */
+  async hasUserReportedContent(
+    whisperId: string,
+    userId: string
+  ): Promise<{ hasReported: boolean; existingReport?: Report }> {
+    try {
+      const existingReports = await this.firestoreService.getReports({
+        whisperId,
+        reporterId: userId,
+      });
+
+      if (existingReports.length > 0) {
+        return {
+          hasReported: true,
+          existingReport: existingReports[0], // Return the most recent report
+        };
+      }
+
+      return { hasReported: false };
+    } catch (error) {
+      console.error("❌ Error checking if user has reported content:", error);
+      return { hasReported: false };
+    }
+  }
+
+  /**
+   * Get report statistics for a specific whisper
+   */
+  async getWhisperReportStats(whisperId: string): Promise<{
+    totalReports: number;
+    uniqueReporters: number;
+    categories: Record<ReportCategory, number>;
+    priorityBreakdown: Record<ReportPriority, number>;
+  }> {
+    try {
+      const reports = await this.firestoreService.getReports({
+        whisperId,
+      });
+
+      const uniqueReporters = new Set(reports.map((r) => r.reporterId)).size;
+
+      const categories: Record<ReportCategory, number> = {
+        [ReportCategory.HARASSMENT]: 0,
+        [ReportCategory.HATE_SPEECH]: 0,
+        [ReportCategory.VIOLENCE]: 0,
+        [ReportCategory.SEXUAL_CONTENT]: 0,
+        [ReportCategory.SPAM]: 0,
+        [ReportCategory.SCAM]: 0,
+        [ReportCategory.COPYRIGHT]: 0,
+        [ReportCategory.PERSONAL_INFO]: 0,
+        [ReportCategory.MINOR_SAFETY]: 0,
+        [ReportCategory.OTHER]: 0,
+      };
+
+      const priorityBreakdown: Record<ReportPriority, number> = {
+        [ReportPriority.LOW]: 0,
+        [ReportPriority.MEDIUM]: 0,
+        [ReportPriority.HIGH]: 0,
+        [ReportPriority.CRITICAL]: 0,
+      };
+
+      reports.forEach((report) => {
+        categories[report.category]++;
+        priorityBreakdown[report.priority]++;
+      });
+
+      return {
+        totalReports: reports.length,
+        uniqueReporters,
+        categories,
+        priorityBreakdown,
+      };
+    } catch (error) {
+      console.error("❌ Error getting whisper report stats:", error);
+      return {
+        totalReports: 0,
+        uniqueReporters: 0,
+        categories: {} as Record<ReportCategory, number>,
+        priorityBreakdown: {} as Record<ReportPriority, number>,
+      };
     }
   }
 

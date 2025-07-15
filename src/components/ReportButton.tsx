@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,10 +8,12 @@ import {
   TextInput,
   Alert,
   StyleSheet,
+  ActivityIndicator,
 } from "react-native";
-import { ReportCategory } from "../types";
+import { ReportCategory, Report } from "../types";
 import { getReportingService } from "../services/reportingService";
 import { useAuth } from "../providers/AuthProvider";
+import { useFeedStore } from "../store/useFeedStore";
 
 interface ReportButtonProps {
   whisperId: string;
@@ -29,9 +31,36 @@ const ReportButton: React.FC<ReportButtonProps> = ({
     useState<ReportCategory | null>(null);
   const [reason, setReason] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [hasReported, setHasReported] = useState(false);
+  const [existingReport, setExistingReport] = useState<Report | null>(null);
+  const [isCheckingReport, setIsCheckingReport] = useState(false);
 
   const { user } = useAuth();
   const reportingService = getReportingService();
+  const { markWhisperAsReported } = useFeedStore();
+
+  // Check if user has already reported this content
+  useEffect(() => {
+    const checkExistingReport = async () => {
+      if (!user) return;
+
+      setIsCheckingReport(true);
+      try {
+        const result = await reportingService.hasUserReportedContent(
+          whisperId,
+          user.uid
+        );
+        setHasReported(result.hasReported);
+        setExistingReport(result.existingReport || null);
+      } catch (error) {
+        console.error("Error checking existing report:", error);
+      } finally {
+        setIsCheckingReport(false);
+      }
+    };
+
+    checkExistingReport();
+  }, [whisperId, user, reportingService]);
 
   const reportCategories = [
     {
@@ -113,7 +142,7 @@ const ReportButton: React.FC<ReportButtonProps> = ({
     setIsSubmitting(true);
 
     try {
-      await reportingService.createReport({
+      const report = await reportingService.createReport({
         whisperId,
         reporterId: user.uid,
         reporterDisplayName: user.displayName || "Anonymous",
@@ -121,21 +150,46 @@ const ReportButton: React.FC<ReportButtonProps> = ({
         reason: reason.trim(),
       });
 
-      Alert.alert(
-        "Report Submitted",
-        "Thank you for your report. Our moderation team will review it shortly.",
-        [
-          {
-            text: "OK",
-            onPress: () => {
-              setIsModalVisible(false);
-              setSelectedCategory(null);
-              setReason("");
-              onReportSubmitted?.();
+      // Mark the whisper as reported in the feed store
+      markWhisperAsReported(whisperId);
+
+      // Check if this was an update to an existing report
+      const isUpdate =
+        report.updatedAt.getTime() !== report.createdAt.getTime();
+
+      if (isUpdate) {
+        Alert.alert(
+          "Report Updated",
+          "Your report has been updated with additional information. This helps our moderation team better understand the issue.",
+          [
+            {
+              text: "OK",
+              onPress: () => {
+                setIsModalVisible(false);
+                setSelectedCategory(null);
+                setReason("");
+                onReportSubmitted?.();
+              },
             },
-          },
-        ]
-      );
+          ]
+        );
+      } else {
+        Alert.alert(
+          "Report Submitted",
+          "Thank you for your report. Our moderation team will review it shortly.",
+          [
+            {
+              text: "OK",
+              onPress: () => {
+                setIsModalVisible(false);
+                setSelectedCategory(null);
+                setReason("");
+                onReportSubmitted?.();
+              },
+            },
+          ]
+        );
+      }
     } catch (error) {
       console.error("Error submitting report:", error);
       Alert.alert("Error", "Failed to submit report. Please try again later.");
@@ -145,7 +199,19 @@ const ReportButton: React.FC<ReportButtonProps> = ({
   };
 
   const openReportModal = () => {
-    setIsModalVisible(true);
+    // If user has already reported, show their existing report
+    if (hasReported && existingReport) {
+      Alert.alert(
+        "Already Reported",
+        `You have already reported this content for "${existingReport.category}". You can report it again for a different reason or add additional information.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Report Again", onPress: () => setIsModalVisible(true) },
+        ]
+      );
+    } else {
+      setIsModalVisible(true);
+    }
   };
 
   const closeReportModal = () => {
@@ -158,8 +224,26 @@ const ReportButton: React.FC<ReportButtonProps> = ({
 
   return (
     <>
-      <TouchableOpacity style={styles.reportButton} onPress={openReportModal}>
-        <Text style={styles.reportButtonText}>🚨 Report</Text>
+      <TouchableOpacity
+        onPress={openReportModal}
+        style={[
+          styles.reportButton,
+          hasReported && styles.reportButtonReported,
+        ]}
+        disabled={isCheckingReport}
+      >
+        {isCheckingReport ? (
+          <ActivityIndicator size="small" color="#666" />
+        ) : (
+          <Text
+            style={[
+              styles.reportButtonText,
+              hasReported && styles.reportButtonTextReported,
+            ]}
+          >
+            {hasReported ? "📝 Reported" : "🚨 Report"}
+          </Text>
+        )}
       </TouchableOpacity>
 
       <Modal
@@ -260,15 +344,21 @@ const ReportButton: React.FC<ReportButtonProps> = ({
 const styles = StyleSheet.create({
   reportButton: {
     backgroundColor: "#ff3b30",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginLeft: 8,
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginHorizontal: 8,
   },
   reportButtonText: {
     color: "#fff",
-    fontSize: 12,
-    fontWeight: "600",
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+  reportButtonReported: {
+    backgroundColor: "#ccc",
+  },
+  reportButtonTextReported: {
+    color: "#666",
   },
   modalContainer: {
     flex: 1,

@@ -11,9 +11,11 @@ import { useRoute } from "@react-navigation/native";
 import BackgroundMedia from "./BackgroundMedia";
 import AudioControls from "./AudioControls";
 import WhisperInteractions from "./WhisperInteractions";
+import ReportOverlay from "./ReportOverlay";
 import { Whisper } from "../types";
 import { getAudioCacheService } from "../services/audioCacheService";
 import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
+import { useFeedStore } from "../store/useFeedStore";
 
 const { height, width } = Dimensions.get("window");
 
@@ -60,6 +62,9 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
       [route.name]
     );
 
+    // Get report state from feed store
+    const { isWhisperReported, unmarkWhisperAsReported } = useFeedStore();
+
     const [isPlaying, setIsPlaying] = useState(false);
     const [isLoaded, setIsLoaded] = useState(false);
     const [isInitializing, setIsInitializing] = useState(false);
@@ -75,6 +80,14 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
     const progressRef = useRef(0);
     const durationRef = useRef(0);
     const lastProgressUpdateRef = useRef(0);
+
+    // Check if this whisper is reported
+    const isReported = isWhisperReported(whisper.id);
+
+    // Handle showing the post again
+    const handleShowPost = useCallback(() => {
+      unmarkWhisperAsReported(whisper.id);
+    }, [whisper.id, unmarkWhisperAsReported]);
 
     // Update refs when props change
     useEffect(() => {
@@ -159,6 +172,14 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
         console.error("Error pausing audio:", error);
       }
     }, [isLoaded, isInitializing]);
+
+    // Pause audio when whisper is reported
+    useEffect(() => {
+      if (isReported && isPlaying) {
+        console.log(`Pausing audio for reported whisper: ${whisper.id}`);
+        pauseAudio();
+      }
+    }, [isReported, isPlaying, pauseAudio, whisper.id]);
 
     const cleanupAudio = useCallback(async () => {
       try {
@@ -353,9 +374,20 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
             whisper={whisper}
             onWhisperUpdate={onWhisperUpdate}
           />
+
+          {/* Report overlay - shown when whisper is reported */}
+          {isReported && <ReportOverlay onShowPost={handleShowPost} />}
         </>
       ),
-      [isPlaying, whisper, handlePlayPause, handleReplay, onWhisperUpdate]
+      [
+        isPlaying,
+        whisper,
+        handlePlayPause,
+        handleReplay,
+        onWhisperUpdate,
+        isReported,
+        handleShowPost,
+      ]
     );
 
     return <View style={styles.slide}>{renderContent}</View>;
