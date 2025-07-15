@@ -27,6 +27,8 @@ const ReportButton: React.FC<ReportButtonProps> = ({
   onReportSubmitted,
 }) => {
   const [isModalVisible, setIsModalVisible] = useState(false);
+  const [isPostReportModalVisible, setIsPostReportModalVisible] =
+    useState(false);
   const [selectedCategory, setSelectedCategory] =
     useState<ReportCategory | null>(null);
   const [reason, setReason] = useState("");
@@ -34,6 +36,7 @@ const ReportButton: React.FC<ReportButtonProps> = ({
   const [hasReported, setHasReported] = useState(false);
   const [existingReport, setExistingReport] = useState<Report | null>(null);
   const [isCheckingReport, setIsCheckingReport] = useState(false);
+  const [currentReport, setCurrentReport] = useState<Report | null>(null);
 
   const { user } = useAuth();
   const reportingService = getReportingService();
@@ -153,43 +156,10 @@ const ReportButton: React.FC<ReportButtonProps> = ({
       // Mark the whisper as reported in the feed store
       markWhisperAsReported(whisperId);
 
-      // Check if this was an update to an existing report
-      const isUpdate =
-        report.updatedAt.getTime() !== report.createdAt.getTime();
-
-      if (isUpdate) {
-        Alert.alert(
-          "Report Updated",
-          "Your report has been updated with additional information. This helps our moderation team better understand the issue.",
-          [
-            {
-              text: "OK",
-              onPress: () => {
-                setIsModalVisible(false);
-                setSelectedCategory(null);
-                setReason("");
-                onReportSubmitted?.();
-              },
-            },
-          ]
-        );
-      } else {
-        Alert.alert(
-          "Report Submitted",
-          "Thank you for your report. Our moderation team will review it shortly.",
-          [
-            {
-              text: "OK",
-              onPress: () => {
-                setIsModalVisible(false);
-                setSelectedCategory(null);
-                setReason("");
-                onReportSubmitted?.();
-              },
-            },
-          ]
-        );
-      }
+      // Store the current report and show post-report modal
+      setCurrentReport(report);
+      setIsModalVisible(false);
+      setIsPostReportModalVisible(true);
     } catch (error) {
       console.error("Error submitting report:", error);
       Alert.alert("Error", "Failed to submit report. Please try again later.");
@@ -220,6 +190,88 @@ const ReportButton: React.FC<ReportButtonProps> = ({
       setSelectedCategory(null);
       setReason("");
     }
+  };
+
+  const closePostReportModal = () => {
+    setIsPostReportModalVisible(false);
+    setCurrentReport(null);
+    setSelectedCategory(null);
+    setReason("");
+    onReportSubmitted?.();
+  };
+
+  const handleMuteUser = () => {
+    Alert.alert(
+      "Mute User",
+      `You won't see content from ${whisperUserDisplayName} in your feed anymore. You can unmute them anytime in your settings.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Mute",
+          style: "destructive",
+          onPress: () => {
+            // TODO: Implement mute user functionality
+            Alert.alert(
+              "User Muted",
+              `${whisperUserDisplayName} has been muted.`
+            );
+            closePostReportModal();
+          },
+        },
+      ]
+    );
+  };
+
+  const handleRestrictUser = () => {
+    Alert.alert(
+      "Restrict User",
+      `${whisperUserDisplayName} won't be able to see when you're online or when you've read their messages.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Restrict",
+          style: "destructive",
+          onPress: () => {
+            // TODO: Implement restrict user functionality
+            Alert.alert(
+              "User Restricted",
+              `${whisperUserDisplayName} has been restricted.`
+            );
+            closePostReportModal();
+          },
+        },
+      ]
+    );
+  };
+
+  const handleBlockUser = () => {
+    Alert.alert(
+      "Block User",
+      `${whisperUserDisplayName} won't be able to find your profile, see your posts, or start conversations with you.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Block",
+          style: "destructive",
+          onPress: () => {
+            // TODO: Implement block user functionality
+            Alert.alert(
+              "User Blocked",
+              `${whisperUserDisplayName} has been blocked.`
+            );
+            closePostReportModal();
+          },
+        },
+      ]
+    );
+  };
+
+  const handleLearnMore = () => {
+    Alert.alert(
+      "Community Standards",
+      "Our community standards help ensure Whispr remains a safe and welcoming space for everyone. We review reports within 24 hours and take appropriate action based on our policies.",
+      [{ text: "OK" }]
+    );
   };
 
   return (
@@ -332,6 +384,117 @@ const ReportButton: React.FC<ReportButtonProps> = ({
                 <Text style={styles.submitButtonText}>
                   {isSubmitting ? "Submitting..." : "Submit Report"}
                 </Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Post-Report Modal */}
+      <Modal
+        visible={isPostReportModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closePostReportModal}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Report Submitted</Text>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={closePostReportModal}
+            >
+              <Text style={styles.closeButtonText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalContent}>
+            {/* Report Status */}
+            <View style={styles.statusContainer}>
+              <Text style={styles.statusTitle}>Report Status</Text>
+              <View style={styles.statusItem}>
+                <Text style={styles.statusLabel}>Status:</Text>
+                <Text style={styles.statusValue}>Awaiting Review</Text>
+              </View>
+              {currentReport && (
+                <View style={styles.statusItem}>
+                  <Text style={styles.statusLabel}>Report ID:</Text>
+                  <Text style={styles.statusValue}>{currentReport.id}</Text>
+                </View>
+              )}
+              <Text style={styles.statusDescription}>
+                Our moderation team will review your report within 24 hours and
+                take appropriate action.
+              </Text>
+            </View>
+
+            {/* User Actions */}
+            <View style={styles.actionsContainer}>
+              <Text style={styles.sectionTitle}>Additional Actions</Text>
+              <Text style={styles.actionsDescription}>
+                You can also take action to control your experience with this
+                user:
+              </Text>
+
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={handleMuteUser}
+              >
+                <Text style={styles.actionIcon}>🔇</Text>
+                <View style={styles.actionTextContainer}>
+                  <Text style={styles.actionLabel}>Mute User</Text>
+                  <Text style={styles.actionDescription}>
+                    Stop seeing content from {whisperUserDisplayName}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={handleRestrictUser}
+              >
+                <Text style={styles.actionIcon}>🚫</Text>
+                <View style={styles.actionTextContainer}>
+                  <Text style={styles.actionLabel}>Restrict User</Text>
+                  <Text style={styles.actionDescription}>
+                    Limit their ability to interact with you
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={handleBlockUser}
+              >
+                <Text style={styles.actionIcon}>🚫</Text>
+                <View style={styles.actionTextContainer}>
+                  <Text style={styles.actionLabel}>Block User</Text>
+                  <Text style={styles.actionDescription}>
+                    Completely block {whisperUserDisplayName}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            {/* Learn More */}
+            <View style={styles.learnMoreContainer}>
+              <TouchableOpacity
+                style={styles.learnMoreButton}
+                onPress={handleLearnMore}
+              >
+                <Text style={styles.learnMoreText}>
+                  Learn more about our process and community standards
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Done Button */}
+            <View style={styles.buttonContainer}>
+              <TouchableOpacity
+                style={styles.doneButton}
+                onPress={closePostReportModal}
+              >
+                <Text style={styles.doneButtonText}>Done</Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
@@ -463,6 +626,103 @@ const styles = StyleSheet.create({
     backgroundColor: "#ccc",
   },
   submitButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  // Post-report modal styles
+  statusContainer: {
+    backgroundColor: "#f8f9fa",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 24,
+  },
+  statusTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 12,
+  },
+  statusItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  statusLabel: {
+    fontSize: 14,
+    color: "#666",
+    fontWeight: "500",
+  },
+  statusValue: {
+    fontSize: 14,
+    color: "#333",
+    fontWeight: "bold",
+  },
+  statusDescription: {
+    fontSize: 14,
+    color: "#666",
+    lineHeight: 20,
+    marginTop: 8,
+  },
+  actionsContainer: {
+    marginBottom: 24,
+  },
+  actionsDescription: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  actionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: "#f8f9fa",
+    borderRadius: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#e9ecef",
+  },
+  actionIcon: {
+    fontSize: 24,
+    marginRight: 12,
+  },
+  actionTextContainer: {
+    flex: 1,
+  },
+  actionLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 2,
+  },
+  actionDescription: {
+    fontSize: 14,
+    color: "#666",
+  },
+  learnMoreContainer: {
+    marginBottom: 24,
+  },
+  learnMoreButton: {
+    padding: 16,
+    backgroundColor: "#e3f2fd",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2196f3",
+  },
+  learnMoreText: {
+    fontSize: 14,
+    color: "#1976d2",
+    textAlign: "center",
+    fontWeight: "500",
+  },
+  doneButton: {
+    backgroundColor: "#007AFF",
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: "center",
+  },
+  doneButtonText: {
     color: "#fff",
     fontSize: 16,
     fontWeight: "bold",
