@@ -25,6 +25,8 @@ import {
   FieldValue,
   setDoc,
   UpdateData,
+  Query,
+  QueryConstraint,
 } from "firebase/firestore";
 import { getFirestoreInstance } from "@/config/firebase";
 import {
@@ -1961,11 +1963,11 @@ export class FirestoreService {
    */
   async getReports(filters: ReportFilters = {}): Promise<Report[]> {
     try {
-      let reportsQuery: any = collection(
+      let reportsQuery: Query<DocumentData> = collection(
         this.firestore,
         FIRESTORE_COLLECTIONS.REPORTS
       );
-      const constraints: any[] = [];
+      const constraints: QueryConstraint[] = [];
 
       if (filters.status) {
         constraints.push(where("status", "==", filters.status));
@@ -1991,7 +1993,7 @@ export class FirestoreService {
       const reports: Report[] = [];
 
       querySnapshot.forEach((doc) => {
-        const data = doc.data() as any;
+        const data = doc.data() as DocumentData;
         reports.push({
           id: doc.id,
           whisperId: data.whisperId,
@@ -2027,11 +2029,11 @@ export class FirestoreService {
     filters: ReportFilters = {}
   ): Promise<CommentReport[]> {
     try {
-      let reportsQuery: any = collection(
+      let reportsQuery: Query<DocumentData> = collection(
         this.firestore,
         FIRESTORE_COLLECTIONS.COMMENT_REPORTS
       );
-      const constraints: any[] = [];
+      const constraints: QueryConstraint[] = [];
 
       if (filters.status) {
         constraints.push(where("status", "==", filters.status));
@@ -2057,7 +2059,7 @@ export class FirestoreService {
       const reports: CommentReport[] = [];
 
       querySnapshot.forEach((doc) => {
-        const data = doc.data() as any;
+        const data = doc.data() as DocumentData;
         reports.push({
           id: doc.id,
           commentId: data.commentId,

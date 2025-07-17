@@ -70,6 +70,35 @@ const CommentItem: React.FC<CommentItemProps> = React.memo(
       ]);
     }, [comment.id, onDeleteComment, isWhisperOwner]);
 
+    const submitReport = useCallback(
+      async (category: ReportCategory) => {
+        if (!user) return;
+
+        try {
+          await reportingService.createCommentReport({
+            commentId: comment.id,
+            whisperId: comment.whisperId,
+            reporterId: user.uid,
+            reporterDisplayName: user.displayName || "Anonymous",
+            category,
+            reason: `Reported for ${category}`,
+          });
+
+          Alert.alert(
+            "Report Submitted",
+            "Thank you for your report. We'll review it and take appropriate action.",
+            [{ text: "OK" }]
+          );
+
+          onReportSubmitted?.();
+        } catch (error) {
+          console.error("Error submitting comment report:", error);
+          Alert.alert("Error", "Failed to submit report. Please try again.");
+        }
+      },
+      [comment.id, comment.whisperId, user, reportingService, onReportSubmitted]
+    );
+
     const handleReport = useCallback(async () => {
       if (!user) {
         Alert.alert("Error", "You must be logged in to report comments");
@@ -107,36 +136,7 @@ const CommentItem: React.FC<CommentItemProps> = React.memo(
           { text: "Other", onPress: () => submitReport(ReportCategory.OTHER) },
         ]
       );
-    }, [comment.id, user]);
-
-    const submitReport = useCallback(
-      async (category: ReportCategory) => {
-        if (!user) return;
-
-        try {
-          await reportingService.createCommentReport({
-            commentId: comment.id,
-            whisperId: comment.whisperId,
-            reporterId: user.uid,
-            reporterDisplayName: user.displayName || "Anonymous",
-            category,
-            reason: `Reported for ${category}`,
-          });
-
-          Alert.alert(
-            "Report Submitted",
-            "Thank you for your report. We'll review it and take appropriate action.",
-            [{ text: "OK" }]
-          );
-
-          onReportSubmitted?.();
-        } catch (error) {
-          console.error("Error submitting comment report:", error);
-          Alert.alert("Error", "Failed to submit report. Please try again.");
-        }
-      },
-      [comment.id, comment.whisperId, user, reportingService, onReportSubmitted]
-    );
+    }, [user, submitReport]);
 
     return (
       <>
