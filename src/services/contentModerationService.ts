@@ -21,6 +21,7 @@ import { LocalModerationService } from "./localModerationService";
 import { OpenAIModerationService } from "./openAIModerationService";
 import { PerspectiveAPIService } from "./perspectiveAPIService";
 import { getReputationService } from "./reputationService";
+import { getErrorMessage } from "../utils/errorHelpers";
 
 export class ContentModerationService {
   private static readonly FEATURE_FLAGS: ModerationFeatureFlags =
@@ -547,9 +548,7 @@ export class ContentModerationService {
       apiResults: {},
       reputationImpact: 0,
       appealable: true,
-      reason: `Moderation error: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`,
+      reason: getErrorMessage(error),
     };
   }
 

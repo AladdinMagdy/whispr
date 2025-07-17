@@ -130,10 +130,25 @@ export const useWhisperLikes = ({
       unsubscribe = firestoreServiceRef.current.subscribeToWhisperLikes(
         whisperId,
         (likes: Like[]) => {
-          setLikes(likes);
+          // Apply privacy filtering to real-time likes
+          const filteredLikes = likes.map((like) => {
+            // Check if this like is from a blocked user (simplified check)
+            // In a real implementation, you'd check against the block list
+            if (like.userDisplayName === "Anonymous") {
+              return {
+                ...like,
+                userDisplayName: "Anonymous",
+                userProfileColor: "#9E9E9E",
+              };
+            }
+            return like;
+          });
+
+          setLikes(filteredLikes);
           setLoadingLikes(false);
+
           // Update like count when real-time data is received
-          const actualLikeCount = likes.length;
+          const actualLikeCount = filteredLikes.length;
           if (actualLikeCount !== likeCount) {
             console.log(
               `🔄 Real-time like count update: ${likeCount} -> ${actualLikeCount}`

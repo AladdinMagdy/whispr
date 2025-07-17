@@ -11,19 +11,33 @@ import {
   SafeAreaView,
   Animated,
 } from "react-native";
-import { Comment } from "../types";
+import { Comment, Whisper, ReportCategory } from "../types";
 import OptimizedAvatar from "./OptimizedAvatar";
 import { useCommentLikes } from "../hooks/useCommentLikes";
+import { getReportingService } from "../services/reportingService";
+import { useAuth } from "../providers/AuthProvider";
 
 interface CommentItemProps {
   comment: Comment;
+  whisper: Whisper;
   currentUserId: string;
   onLikeComment: (commentId: string) => void;
   onDeleteComment: (commentId: string) => void;
+  onReportSubmitted?: () => void;
 }
 
 const CommentItem: React.FC<CommentItemProps> = React.memo(
-  ({ comment, currentUserId, onLikeComment, onDeleteComment }) => {
+  ({
+    comment,
+    whisper,
+    currentUserId,
+    onLikeComment,
+    onDeleteComment,
+    onReportSubmitted,
+  }) => {
+    const { user } = useAuth();
+    const reportingService = getReportingService();
+
     const {
       isLiked,
       likeCount,
@@ -37,20 +51,92 @@ const CommentItem: React.FC<CommentItemProps> = React.memo(
       loadCommentLikes,
     } = useCommentLikes({ comment, onLikeComment });
 
+    const isCommentOwner = comment.userId === currentUserId;
+    const isWhisperOwner = whisper.userId === currentUserId;
+    const canDeleteComment = isCommentOwner || isWhisperOwner;
+
     const handleDelete = useCallback(() => {
+      const deleteReason = isWhisperOwner
+        ? "Are you sure you want to delete this comment from your whisper?"
+        : "Are you sure you want to delete this comment?";
+
+      Alert.alert("Delete Comment", deleteReason, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => onDeleteComment(comment.id),
+        },
+      ]);
+    }, [comment.id, onDeleteComment, isWhisperOwner]);
+
+    const handleReport = useCallback(async () => {
+      if (!user) {
+        Alert.alert("Error", "You must be logged in to report comments");
+        return;
+      }
+
+      // Show report categories
       Alert.alert(
-        "Delete Comment",
-        "Are you sure you want to delete this comment?",
+        "Report Comment",
+        "Select a reason for reporting this comment:",
         [
           { text: "Cancel", style: "cancel" },
           {
-            text: "Delete",
-            style: "destructive",
-            onPress: () => onDeleteComment(comment.id),
+            text: "Harassment",
+            onPress: () => submitReport(ReportCategory.HARASSMENT),
           },
+          {
+            text: "Hate Speech",
+            onPress: () => submitReport(ReportCategory.HATE_SPEECH),
+          },
+          {
+            text: "Violence",
+            onPress: () => submitReport(ReportCategory.VIOLENCE),
+          },
+          {
+            text: "Sexual Content",
+            onPress: () => submitReport(ReportCategory.SEXUAL_CONTENT),
+          },
+          { text: "Spam", onPress: () => submitReport(ReportCategory.SPAM) },
+          { text: "Scam", onPress: () => submitReport(ReportCategory.SCAM) },
+          {
+            text: "Personal Info",
+            onPress: () => submitReport(ReportCategory.PERSONAL_INFO),
+          },
+          { text: "Other", onPress: () => submitReport(ReportCategory.OTHER) },
         ]
       );
-    }, [comment.id, onDeleteComment]);
+    }, [comment.id, user]);
+
+    const submitReport = useCallback(
+      async (category: ReportCategory) => {
+        if (!user) return;
+
+        try {
+          await reportingService.createCommentReport({
+            commentId: comment.id,
+            whisperId: comment.whisperId,
+            reporterId: user.uid,
+            reporterDisplayName: user.displayName || "Anonymous",
+            category,
+            reason: `Reported for ${category}`,
+          });
+
+          Alert.alert(
+            "Report Submitted",
+            "Thank you for your report. We'll review it and take appropriate action.",
+            [{ text: "OK" }]
+          );
+
+          onReportSubmitted?.();
+        } catch (error) {
+          console.error("Error submitting comment report:", error);
+          Alert.alert("Error", "Failed to submit report. Please try again.");
+        }
+      },
+      [comment.id, comment.whisperId, user, reportingService, onReportSubmitted]
+    );
 
     return (
       <>
@@ -64,6 +150,9 @@ const CommentItem: React.FC<CommentItemProps> = React.memo(
               <Text style={styles.userName}>
                 {comment.userDisplayName || "Anonymous"}
               </Text>
+              {isWhisperOwner && comment.userId !== whisper.userId && (
+                <Text style={styles.whisperOwnerBadge}>👑</Text>
+              )}
             </View>
             <View style={styles.commentActions}>
               <AnimatedLikeButton isLiked={isLiked} onPress={handleLike} />
@@ -73,7 +162,19 @@ const CommentItem: React.FC<CommentItemProps> = React.memo(
               >
                 <Text style={styles.likeCount}>{likeCount}</Text>
               </TouchableOpacity>
-              {comment.userId === currentUserId && (
+
+              {/* Report button - available to everyone except comment owner */}
+              {!isCommentOwner && (
+                <TouchableOpacity
+                  onPress={handleReport}
+                  style={styles.reportButton}
+                >
+                  <Text style={styles.reportIcon}>🚩</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Delete button - available to comment owner and whisper owner */}
+              {canDeleteComment && (
                 <TouchableOpacity
                   onPress={handleDelete}
                   style={styles.deleteButton}
@@ -88,6 +189,11 @@ const CommentItem: React.FC<CommentItemProps> = React.memo(
             <Text style={styles.commentTime}>
               {new Date(comment.createdAt).toLocaleDateString()}
             </Text>
+            {isWhisperOwner && comment.userId !== whisper.userId && (
+              <Text style={styles.whisperOwnerNote}>
+                (You can delete this comment as the whisper owner)
+              </Text>
+            )}
           </View>
         </View>
 
@@ -214,6 +320,10 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#333",
   },
+  whisperOwnerBadge: {
+    marginLeft: 4,
+    fontSize: 12,
+  },
   commentActions: {
     flexDirection: "row",
     alignItems: "center",
@@ -237,6 +347,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#666",
   },
+  reportButton: {
+    padding: 4,
+    marginRight: 8,
+  },
+  reportIcon: {
+    fontSize: 16,
+  },
   deleteButton: {
     padding: 4,
   },
@@ -251,13 +368,18 @@ const styles = StyleSheet.create({
   },
   commentFooter: {
     flexDirection: "row",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   commentTime: {
     fontSize: 12,
     color: "#999",
   },
-  // Modal styles
+  whisperOwnerNote: {
+    fontSize: 10,
+    color: "#666",
+    fontStyle: "italic",
+  },
   modalContainer: {
     flex: 1,
     backgroundColor: "#fff",
@@ -283,12 +405,14 @@ const styles = StyleSheet.create({
     color: "#666",
   },
   listContentContainer: {
-    padding: 16,
+    flexGrow: 1,
   },
   likeItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 8,
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
   },
 });
 

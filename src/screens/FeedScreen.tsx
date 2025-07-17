@@ -29,6 +29,9 @@ import { useFocusEffect } from "@react-navigation/native";
 import { getAudioCacheService } from "../services/audioCacheService";
 import { usePerformanceMonitor } from "../hooks/usePerformanceMonitor";
 import { TIME_CONSTANTS, INTERACTION_CONSTANTS } from "../constants";
+import { getBlockListCacheService } from "../services/blockListCacheService";
+import AppealNotification from "../components/AppealNotification";
+import { useNavigation } from "@react-navigation/native";
 
 const { height } = Dimensions.get("window");
 
@@ -59,6 +62,8 @@ const FeedScreen = () => {
     addNewWhisper,
     updateWhisper,
   } = useFeedStore();
+
+  const navigation = useNavigation();
 
   // Helper function to format time
   const formatTime = useCallback((seconds: number): string => {
@@ -123,7 +128,6 @@ const FeedScreen = () => {
         setLoading(true);
         setError(null);
 
-        // Check if we have valid cached data and don't need to force refresh
         if (!forceRefresh && isCacheValid()) {
           console.log("✅ Using cached whispers:", whispers.length);
           setLoading(false);
@@ -133,22 +137,37 @@ const FeedScreen = () => {
 
         console.log("🔄 Loading fresh whispers from Firestore...");
 
-        // Prepare age-based filtering options
         const feedOptions = {
           isMinor: user?.isMinor || false,
           contentPreferences: user?.contentPreferences || {
             allowAdultContent: true,
             strictFiltering: false,
           },
+          excludeBlockedUsers: false, // We'll filter client-side
+          excludeMutedUsers: false, // We'll filter client-side
+          currentUserId: user?.uid,
         };
 
         const result = await firestoreService.getWhispers(feedOptions);
 
-        // Update the store with the fetched data
-        const { updateCache } = useFeedStore.getState();
-        updateCache(result.whispers, result.lastDoc, result.hasMore);
+        // --- Block/mute filtering using cache ---
+        let filteredWhispers = result.whispers;
+        if (user?.uid) {
+          const blockListCache = getBlockListCacheService();
+          const blockLists = await blockListCache.getBlockLists(user.uid);
+          const blockedSet = new Set([
+            ...blockLists.blockedUsers,
+            ...blockLists.blockedByUsers,
+          ]);
+          const mutedSet = blockLists.mutedUsers;
+          filteredWhispers = filteredWhispers.filter(
+            (w) => !blockedSet.has(w.userId) && !mutedSet.has(w.userId)
+          );
+        }
+        // --- End block/mute filtering ---
 
-        // Update cache
+        const { updateCache } = useFeedStore.getState();
+        updateCache(filteredWhispers, result.lastDoc, result.hasMore);
         setRetryCount(0);
       } catch (err) {
         console.error("Error loading whispers:", err);
@@ -179,6 +198,7 @@ const FeedScreen = () => {
       setRetryCount,
       user?.isMinor,
       user?.contentPreferences,
+      user?.uid,
     ]
   );
 
@@ -201,6 +221,9 @@ const FeedScreen = () => {
         allowAdultContent: true,
         strictFiltering: false,
       },
+      excludeBlockedUsers: true, // Enable blocking filter
+      excludeMutedUsers: true, // Enable mute filter
+      currentUserId: user?.uid, // Current user ID for blocking/muting checks
     };
 
     const unsubscribe = firestoreService.subscribeToNewWhispers(
@@ -258,6 +281,9 @@ const FeedScreen = () => {
           allowAdultContent: true,
           strictFiltering: false,
         },
+        excludeBlockedUsers: true, // Enable blocking filter
+        excludeMutedUsers: true, // Enable mute filter
+        currentUserId: user?.uid, // Current user ID for blocking/muting checks
       };
 
       const result = await firestoreService.getWhispers(feedOptions);
@@ -279,6 +305,7 @@ const FeedScreen = () => {
     firestoreService,
     user?.isMinor,
     user?.contentPreferences,
+    user?.uid,
   ]);
 
   // Refresh whispers
@@ -351,6 +378,12 @@ const FeedScreen = () => {
     [updateWhisper]
   );
 
+  // Callback to refresh feed after moderation actions
+  const handleReportSubmitted = useCallback(() => {
+    console.log("🔄 Refreshing feed after moderation action");
+    loadWhispers(true); // Force refresh to apply blocking filters
+  }, [loadWhispers]);
+
   // Memoize render item function to prevent unnecessary re-renders
   const renderItem = useCallback(
     ({ item, index }: ListRenderItemInfo<Whisper>) => {
@@ -369,10 +402,11 @@ const FeedScreen = () => {
           isVisible={true}
           isActive={getIsActive()}
           onWhisperUpdate={handleWhisperUpdate}
+          onReportSubmitted={handleReportSubmitted}
         />
       );
     },
-    [currentIndex, handleWhisperUpdate] // Keep this dependency but the issue is elsewhere
+    [currentIndex, handleWhisperUpdate, handleReportSubmitted] // Keep this dependency but the issue is elsewhere
   );
 
   // Memoize key extractor
@@ -446,6 +480,13 @@ const FeedScreen = () => {
   return (
     <ErrorBoundary>
       <View style={styles.container}>
+        {/* Appeal Notification */}
+        <AppealNotification
+          onNavigateToAppeals={() =>
+            navigation.navigate("AppealScreen" as never)
+          }
+        />
+
         {/* New whispers indicator */}
         {newWhispersCount > 0 && (
           <View style={styles.newWhispersIndicator}>

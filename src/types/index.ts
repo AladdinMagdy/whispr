@@ -397,6 +397,7 @@ export enum ReportPriority {
 export interface Report {
   id: string;
   whisperId: string;
+  commentId?: string; // Optional - for comment reports
   reporterId: string;
   reporterDisplayName: string;
   reporterReputation: number; // Reputation score of reporter
@@ -461,6 +462,23 @@ export interface Appeal {
   updatedAt: Date;
 }
 
+// User violation tracking for escalation
+export interface UserViolation {
+  id: string;
+  userId: string;
+  whisperId: string;
+  violationType:
+    | "whisper_deleted"
+    | "whisper_flagged"
+    | "temporary_ban"
+    | "extended_ban";
+  reason: string;
+  reportCount?: number; // Number of reports that triggered this violation
+  moderatorId?: string; // "system" for automatic, actual ID for manual
+  createdAt: Date;
+  expiresAt?: Date; // For violations that expire (like temporary bans)
+}
+
 export enum AppealStatus {
   PENDING = "pending",
   UNDER_REVIEW = "under_review",
@@ -477,23 +495,86 @@ export interface AppealResolution {
 }
 
 // New types for suspension management
+export enum SuspensionType {
+  WARNING = "warning",
+  TEMPORARY = "temporary",
+  PERMANENT = "permanent",
+}
+
+export enum BanType {
+  NONE = "none",
+  CONTENT_HIDDEN = "content_hidden", // Content becomes invisible to all users
+  CONTENT_VISIBLE = "content_visible", // Content stays visible but user can't post
+  SHADOW_BAN = "shadow_ban", // Content appears normal to user but hidden from others
+}
+
 export interface Suspension {
   id: string;
   userId: string;
-  reason: string;
   type: SuspensionType;
-  duration: number; // in milliseconds
+  banType?: BanType; // Optional for backward compatibility
+  reason: string;
+  moderatorId: string;
   startDate: Date;
-  endDate: Date;
+  endDate?: Date; // Only for temporary suspensions
   isActive: boolean;
-  moderatorId?: string;
-  appealable: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export enum SuspensionType {
-  TEMPORARY = "temporary",
-  PERMANENT = "permanent",
-  WARNING = "warning",
+export interface UserMute {
+  id: string;
+  userId: string; // The user who is doing the muting
+  mutedUserId: string; // The user being muted
+  mutedUserDisplayName: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface UserRestriction {
+  id: string;
+  userId: string; // The user who is doing the restricting
+  restrictedUserId: string; // The user being restricted
+  restrictedUserDisplayName: string;
+  type: "interaction" | "visibility" | "full";
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface UserBlock {
+  id: string;
+  userId: string; // The user who is doing the blocking
+  blockedUserId: string; // The user being blocked
+  blockedUserDisplayName: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// New types for comment reporting
+export interface CommentReport {
+  id: string;
+  commentId: string;
+  whisperId: string;
+  reporterId: string;
+  reporterDisplayName: string;
+  reporterReputation: number;
+  category: ReportCategory;
+  priority: ReportPriority;
+  status: ReportStatus;
+  reason: string;
+  evidence?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  reviewedAt?: Date;
+  reviewedBy?: string;
+  resolution?: CommentReportResolution;
+  reputationWeight: number;
+}
+
+export interface CommentReportResolution {
+  action: "hide" | "delete" | "dismiss";
+  reason: string;
+  moderatorId: string;
+  timestamp: Date;
+  notes?: string;
 }

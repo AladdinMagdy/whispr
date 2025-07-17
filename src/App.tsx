@@ -8,6 +8,8 @@ import { View, Text, ActivityIndicator } from "react-native";
 
 // Import screens
 import RecordScreen from "./screens/RecordScreen";
+import SuspensionScreen from "./screens/SuspensionScreen";
+import AppealScreen from "./screens/AppealScreen";
 
 // Import providers
 import { AuthProvider } from "./providers/AuthProvider";
@@ -21,8 +23,76 @@ import { AppState } from "react-native";
 
 // Import MainTabs properly
 import MainTabs from "./navigation/MainTabs";
+import { useSuspensionCheck } from "./hooks/useSuspensionCheck";
 
 const Stack = createStackNavigator();
+
+// Separate component that handles suspension check inside AuthProvider
+function AppContent() {
+  const { isSuspended, loading: suspensionLoading } = useSuspensionCheck();
+
+  if (suspensionLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" />
+        <Text style={{ marginTop: 16 }}>Checking account status...</Text>
+      </View>
+    );
+  }
+
+  if (isSuspended) {
+    return <SuspensionScreen />;
+  }
+
+  return (
+    <NavigationContainer>
+      <StatusBar style="auto" />
+      <Stack.Navigator
+        initialRouteName="MainTabs"
+        screenOptions={{
+          headerStyle: {
+            backgroundColor: "#f8f9fa",
+          },
+          headerTintColor: "#333",
+          headerTitleStyle: {
+            fontWeight: "bold",
+          },
+        }}
+      >
+        <Stack.Screen
+          name="MainTabs"
+          component={MainTabs}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="RecordModal"
+          component={RecordScreen}
+          options={{
+            title: "Record Whisper",
+            presentation: "modal",
+            headerShown: true,
+          }}
+        />
+        <Stack.Screen
+          name="Suspension"
+          component={SuspensionScreen}
+          options={{
+            title: "Account Suspended",
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
+          name="AppealScreen"
+          component={AppealScreen}
+          options={{
+            title: "Appeals Center",
+            headerShown: true,
+          }}
+        />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
 
 export default function App() {
   const [isInitialized, setIsInitialized] = useState(false);
@@ -123,36 +193,7 @@ export default function App() {
     <SafeAreaProvider>
       <PaperProvider>
         <AuthProvider>
-          <NavigationContainer>
-            <StatusBar style="auto" />
-            <Stack.Navigator
-              initialRouteName="MainTabs"
-              screenOptions={{
-                headerStyle: {
-                  backgroundColor: "#f8f9fa",
-                },
-                headerTintColor: "#333",
-                headerTitleStyle: {
-                  fontWeight: "bold",
-                },
-              }}
-            >
-              <Stack.Screen
-                name="MainTabs"
-                component={MainTabs}
-                options={{ headerShown: false }}
-              />
-              <Stack.Screen
-                name="RecordModal"
-                component={RecordScreen}
-                options={{
-                  title: "Record Whisper",
-                  presentation: "modal",
-                  headerShown: true,
-                }}
-              />
-            </Stack.Navigator>
-          </NavigationContainer>
+          <AppContent />
         </AuthProvider>
       </PaperProvider>
     </SafeAreaProvider>

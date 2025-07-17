@@ -1,3 +1,5 @@
+import { SuspensionType } from "../types";
+
 // Audio recording constants
 export const AUDIO_CONSTANTS = {
   MAX_DURATION: 30, // seconds
@@ -31,9 +33,11 @@ export const FIRESTORE_COLLECTIONS = {
   LIKES: "likes",
   REPLIES: "replies",
   REPORTS: "reports",
+  COMMENT_REPORTS: "commentReports",
   APPEALS: "appeals",
   SUSPENSIONS: "suspensions",
   REPUTATION: "reputation",
+  USER_VIOLATIONS: "userViolations",
 } as const;
 
 // Storage paths
@@ -203,6 +207,26 @@ export const REPORTING_CONSTANTS = {
   HIGH_PRIORITY_THRESHOLD: 75,
   MEDIUM_PRIORITY_THRESHOLD: 50,
   LOW_PRIORITY_THRESHOLD: 25,
+
+  // Automatic ban escalation thresholds
+  AUTO_ESCALATION: {
+    // Whisper-level escalation (individual content)
+    WHISPER: {
+      FLAG_FOR_REVIEW: 5, // Flag whisper for review after 5 reports
+      AUTO_DELETE: 15, // Auto-delete whisper after 15 reports
+      DELETE_AND_TEMP_BAN: 25, // Delete whisper + temp ban user after 25 reports
+    },
+    // User-level escalation (repeated violations)
+    USER: {
+      TEMPORARY_BAN: 3, // Temporary ban after 3 deleted whispers
+      EXTENDED_BAN: 5, // Extended ban after 5 deleted whispers
+      PERMANENT_BAN: 10, // Permanent ban after 10 deleted whispers
+      ESCALATION_WINDOW_DAYS: 90, // Count violations within 90 days
+    },
+    // General settings
+    ESCALATION_WINDOW_DAYS: 30, // Count reports within 30 days
+    UNIQUE_REPORTERS_ONLY: true, // Only count unique reporters
+  },
 } as const;
 
 // Suspension system constants
@@ -216,10 +240,10 @@ export const SUSPENSION_CONSTANTS = {
 
   // Suspension thresholds based on violation count
   SUSPENSION_THRESHOLDS: {
-    FIRST_VIOLATION: "WARNING",
-    SECOND_VIOLATION: "TEMPORARY",
-    THIRD_VIOLATION: "TEMPORARY",
-    FOURTH_VIOLATION: "PERMANENT",
+    FIRST_VIOLATION: SuspensionType.WARNING,
+    SECOND_VIOLATION: SuspensionType.TEMPORARY,
+    THIRD_VIOLATION: SuspensionType.TEMPORARY,
+    FOURTH_VIOLATION: SuspensionType.PERMANENT,
   },
 
   // Violation counts for automatic suspension

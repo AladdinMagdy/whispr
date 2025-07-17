@@ -146,7 +146,8 @@ export const useComments = ({
       const result = await interactionServiceRef.current.getComments(
         whisperId,
         20,
-        null
+        null,
+        user?.uid
       );
       setComments(result.comments);
       setCommentsHasMore(result.hasMore);
@@ -159,7 +160,7 @@ export const useComments = ({
     } finally {
       setLoadingComments(false);
     }
-  }, [whisperId, loadingComments, onCommentChange]);
+  }, [whisperId, loadingComments, onCommentChange, user?.uid]);
 
   const handleShowComments = useCallback(() => {
     setShowComments(true);
@@ -245,7 +246,8 @@ export const useComments = ({
       const result = await interactionServiceRef.current.getComments(
         whisperId,
         20,
-        commentsLastDoc
+        commentsLastDoc,
+        user?.uid
       );
 
       setComments((prev) => [...prev, ...result.comments]);
@@ -257,7 +259,7 @@ export const useComments = ({
     } finally {
       setLoadingComments(false);
     }
-  }, [whisperId, loadingComments, commentsHasMore, commentsLastDoc]);
+  }, [whisperId, loadingComments, commentsHasMore, commentsLastDoc, user?.uid]);
 
   return {
     comments,

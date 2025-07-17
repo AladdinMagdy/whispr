@@ -8,6 +8,7 @@ import { useAuth } from "../providers/AuthProvider";
 type RootStackParamList = {
   MainTabs: undefined;
   RecordModal: undefined;
+  AppealScreen: undefined;
 };
 
 type HomeScreenNavigationProp = StackNavigationProp<
@@ -78,9 +79,8 @@ export default function HomeScreen() {
       <Card style={styles.actionsCard}>
         <Card.Content>
           <Text variant="titleMedium" style={styles.actionsTitle}>
-            Quick Actions
+            Actions
           </Text>
-
           <Button
             mode="contained"
             onPress={() => navigation.navigate("RecordModal")}
@@ -90,15 +90,14 @@ export default function HomeScreen() {
           >
             Record New Whisper
           </Button>
-
           <Button
             mode="outlined"
-            onPress={() => navigation.navigate("MainTabs")}
+            onPress={() => navigation.navigate("AppealScreen")}
             style={styles.actionButton}
-            icon="format-list-bulleted"
+            icon="gavel"
             contentStyle={styles.buttonContent}
           >
-            Browse Whispers
+            Appeals Center
           </Button>
         </Card.Content>
       </Card>

@@ -14,6 +14,7 @@ interface WhisperInteractionsProps {
   onLikeChange?: (isLiked: boolean, newLikeCount: number) => void;
   onCommentChange?: (newCommentCount: number) => void;
   onWhisperUpdate?: (updatedWhisper: { id: string; replies: number }) => void;
+  onReportSubmitted?: () => void;
 }
 
 const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
@@ -21,6 +22,7 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
   onLikeChange,
   onCommentChange,
   onWhisperUpdate,
+  onReportSubmitted,
 }) => {
   const { user } = useAuth();
 
@@ -82,15 +84,12 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
         isLiked={isLiked}
         likeCount={likeCount}
         commentCount={commentsInitialized ? commentCount : undefined}
-        whisperId={whisper.id}
-        whisperUserDisplayName={whisper.userDisplayName}
+        whisper={whisper}
         onLike={handleLike}
         onShowComments={handleShowComments}
         onShowLikes={handleShowLikes}
         onValidateLikeCount={handleValidateLikeCount}
-        onReportSubmitted={() => {
-          console.log("Report submitted for whisper:", whisper.id);
-        }}
+        onReportSubmitted={onReportSubmitted}
       />
 
       {/* Likes Modal */}
@@ -108,6 +107,7 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
         visible={showComments}
         onClose={() => setShowComments(false)}
         comments={comments}
+        whisper={whisper}
         loadingComments={loadingComments}
         commentsHasMore={commentsHasMore}
         newComment={newComment}
@@ -118,6 +118,7 @@ const WhisperInteractions: React.FC<WhisperInteractionsProps> = ({
         onSubmitComment={handleSubmitComment}
         onLikeComment={handleLikeComment}
         onDeleteComment={handleDeleteComment}
+        onReportSubmitted={onReportSubmitted}
       />
     </View>
   );

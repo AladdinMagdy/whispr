@@ -3,7 +3,7 @@
  * Handles user suspensions, temporary bans, and warning systems
  */
 
-import { Suspension, SuspensionType } from "../types";
+import { Suspension, SuspensionType, BanType } from "../types";
 import { getFirestoreService } from "./firestoreService";
 import { getReputationService } from "./reputationService";
 import { TIME_CONSTANTS, REPUTATION_CONSTANTS } from "../constants";
@@ -32,9 +32,9 @@ export class SuspensionService {
 
   // Default suspension durations (in milliseconds)
   private static readonly DEFAULT_DURATIONS = {
-    [SuspensionType.WARNING]: TIME_CONSTANTS.WARNING_DURATION,
-    [SuspensionType.TEMPORARY]: TIME_CONSTANTS.TEMPORARY_SUSPENSION_DURATION,
-    [SuspensionType.PERMANENT]: 0, // No duration for permanent
+    warning: TIME_CONSTANTS.WARNING_DURATION,
+    temporary: TIME_CONSTANTS.TEMPORARY_SUSPENSION_DURATION,
+    permanent: 0, // No duration for permanent
   };
 
   // Suspension thresholds based on violation count
@@ -87,13 +87,11 @@ export class SuspensionService {
         userId: data.userId,
         reason: data.reason,
         type: data.type,
-        duration:
-          data.duration || SuspensionService.DEFAULT_DURATIONS[data.type],
+        banType: this.getBanTypeForSuspension(data.type),
+        moderatorId: data.moderatorId || "system",
         startDate,
         endDate,
         isActive: true,
-        moderatorId: data.moderatorId,
-        appealable: data.appealable ?? data.type !== SuspensionType.PERMANENT,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -139,7 +137,9 @@ export class SuspensionService {
       const suspensions = await this.firestoreService.getUserSuspensions(
         userId
       );
-      return suspensions.filter((s) => s.isActive && s.endDate > new Date());
+      return suspensions.filter(
+        (s) => s.isActive && s.endDate && s.endDate > new Date()
+      );
     } catch (error) {
       console.error("❌ Error getting user suspensions:", error);
       return [];
@@ -157,7 +157,9 @@ export class SuspensionService {
     try {
       const activeSuspensions = await this.getUserActiveSuspensions(userId);
       const suspended = activeSuspensions.length > 0;
-      const canAppeal = activeSuspensions.some((s) => s.appealable);
+      const canAppeal = activeSuspensions.some(
+        (s) => s.type !== SuspensionType.PERMANENT
+      );
 
       return {
         suspended,
@@ -197,32 +199,33 @@ export class SuspensionService {
           if (suspension.type === SuspensionType.PERMANENT) {
             throw new Error("Cannot extend permanent suspension");
           }
-          updates.endDate = new Date(
-            suspension.endDate.getTime() + (data.newDuration || 0)
-          );
+          if (suspension.endDate) {
+            updates.endDate = new Date(
+              suspension.endDate.getTime() + (data.newDuration || 0)
+            );
+          }
           break;
 
         case "reduce":
           if (suspension.type === SuspensionType.PERMANENT) {
             throw new Error("Cannot reduce permanent suspension");
           }
-          updates.endDate = new Date(
-            suspension.endDate.getTime() - (data.newDuration || 0)
-          );
+          if (suspension.endDate) {
+            updates.endDate = new Date(
+              suspension.endDate.getTime() - (data.newDuration || 0)
+            );
+          }
           break;
 
         case "remove":
           updates.isActive = false;
-          updates.endDate = new Date();
           break;
 
         case "make_permanent":
           updates.type = SuspensionType.PERMANENT;
-          updates.duration = 0;
           updates.endDate = new Date(
             Date.now() + TIME_CONSTANTS.PERMANENT_SUSPENSION_DURATION
           );
-          updates.appealable = false;
           break;
       }
 
@@ -254,19 +257,15 @@ export class SuspensionService {
       let duration: number | undefined;
 
       if (violationCount === 1) {
-        suspensionType =
-          SuspensionService.SUSPENSION_THRESHOLDS.FIRST_VIOLATION;
+        suspensionType = SuspensionType.WARNING;
       } else if (violationCount === 2) {
-        suspensionType =
-          SuspensionService.SUSPENSION_THRESHOLDS.SECOND_VIOLATION;
+        suspensionType = SuspensionType.TEMPORARY;
         duration = TIME_CONSTANTS.TEMPORARY_SUSPENSION_DURATION; // 24 hours
       } else if (violationCount === 3) {
-        suspensionType =
-          SuspensionService.SUSPENSION_THRESHOLDS.THIRD_VIOLATION;
+        suspensionType = SuspensionType.TEMPORARY;
         duration = TIME_CONSTANTS.EXTENDED_SUSPENSION_DURATION; // 7 days
       } else {
-        suspensionType =
-          SuspensionService.SUSPENSION_THRESHOLDS.FOURTH_VIOLATION;
+        suspensionType = SuspensionType.PERMANENT;
       }
 
       // Don't create warnings (they're just recorded)
@@ -281,7 +280,6 @@ export class SuspensionService {
         type: suspensionType,
         duration,
         moderatorId: "system",
-        appealable: suspensionType !== SuspensionType.PERMANENT,
       });
     } catch (error) {
       console.error("❌ Error creating automatic suspension:", error);
@@ -299,7 +297,11 @@ export class SuspensionService {
       const now = new Date();
 
       for (const suspension of activeSuspensions) {
-        if (suspension.endDate <= now && suspension.isActive) {
+        if (
+          suspension.endDate &&
+          suspension.endDate <= now &&
+          suspension.isActive
+        ) {
           // Deactivate expired suspension
           const updates: Partial<Suspension> = {
             isActive: false,
@@ -394,6 +396,22 @@ export class SuspensionService {
         permanent: 0,
         expired: 0,
       };
+    }
+  }
+
+  /**
+   * Get appropriate banType for suspension type
+   */
+  private getBanTypeForSuspension(suspensionType: SuspensionType): BanType {
+    switch (suspensionType) {
+      case SuspensionType.WARNING:
+        return BanType.NONE; // Warnings don't hide content
+      case SuspensionType.TEMPORARY:
+        return BanType.CONTENT_VISIBLE; // Content stays visible but user cant post
+      case SuspensionType.PERMANENT:
+        return BanType.CONTENT_HIDDEN; // Content becomes invisible to all
+      default:
+        return BanType.NONE;
     }
   }
 }

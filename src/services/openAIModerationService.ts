@@ -5,6 +5,7 @@
 
 import { OpenAIModerationResult, ViolationType, Violation } from "../types";
 import { CONTENT_MODERATION } from "../constants";
+import { getErrorMessage } from "../utils/errorHelpers";
 
 export class OpenAIModerationService {
   private static readonly API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
@@ -48,11 +49,7 @@ export class OpenAIModerationService {
       };
     } catch (error) {
       console.error("OpenAI moderation error:", error);
-      throw new Error(
-        `OpenAI moderation failed: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(getErrorMessage(error));
     }
   }
 

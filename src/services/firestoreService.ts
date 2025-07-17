@@ -36,16 +36,21 @@ import {
   ViolationType,
   Report,
   ReportFilters,
-  ReportStats,
   ReportCategory,
   ReportStatus,
   ReportPriority,
   Appeal,
   AppealStatus,
   Suspension,
-} from "@/types";
+  UserMute,
+  UserRestriction,
+  UserBlock,
+  UserViolation,
+  CommentReport,
+} from "../types";
 import { FIRESTORE_COLLECTIONS } from "@/constants";
 import type { ViolationRecord } from "@/types";
+import { getErrorMessage } from "../utils/errorHelpers";
 
 export interface WhisperUploadData {
   audioUrl: string;
@@ -84,6 +89,9 @@ export interface WhisperFeedOptions {
     allowAdultContent: boolean;
     strictFiltering: boolean;
   };
+  excludeBlockedUsers?: boolean; // Whether to exclude blocked users
+  excludeMutedUsers?: boolean; // Whether to exclude muted users
+  currentUserId?: string; // Current user ID for blocking/muting checks
 }
 
 export interface PaginatedWhispersResult {
@@ -117,6 +125,19 @@ export class FirestoreService {
     uploadData: WhisperUploadData
   ): Promise<string> {
     try {
+      // Check if user is suspended before allowing whisper creation
+      const { getSuspensionService } = await import("./suspensionService");
+      const suspensionService = getSuspensionService();
+      const { suspended, suspensions } =
+        await suspensionService.isUserSuspended(userId);
+
+      if (suspended) {
+        const suspensionType = suspensions[0]?.type || "unknown";
+        throw new Error(
+          `Cannot create whisper while suspended (${suspensionType}). Please check your suspension status.`
+        );
+      }
+
       const whisperData = {
         userId,
         userDisplayName,
@@ -143,11 +164,7 @@ export class FirestoreService {
       return docRef.id;
     } catch (error) {
       console.error("❌ Error creating whisper:", error);
-      throw new Error(
-        `Failed to create whisper: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(`Failed to create whisper: ${getErrorMessage(error)}`);
     }
   }
 
@@ -164,6 +181,9 @@ export class FirestoreService {
         userId,
         isMinor,
         contentPreferences,
+        excludeBlockedUsers = false,
+        excludeMutedUsers = false,
+        currentUserId,
       } = options;
 
       let q = query(
@@ -196,7 +216,7 @@ export class FirestoreService {
       }
 
       const querySnapshot = await getDocs(q);
-      const whispers: Whisper[] = [];
+      let whispers: Whisper[] = [];
 
       querySnapshot.forEach((doc) => {
         const data = doc.data();
@@ -219,6 +239,89 @@ export class FirestoreService {
         });
       });
 
+      // --- Backend filtering for permanently banned users (banType: CONTENT_HIDDEN) ---
+      // This ensures content from these users is invisible to all
+      const bannedUserIds = await this.getPermanentlyBannedUserIds();
+      if (bannedUserIds.length > 0) {
+        const originalCount = whispers.length;
+        whispers = whispers.filter((w) => !bannedUserIds.includes(w.userId));
+        console.log(
+          `🚫 Filtered out ${
+            originalCount - whispers.length
+          } whispers from permanently banned users (banType: CONTENT_HIDDEN)`
+        );
+      }
+      // --- End backend ban filtering ---
+
+      // Apply client-side blocking filter if requested
+      if (excludeBlockedUsers && currentUserId) {
+        try {
+          // Get users that the current user has blocked
+          const blockedUsers = await this.getUserBlocks(currentUserId);
+          const blockedUserIds = blockedUsers.map(
+            (block) => block.blockedUserId
+          );
+
+          // Get users who have blocked the current user
+          const usersWhoBlockedMe = await this.getUsersWhoBlockedMe(
+            currentUserId
+          );
+          const usersWhoBlockedMeIds = usersWhoBlockedMe.map(
+            (block) => block.userId
+          );
+
+          // Combine both lists - filter out content from users I blocked AND users who blocked me
+          const allBlockedUserIds = [
+            ...blockedUserIds,
+            ...usersWhoBlockedMeIds,
+          ];
+
+          if (allBlockedUserIds.length > 0) {
+            const originalCount = whispers.length;
+            whispers = whispers.filter(
+              (whisper) => !allBlockedUserIds.includes(whisper.userId)
+            );
+            console.log(
+              `🚫 Filtered out ${
+                originalCount - whispers.length
+              } whispers from blocked users (I blocked: ${
+                blockedUserIds.length
+              }, blocked me: ${usersWhoBlockedMeIds.length})`
+            );
+          }
+        } catch (error) {
+          console.warn(
+            "⚠️ Failed to filter blocked users, showing all whispers:",
+            error
+          );
+        }
+      }
+
+      // Apply client-side mute filter if requested
+      if (excludeMutedUsers && currentUserId) {
+        try {
+          const mutedUsers = await this.getUserMutes(currentUserId);
+          const mutedUserIds = mutedUsers.map((mute) => mute.mutedUserId);
+
+          if (mutedUserIds.length > 0) {
+            const originalCount = whispers.length;
+            whispers = whispers.filter(
+              (whisper) => !mutedUserIds.includes(whisper.userId)
+            );
+            console.log(
+              `🔇 Filtered out ${
+                originalCount - whispers.length
+              } whispers from muted users`
+            );
+          }
+        } catch (error) {
+          console.warn(
+            "⚠️ Failed to filter muted users, showing all whispers:",
+            error
+          );
+        }
+      }
+
       const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
       const hasMore = querySnapshot.docs.length === limitCount;
 
@@ -232,11 +335,7 @@ export class FirestoreService {
       };
     } catch (error) {
       console.error("❌ Error fetching whispers:", error);
-      throw new Error(
-        `Failed to fetch whispers: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(`Failed to fetch whispers: ${getErrorMessage(error)}`);
     }
   }
 
@@ -253,6 +352,9 @@ export class FirestoreService {
         userId,
         isMinor,
         contentPreferences,
+        excludeBlockedUsers = false,
+        excludeMutedUsers = false,
+        currentUserId,
       } = options;
 
       let q = query(
@@ -281,8 +383,8 @@ export class FirestoreService {
 
       const unsubscribe = onSnapshot(
         q,
-        (querySnapshot) => {
-          const whispers: Whisper[] = [];
+        async (querySnapshot) => {
+          let whispers: Whisper[] = [];
 
           querySnapshot.forEach((doc) => {
             const data = doc.data();
@@ -305,6 +407,75 @@ export class FirestoreService {
             });
           });
 
+          // Apply client-side blocking filter if requested
+          if (excludeBlockedUsers && currentUserId) {
+            try {
+              // Get users that the current user has blocked
+              const blockedUsers = await this.getUserBlocks(currentUserId);
+              const blockedUserIds = blockedUsers.map(
+                (block) => block.blockedUserId
+              );
+
+              // Get users who have blocked the current user
+              const usersWhoBlockedMe = await this.getUsersWhoBlockedMe(
+                currentUserId
+              );
+              const usersWhoBlockedMeIds = usersWhoBlockedMe.map(
+                (block) => block.userId
+              );
+
+              // Combine both lists - filter out content from users I blocked AND users who blocked me
+              const allBlockedUserIds = [
+                ...blockedUserIds,
+                ...usersWhoBlockedMeIds,
+              ];
+
+              if (allBlockedUserIds.length > 0) {
+                const originalCount = whispers.length;
+                whispers = whispers.filter(
+                  (whisper) => !allBlockedUserIds.includes(whisper.userId)
+                );
+                console.log(
+                  `🚫 Real-time filtered out ${
+                    originalCount - whispers.length
+                  } whispers from blocked users (I blocked: ${
+                    blockedUserIds.length
+                  }, blocked me: ${usersWhoBlockedMeIds.length})`
+                );
+              }
+            } catch (error) {
+              console.warn(
+                "⚠️ Failed to filter blocked users in real-time, showing all whispers:",
+                error
+              );
+            }
+          }
+
+          // Apply client-side mute filter if requested
+          if (excludeMutedUsers && currentUserId) {
+            try {
+              const mutedUsers = await this.getUserMutes(currentUserId);
+              const mutedUserIds = mutedUsers.map((mute) => mute.mutedUserId);
+
+              if (mutedUserIds.length > 0) {
+                const originalCount = whispers.length;
+                whispers = whispers.filter(
+                  (whisper) => !mutedUserIds.includes(whisper.userId)
+                );
+                console.log(
+                  `🔇 Real-time filtered out ${
+                    originalCount - whispers.length
+                  } whispers from muted users`
+                );
+              }
+            } catch (error) {
+              console.warn(
+                "⚠️ Failed to filter muted users in real-time, showing all whispers:",
+                error
+              );
+            }
+          }
+
           console.log(`🔄 Real-time update: ${whispers.length} whispers`);
           callback(whispers);
         },
@@ -317,9 +488,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error setting up real-time listener:", error);
       throw new Error(
-        `Failed to set up real-time listener: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to set up real-time listener: ${getErrorMessage(error)}`
       );
     }
   }
@@ -335,7 +504,13 @@ export class FirestoreService {
     try {
       // Listen to whispers created after the given timestamp
       const startTime = sinceTimestamp || new Date(Date.now() - 60000); // Default: last minute
-      const { isMinor, contentPreferences } = options;
+      const {
+        isMinor,
+        contentPreferences,
+        excludeBlockedUsers = false,
+        excludeMutedUsers = false,
+        currentUserId,
+      } = options;
 
       let q = query(
         collection(this.firestore, this.whispersCollection),
@@ -358,8 +533,8 @@ export class FirestoreService {
 
       const unsubscribe = onSnapshot(
         q,
-        (querySnapshot) => {
-          querySnapshot.docChanges().forEach((change) => {
+        async (querySnapshot) => {
+          querySnapshot.docChanges().forEach(async (change) => {
             if (change.type === "added") {
               const data = change.doc.data();
               const newWhisper: Whisper = {
@@ -380,6 +555,56 @@ export class FirestoreService {
                 moderationResult: data.moderationResult,
               };
 
+              // Check if the whisper is from a blocked user
+              if (excludeBlockedUsers && currentUserId) {
+                try {
+                  // Check if I blocked this user
+                  const isBlocked = await this.getUserBlock(
+                    currentUserId,
+                    newWhisper.userId
+                  );
+
+                  // Check if this user blocked me
+                  const isBlockedByMe = await this.getUserBlock(
+                    newWhisper.userId,
+                    currentUserId
+                  );
+
+                  if (isBlocked || isBlockedByMe) {
+                    console.log(
+                      `🚫 Skipping new whisper from blocked user: ${newWhisper.id} (I blocked: ${isBlocked}, blocked me: ${isBlockedByMe})`
+                    );
+                    return; // Skip this whisper
+                  }
+                } catch (error) {
+                  console.warn(
+                    "⚠️ Failed to check if user is blocked, showing whisper:",
+                    error
+                  );
+                }
+              }
+
+              // Check if the whisper is from a muted user
+              if (excludeMutedUsers && currentUserId) {
+                try {
+                  const isMuted = await this.getUserMute(
+                    currentUserId,
+                    newWhisper.userId
+                  );
+                  if (isMuted) {
+                    console.log(
+                      `🔇 Skipping new whisper from muted user: ${newWhisper.id}`
+                    );
+                    return; // Skip this whisper
+                  }
+                } catch (error) {
+                  console.warn(
+                    "⚠️ Failed to check if user is muted, showing whisper:",
+                    error
+                  );
+                }
+              }
+
               console.log(`🆕 New whisper detected: ${newWhisper.id}`);
               callback(newWhisper);
             }
@@ -394,9 +619,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error setting up new whispers listener:", error);
       throw new Error(
-        `Failed to set up new whispers listener: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to set up new whispers listener: ${getErrorMessage(error)}`
       );
     }
   }
@@ -470,9 +693,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error liking/unliking whisper:", error);
       throw new Error(
-        `Failed to like/unlike whisper: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to like/unlike whisper: ${getErrorMessage(error)}`
       );
     }
   }
@@ -505,7 +726,8 @@ export class FirestoreService {
   async getWhisperLikes(
     whisperId: string,
     limitCount: number = 50,
-    startAfterDoc?: QueryDocumentSnapshot<DocumentData>
+    startAfterDoc?: QueryDocumentSnapshot<DocumentData>,
+    currentUserId?: string
   ): Promise<{
     likes: Like[];
     lastDoc: QueryDocumentSnapshot<DocumentData> | null;
@@ -521,7 +743,7 @@ export class FirestoreService {
       );
 
       const querySnapshot = await getDocs(likesQuery);
-      const likes: Like[] = [];
+      let likes: Like[] = [];
 
       querySnapshot.forEach((doc) => {
         const data = doc.data();
@@ -535,6 +757,50 @@ export class FirestoreService {
         });
       });
 
+      // --- Backend filtering for permanently banned users (banType: CONTENT_HIDDEN) ---
+      // Filter out likes from permanently banned users
+      const bannedUserIds = await this.getPermanentlyBannedUserIds();
+      if (bannedUserIds.length > 0) {
+        const originalCount = likes.length;
+        likes = likes.filter((like) => !bannedUserIds.includes(like.userId));
+        console.log(
+          `🚫 Filtered out ${
+            originalCount - likes.length
+          } likes from permanently banned users (banType: CONTENT_HIDDEN)`
+        );
+      }
+      // --- End backend ban filtering ---
+
+      // --- Privacy filtering for blocked users (if currentUserId provided) ---
+      if (currentUserId) {
+        // Get users that the current user has blocked
+        const blockedUsers = await this.getUserBlocks(currentUserId);
+        const blockedUserIds = blockedUsers.map((block) => block.blockedUserId);
+        // Get users who have blocked the current user
+        const usersWhoBlockedMe = await this.getUsersWhoBlockedMe(
+          currentUserId
+        );
+        const usersWhoBlockedMeIds = usersWhoBlockedMe.map(
+          (block) => block.userId
+        );
+        // Combine both lists
+        const allBlockedUserIds = [...blockedUserIds, ...usersWhoBlockedMeIds];
+        if (allBlockedUserIds.length > 0) {
+          const originalCount = likes.length;
+          likes = likes.filter(
+            (like) => !allBlockedUserIds.includes(like.userId)
+          );
+          console.log(
+            `🚫 Filtered out ${
+              originalCount - likes.length
+            } likes from blocked users (I blocked: ${
+              blockedUserIds.length
+            }, blocked me: ${usersWhoBlockedMeIds.length})`
+          );
+        }
+      }
+      // --- End privacy filtering ---
+
       const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
       const hasMore = querySnapshot.docs.length === limitCount;
 
@@ -545,9 +811,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error fetching whisper likes:", error);
       throw new Error(
-        `Failed to fetch whisper likes: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to fetch whisper likes: ${getErrorMessage(error)}`
       );
     }
   }
@@ -594,9 +858,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error validating like count:", error);
       throw new Error(
-        `Failed to validate like count: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to validate like count: ${getErrorMessage(error)}`
       );
     }
   }
@@ -644,11 +906,7 @@ export class FirestoreService {
       return commentRef.id;
     } catch (error) {
       console.error("❌ Error adding comment:", error);
-      throw new Error(
-        `Failed to add comment: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(`Failed to add comment: ${getErrorMessage(error)}`);
     }
   }
 
@@ -695,7 +953,8 @@ export class FirestoreService {
   async getComments(
     whisperId: string,
     limitCount: number = 20,
-    startAfterDoc?: QueryDocumentSnapshot<DocumentData>
+    startAfterDoc?: QueryDocumentSnapshot<DocumentData>,
+    currentUserId?: string
   ): Promise<{
     comments: Comment[];
     lastDoc: QueryDocumentSnapshot<DocumentData> | null;
@@ -711,7 +970,7 @@ export class FirestoreService {
       );
 
       const querySnapshot = await getDocs(commentsQuery);
-      const comments: Comment[] = [];
+      let comments: Comment[] = [];
 
       querySnapshot.forEach((doc) => {
         const data = doc.data();
@@ -729,6 +988,51 @@ export class FirestoreService {
         });
       });
 
+      // --- Backend filtering for permanently banned users (banType: CONTENT_HIDDEN) ---
+      const bannedUserIds = await this.getPermanentlyBannedUserIds();
+      if (bannedUserIds.length > 0) {
+        const originalCount = comments.length;
+        comments = comments.filter(
+          (comment) => !bannedUserIds.includes(comment.userId)
+        );
+        console.log(
+          `🚫 Filtered out ${
+            originalCount - comments.length
+          } comments from permanently banned users (banType: CONTENT_HIDDEN)`
+        );
+      }
+      // --- End backend ban filtering ---
+
+      // --- Privacy filtering for blocked users (if currentUserId provided) ---
+      if (currentUserId) {
+        // Get users that the current user has blocked
+        const blockedUsers = await this.getUserBlocks(currentUserId);
+        const blockedUserIds = blockedUsers.map((block) => block.blockedUserId);
+        // Get users who have blocked the current user
+        const usersWhoBlockedMe = await this.getUsersWhoBlockedMe(
+          currentUserId
+        );
+        const usersWhoBlockedMeIds = usersWhoBlockedMe.map(
+          (block) => block.userId
+        );
+        // Combine both lists
+        const allBlockedUserIds = [...blockedUserIds, ...usersWhoBlockedMeIds];
+        if (allBlockedUserIds.length > 0) {
+          const originalCount = comments.length;
+          comments = comments.filter(
+            (comment) => !allBlockedUserIds.includes(comment.userId)
+          );
+          console.log(
+            `🚫 Filtered out ${
+              originalCount - comments.length
+            } comments from blocked users (I blocked: ${
+              blockedUserIds.length
+            }, blocked me: ${usersWhoBlockedMeIds.length})`
+          );
+        }
+      }
+      // --- End privacy filtering ---
+
       const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
       const hasMore = querySnapshot.docs.length === limitCount;
 
@@ -738,11 +1042,7 @@ export class FirestoreService {
       return { comments, lastDoc, hasMore };
     } catch (error) {
       console.error("❌ Error fetching comments:", error);
-      throw new Error(
-        `Failed to fetch comments: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(`Failed to fetch comments: ${getErrorMessage(error)}`);
     }
   }
 
@@ -816,15 +1116,13 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error liking/unliking comment:", error);
       throw new Error(
-        `Failed to like/unlike comment: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to like/unlike comment: ${getErrorMessage(error)}`
       );
     }
   }
 
   /**
-   * Delete a comment (only by the creator)
+   * Delete a comment (only by the creator or whisper owner)
    */
   async deleteComment(commentId: string, userId: string): Promise<void> {
     try {
@@ -841,20 +1139,33 @@ export class FirestoreService {
       }
 
       const commentData = commentDoc.data();
-      if (commentData.userId !== userId) {
-        throw new Error("You can only delete your own comments");
+
+      // Get whisper to check if user is the whisper owner
+      const whisperRef = doc(
+        this.firestore,
+        this.whispersCollection,
+        commentData.whisperId
+      );
+      const whisperDoc = await getDoc(whisperRef);
+
+      if (!whisperDoc.exists()) {
+        throw new Error("Whisper not found");
+      }
+
+      const whisperData = whisperDoc.data();
+      const isCommentOwner = commentData.userId === userId;
+      const isWhisperOwner = whisperData.userId === userId;
+
+      if (!isCommentOwner && !isWhisperOwner) {
+        throw new Error(
+          "You can only delete your own comments or comments on your whispers"
+        );
       }
 
       // Delete the comment
       await deleteDoc(commentRef);
 
       // Decrement whisper reply count
-      const whisperRef = doc(
-        this.firestore,
-        this.whispersCollection,
-        commentData.whisperId
-      );
-
       await updateDoc(whisperRef, {
         replies: increment(-1),
       });
@@ -862,11 +1173,7 @@ export class FirestoreService {
       console.log("✅ Comment deleted successfully");
     } catch (error) {
       console.error("❌ Error deleting comment:", error);
-      throw new Error(
-        `Failed to delete comment: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(`Failed to delete comment: ${getErrorMessage(error)}`);
     }
   }
 
@@ -887,11 +1194,7 @@ export class FirestoreService {
       console.log("✅ Whisper deleted successfully");
     } catch (error) {
       console.error("❌ Error deleting whisper:", error);
-      throw new Error(
-        `Failed to delete whisper: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(`Failed to delete whisper: ${getErrorMessage(error)}`);
     }
   }
 
@@ -918,9 +1221,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error updating transcription:", error);
       throw new Error(
-        `Failed to update transcription: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to update transcription: ${getErrorMessage(error)}`
       );
     }
   }
@@ -983,11 +1284,7 @@ export class FirestoreService {
       };
     } catch (error) {
       console.error("❌ Error fetching comment:", error);
-      throw new Error(
-        `Failed to fetch comment: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(`Failed to fetch comment: ${getErrorMessage(error)}`);
     }
   }
 
@@ -1010,9 +1307,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error checking comment like state:", error);
       throw new Error(
-        `Failed to check comment like state: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to check comment like state: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1023,7 +1318,8 @@ export class FirestoreService {
   async getCommentLikes(
     commentId: string,
     limitCount: number = 50,
-    startAfterDoc?: QueryDocumentSnapshot<DocumentData>
+    startAfterDoc?: QueryDocumentSnapshot<DocumentData>,
+    currentUserId?: string
   ): Promise<{
     likes: CommentLikeData[];
     lastDoc: QueryDocumentSnapshot<DocumentData> | null;
@@ -1039,7 +1335,7 @@ export class FirestoreService {
       );
 
       const querySnapshot = await getDocs(likesQuery);
-      const likes: CommentLikeData[] = [];
+      let likes: CommentLikeData[] = [];
 
       querySnapshot.forEach((doc) => {
         const data = doc.data();
@@ -1052,6 +1348,50 @@ export class FirestoreService {
         });
       });
 
+      // --- Backend filtering for permanently banned users (banType: CONTENT_HIDDEN) ---
+      // Filter out comment likes from permanently banned users
+      const bannedUserIds = await this.getPermanentlyBannedUserIds();
+      if (bannedUserIds.length > 0) {
+        const originalCount = likes.length;
+        likes = likes.filter((like) => !bannedUserIds.includes(like.userId));
+        console.log(
+          `🚫 Filtered out ${
+            originalCount - likes.length
+          } comment likes from permanently banned users (banType: CONTENT_HIDDEN)`
+        );
+      }
+      // --- End backend ban filtering ---
+
+      // --- Privacy filtering for blocked users (if currentUserId provided) ---
+      if (currentUserId) {
+        // Get users that the current user has blocked
+        const blockedUsers = await this.getUserBlocks(currentUserId);
+        const blockedUserIds = blockedUsers.map((block) => block.blockedUserId);
+        // Get users who have blocked the current user
+        const usersWhoBlockedMe = await this.getUsersWhoBlockedMe(
+          currentUserId
+        );
+        const usersWhoBlockedMeIds = usersWhoBlockedMe.map(
+          (block) => block.userId
+        );
+        // Combine both lists
+        const allBlockedUserIds = [...blockedUserIds, ...usersWhoBlockedMeIds];
+        if (allBlockedUserIds.length > 0) {
+          const originalCount = likes.length;
+          likes = likes.filter(
+            (like) => !allBlockedUserIds.includes(like.userId)
+          );
+          console.log(
+            `🚫 Filtered out ${
+              originalCount - likes.length
+            } comment likes from blocked users (I blocked: ${
+              blockedUserIds.length
+            }, blocked me: ${usersWhoBlockedMeIds.length})`
+          );
+        }
+      }
+      // --- End privacy filtering ---
+
       const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
       const hasMore = querySnapshot.docs.length === limitCount;
 
@@ -1062,9 +1402,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error fetching comment likes:", error);
       throw new Error(
-        `Failed to fetch comment likes: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to fetch comment likes: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1229,9 +1567,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error saving user reputation:", error);
       throw new Error(
-        `Failed to save user reputation: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to save user reputation: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1268,9 +1604,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error getting user reputation:", error);
       throw new Error(
-        `Failed to get user reputation: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to get user reputation: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1310,9 +1644,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error updating user reputation:", error);
       throw new Error(
-        `Failed to update user reputation: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to update user reputation: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1328,9 +1660,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error deleting user reputation:", error);
       throw new Error(
-        `Failed to delete user reputation: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to delete user reputation: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1395,9 +1725,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error getting reputation stats:", error);
       throw new Error(
-        `Failed to get reputation stats: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to get reputation stats: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1445,9 +1773,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error getting users by reputation level:", error);
       throw new Error(
-        `Failed to get users by reputation level: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to get users by reputation level: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1498,9 +1824,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error getting users with recent violations:", error);
       throw new Error(
-        `Failed to get users with recent violations: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to get users with recent violations: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1528,9 +1852,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error resetting user reputation:", error);
       throw new Error(
-        `Failed to reset user reputation: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to reset user reputation: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1576,9 +1898,7 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error adjusting user reputation score:", error);
       throw new Error(
-        `Failed to adjust user reputation score: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to adjust user reputation score: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1599,51 +1919,39 @@ export class FirestoreService {
    */
   async saveReport(report: Report): Promise<void> {
     try {
-      // Filter out undefined values before saving to Firestore
-      const { evidence, ...reportWithoutEvidence } = report;
-      const reportData: Record<string, unknown> = {
-        ...reportWithoutEvidence,
-        createdAt:
-          report.createdAt instanceof Date
-            ? report.createdAt.toISOString()
-            : report.createdAt,
-        updatedAt:
-          report.updatedAt instanceof Date
-            ? report.updatedAt.toISOString()
-            : report.updatedAt,
-      };
-
-      // Only include optional fields if they're defined
-      if (report.reviewedAt) {
-        reportData.reviewedAt =
-          report.reviewedAt instanceof Date
-            ? report.reviewedAt.toISOString()
-            : report.reviewedAt;
-      }
-
-      if (report.resolution) {
-        reportData.resolution = {
-          ...report.resolution,
-          timestamp:
-            report.resolution.timestamp instanceof Date
-              ? report.resolution.timestamp.toISOString()
-              : report.resolution.timestamp,
-        };
-      }
-
-      if (evidence !== undefined) {
-        reportData.evidence = evidence;
-      }
-
-      await setDoc(doc(this.firestore, "reports", report.id), reportData);
-
+      await setDoc(
+        doc(this.firestore, FIRESTORE_COLLECTIONS.REPORTS, report.id),
+        {
+          ...report,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }
+      );
       console.log("✅ Report saved successfully:", report.id);
     } catch (error) {
       console.error("❌ Error saving report:", error);
+      throw new Error(`Failed to save report: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Save a comment report to Firestore
+   */
+  async saveCommentReport(report: CommentReport): Promise<void> {
+    try {
+      await setDoc(
+        doc(this.firestore, FIRESTORE_COLLECTIONS.COMMENT_REPORTS, report.id),
+        {
+          ...report,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }
+      );
+      console.log("✅ Comment report saved successfully:", report.id);
+    } catch (error) {
+      console.error("❌ Error saving comment report:", error);
       throw new Error(
-        `Failed to save report: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to save comment report: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1653,35 +1961,106 @@ export class FirestoreService {
    */
   async getReports(filters: ReportFilters = {}): Promise<Report[]> {
     try {
-      let q = query(
-        collection(this.firestore, "reports"),
-        orderBy("createdAt", "desc")
+      let reportsQuery: any = collection(
+        this.firestore,
+        FIRESTORE_COLLECTIONS.REPORTS
       );
+      const constraints: any[] = [];
 
-      // Apply filters
       if (filters.status) {
-        q = query(q, where("status", "==", filters.status));
+        constraints.push(where("status", "==", filters.status));
       }
       if (filters.category) {
-        q = query(q, where("category", "==", filters.category));
+        constraints.push(where("category", "==", filters.category));
       }
       if (filters.priority) {
-        q = query(q, where("priority", "==", filters.priority));
+        constraints.push(where("priority", "==", filters.priority));
       }
       if (filters.reporterId) {
-        q = query(q, where("reporterId", "==", filters.reporterId));
+        constraints.push(where("reporterId", "==", filters.reporterId));
       }
       if (filters.whisperId) {
-        q = query(q, where("whisperId", "==", filters.whisperId));
+        constraints.push(where("whisperId", "==", filters.whisperId));
       }
 
-      const querySnapshot = await getDocs(q);
+      if (constraints.length > 0) {
+        reportsQuery = query(reportsQuery, ...constraints);
+      }
+
+      const querySnapshot = await getDocs(reportsQuery);
       const reports: Report[] = [];
 
       querySnapshot.forEach((doc) => {
-        const data = doc.data();
+        const data = doc.data() as any;
         reports.push({
           id: doc.id,
+          whisperId: data.whisperId,
+          commentId: data.commentId,
+          reporterId: data.reporterId,
+          reporterDisplayName: data.reporterDisplayName,
+          reporterReputation: data.reporterReputation,
+          category: data.category,
+          priority: data.priority,
+          status: data.status,
+          reason: data.reason,
+          evidence: data.evidence,
+          createdAt: data.createdAt?.toDate() || new Date(),
+          updatedAt: data.updatedAt?.toDate() || new Date(),
+          reviewedAt: data.reviewedAt?.toDate(),
+          reviewedBy: data.reviewedBy,
+          resolution: data.resolution,
+          reputationWeight: data.reputationWeight,
+        });
+      });
+
+      return reports;
+    } catch (error) {
+      console.error("❌ Error getting reports:", error);
+      throw new Error(`Failed to get reports: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Get comment reports with filtering
+   */
+  async getCommentReports(
+    filters: ReportFilters = {}
+  ): Promise<CommentReport[]> {
+    try {
+      let reportsQuery: any = collection(
+        this.firestore,
+        FIRESTORE_COLLECTIONS.COMMENT_REPORTS
+      );
+      const constraints: any[] = [];
+
+      if (filters.status) {
+        constraints.push(where("status", "==", filters.status));
+      }
+      if (filters.category) {
+        constraints.push(where("category", "==", filters.category));
+      }
+      if (filters.priority) {
+        constraints.push(where("priority", "==", filters.priority));
+      }
+      if (filters.reporterId) {
+        constraints.push(where("reporterId", "==", filters.reporterId));
+      }
+      if (filters.whisperId) {
+        constraints.push(where("whisperId", "==", filters.whisperId));
+      }
+
+      if (constraints.length > 0) {
+        reportsQuery = query(reportsQuery, ...constraints);
+      }
+
+      const querySnapshot = await getDocs(reportsQuery);
+      const reports: CommentReport[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data() as any;
+        reports.push({
+          id: doc.id,
+          commentId: data.commentId,
           whisperId: data.whisperId,
           reporterId: data.reporterId,
           reporterDisplayName: data.reporterDisplayName,
@@ -1691,55 +2070,80 @@ export class FirestoreService {
           status: data.status,
           reason: data.reason,
           evidence: data.evidence,
-          createdAt: new Date(data.createdAt),
-          updatedAt: new Date(data.updatedAt),
-          reviewedAt: data.reviewedAt ? new Date(data.reviewedAt) : undefined,
+          createdAt: data.createdAt?.toDate() || new Date(),
+          updatedAt: data.updatedAt?.toDate() || new Date(),
+          reviewedAt: data.reviewedAt?.toDate(),
           reviewedBy: data.reviewedBy,
-          resolution: data.resolution
-            ? {
-                ...data.resolution,
-                timestamp: new Date(data.resolution.timestamp),
-              }
-            : undefined,
+          resolution: data.resolution,
           reputationWeight: data.reputationWeight,
         });
       });
 
-      // Apply date range filter in memory if specified
-      if (filters.dateRange) {
-        return reports.filter(
-          (report) =>
-            report.createdAt >= filters.dateRange!.start &&
-            report.createdAt <= filters.dateRange!.end
-        );
-      }
-
       return reports;
     } catch (error) {
-      console.error("❌ Error getting reports:", error);
+      console.error("❌ Error getting comment reports:", error);
       throw new Error(
-        `Failed to get reports: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to get comment reports: ${getErrorMessage(error)}`
       );
     }
   }
 
   /**
-   * Get a single report by ID
+   * Get report by ID
    */
   async getReport(reportId: string): Promise<Report | null> {
     try {
-      const docRef = doc(this.firestore, "reports", reportId);
-      const docSnap = await getDoc(docRef);
+      const reportDoc = await getDoc(
+        doc(this.firestore, FIRESTORE_COLLECTIONS.REPORTS, reportId)
+      );
 
-      if (!docSnap.exists()) {
+      if (!reportDoc.exists()) {
         return null;
       }
 
-      const data = docSnap.data();
+      const data = reportDoc.data();
       return {
-        id: docSnap.id,
+        id: reportDoc.id,
+        whisperId: data.whisperId,
+        commentId: data.commentId,
+        reporterId: data.reporterId,
+        reporterDisplayName: data.reporterDisplayName,
+        reporterReputation: data.reporterReputation,
+        category: data.category,
+        priority: data.priority,
+        status: data.status,
+        reason: data.reason,
+        evidence: data.evidence,
+        createdAt: data.createdAt?.toDate() || new Date(),
+        updatedAt: data.updatedAt?.toDate() || new Date(),
+        reviewedAt: data.reviewedAt?.toDate(),
+        reviewedBy: data.reviewedBy,
+        resolution: data.resolution,
+        reputationWeight: data.reputationWeight,
+      };
+    } catch (error) {
+      console.error("❌ Error getting report:", error);
+      throw new Error(`Failed to get report: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Get comment report by ID
+   */
+  async getCommentReport(reportId: string): Promise<CommentReport | null> {
+    try {
+      const reportDoc = await getDoc(
+        doc(this.firestore, FIRESTORE_COLLECTIONS.COMMENT_REPORTS, reportId)
+      );
+
+      if (!reportDoc.exists()) {
+        return null;
+      }
+
+      const data = reportDoc.data();
+      return {
+        id: reportDoc.id,
+        commentId: data.commentId,
         whisperId: data.whisperId,
         reporterId: data.reporterId,
         reporterDisplayName: data.reporterDisplayName,
@@ -1749,146 +2153,242 @@ export class FirestoreService {
         status: data.status,
         reason: data.reason,
         evidence: data.evidence,
-        createdAt: new Date(data.createdAt),
-        updatedAt: new Date(data.updatedAt),
-        reviewedAt: data.reviewedAt ? new Date(data.reviewedAt) : undefined,
+        createdAt: data.createdAt?.toDate() || new Date(),
+        updatedAt: data.updatedAt?.toDate() || new Date(),
+        reviewedAt: data.reviewedAt?.toDate(),
         reviewedBy: data.reviewedBy,
-        resolution: data.resolution
-          ? {
-              ...data.resolution,
-              timestamp: new Date(data.resolution.timestamp),
-            }
-          : undefined,
+        resolution: data.resolution,
         reputationWeight: data.reputationWeight,
       };
     } catch (error) {
-      console.error("❌ Error getting report:", error);
+      console.error("❌ Error getting comment report:", error);
       throw new Error(
-        `Failed to get report: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to get comment report: ${getErrorMessage(error)}`
       );
     }
   }
 
   /**
-   * Update a report
+   * Update report status
    */
-  async updateReport(
+  async updateReportStatus(
     reportId: string,
-    updates: Partial<Report>
+    status: ReportStatus,
+    moderatorId?: string
   ): Promise<void> {
     try {
-      // Filter out undefined values
-      const filteredUpdates = Object.fromEntries(
-        Object.entries(updates).filter(([, value]) => value !== undefined)
+      const reportRef = doc(
+        this.firestore,
+        FIRESTORE_COLLECTIONS.REPORTS,
+        reportId
       );
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const updateData: Record<string, any> = {
-        ...filteredUpdates,
-        updatedAt: new Date().toISOString(),
+      const updateData: UpdateData<DocumentData> = {
+        status,
+        updatedAt: serverTimestamp(),
       };
 
-      // Handle date fields
-      if (updates.reviewedAt) {
-        updateData.reviewedAt =
-          updates.reviewedAt instanceof Date
-            ? updates.reviewedAt.toISOString()
-            : updates.reviewedAt;
+      if (
+        status === ReportStatus.RESOLVED ||
+        status === ReportStatus.DISMISSED
+      ) {
+        updateData.reviewedAt = serverTimestamp();
+        updateData.reviewedBy = moderatorId || "system";
       }
 
-      if (updates.resolution) {
-        updateData.resolution = {
-          ...updates.resolution,
-          timestamp:
-            updates.resolution.timestamp instanceof Date
-              ? updates.resolution.timestamp.toISOString()
-              : updates.resolution.timestamp,
-        };
+      await updateDoc(reportRef, updateData);
+      console.log("✅ Report status updated:", reportId, status);
+    } catch (error) {
+      console.error("❌ Error updating report status:", error);
+      throw new Error(
+        `Failed to update report status: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  /**
+   * Update comment report status
+   */
+  async updateCommentReportStatus(
+    reportId: string,
+    status: ReportStatus,
+    moderatorId?: string
+  ): Promise<void> {
+    try {
+      const reportRef = doc(
+        this.firestore,
+        FIRESTORE_COLLECTIONS.COMMENT_REPORTS,
+        reportId
+      );
+      const updateData: UpdateData<DocumentData> = {
+        status,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (
+        status === ReportStatus.RESOLVED ||
+        status === ReportStatus.DISMISSED
+      ) {
+        updateData.reviewedAt = serverTimestamp();
+        updateData.reviewedBy = moderatorId || "system";
       }
 
-      await updateDoc(doc(this.firestore, "reports", reportId), updateData);
+      await updateDoc(reportRef, updateData);
+      console.log("✅ Comment report status updated:", reportId, status);
+    } catch (error) {
+      console.error("❌ Error updating comment report status:", error);
+      throw new Error(
+        `Failed to update comment report status: ${getErrorMessage(error)}`
+      );
+    }
+  }
 
+  /**
+   * Update report with resolution
+   */
+  async updateReport(reportId: string, report: Partial<Report>): Promise<void> {
+    try {
+      const reportRef = doc(
+        this.firestore,
+        FIRESTORE_COLLECTIONS.REPORTS,
+        reportId
+      );
+      await updateDoc(reportRef, {
+        ...report,
+        updatedAt: serverTimestamp(),
+      });
       console.log("✅ Report updated successfully:", reportId);
     } catch (error) {
       console.error("❌ Error updating report:", error);
+      throw new Error(`Failed to update report: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Update comment report with resolution
+   */
+  async updateCommentReport(
+    reportId: string,
+    report: Partial<CommentReport>
+  ): Promise<void> {
+    try {
+      const reportRef = doc(
+        this.firestore,
+        FIRESTORE_COLLECTIONS.COMMENT_REPORTS,
+        reportId
+      );
+      await updateDoc(reportRef, {
+        ...report,
+        updatedAt: serverTimestamp(),
+      });
+      console.log("✅ Comment report updated successfully:", reportId);
+    } catch (error) {
+      console.error("❌ Error updating comment report:", error);
       throw new Error(
-        `Failed to update report: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to update comment report: ${getErrorMessage(error)}`
       );
     }
   }
 
   /**
-   * Get reporting statistics
+   * Check if user has reported a whisper
    */
-  async getReportStats(): Promise<ReportStats> {
+  async hasUserReportedWhisper(
+    whisperId: string,
+    userId: string
+  ): Promise<{ hasReported: boolean; existingReport?: Report }> {
     try {
-      const allReports = await this.getReports();
-
-      const reportsByCategory: Record<ReportCategory, number> = {
-        [ReportCategory.HARASSMENT]: 0,
-        [ReportCategory.HATE_SPEECH]: 0,
-        [ReportCategory.VIOLENCE]: 0,
-        [ReportCategory.SEXUAL_CONTENT]: 0,
-        [ReportCategory.SPAM]: 0,
-        [ReportCategory.SCAM]: 0,
-        [ReportCategory.COPYRIGHT]: 0,
-        [ReportCategory.PERSONAL_INFO]: 0,
-        [ReportCategory.MINOR_SAFETY]: 0,
-        [ReportCategory.OTHER]: 0,
-      };
-
-      const reportsByPriority: Record<ReportPriority, number> = {
-        [ReportPriority.LOW]: 0,
-        [ReportPriority.MEDIUM]: 0,
-        [ReportPriority.HIGH]: 0,
-        [ReportPriority.CRITICAL]: 0,
-      };
-
-      let totalResolutionTime = 0;
-      let resolvedCount = 0;
-
-      allReports.forEach((report) => {
-        reportsByCategory[report.category]++;
-        reportsByPriority[report.priority]++;
-
-        if (report.status === ReportStatus.RESOLVED && report.reviewedAt) {
-          const resolutionTime =
-            report.reviewedAt.getTime() - report.createdAt.getTime();
-          totalResolutionTime += resolutionTime;
-          resolvedCount++;
-        }
+      const reports = await this.getReports({
+        whisperId,
+        reporterId: userId,
       });
 
-      const averageResolutionTime =
-        resolvedCount > 0
-          ? totalResolutionTime / resolvedCount / (1000 * 60 * 60) // Convert to hours
-          : 0;
-
       return {
-        totalReports: allReports.length,
-        pendingReports: allReports.filter(
-          (r) => r.status === ReportStatus.PENDING
-        ).length,
-        criticalReports: allReports.filter(
-          (r) => r.priority === ReportPriority.CRITICAL
-        ).length,
-        resolvedReports: allReports.filter(
-          (r) => r.status === ReportStatus.RESOLVED
-        ).length,
-        averageResolutionTime,
-        reportsByCategory,
-        reportsByPriority,
+        hasReported: reports.length > 0,
+        existingReport: reports[0],
       };
     } catch (error) {
-      console.error("❌ Error getting report stats:", error);
+      console.error("❌ Error checking whisper report status:", error);
+      return { hasReported: false };
+    }
+  }
+
+  /**
+   * Check if user has reported a comment
+   */
+  async hasUserReportedComment(
+    commentId: string,
+    userId: string
+  ): Promise<{ hasReported: boolean; existingReport?: CommentReport }> {
+    try {
+      const reports = await this.getCommentReports({
+        reporterId: userId,
+      });
+
+      const commentReport = reports.find(
+        (report) => report.commentId === commentId
+      );
+
+      return {
+        hasReported: !!commentReport,
+        existingReport: commentReport,
+      };
+    } catch (error) {
+      console.error("❌ Error checking comment report status:", error);
+      return { hasReported: false };
+    }
+  }
+
+  /**
+   * Get comment report stats for a specific comment
+   */
+  async getCommentReportStats(commentId: string): Promise<{
+    totalReports: number;
+    uniqueReporters: number;
+    categories: Record<ReportCategory, number>;
+    priorityBreakdown: Record<ReportPriority, number>;
+  }> {
+    try {
+      const reports = await this.getCommentReports();
+      const commentReports = reports.filter(
+        (report) => report.commentId === commentId
+      );
+
+      const uniqueReporters = new Set(
+        commentReports.map((report) => report.reporterId)
+      ).size;
+      const categories: Record<ReportCategory, number> = {} as Record<
+        ReportCategory,
+        number
+      >;
+      const priorityBreakdown: Record<ReportPriority, number> = {} as Record<
+        ReportPriority,
+        number
+      >;
+
+      // Initialize counters
+      Object.values(ReportCategory).forEach((category) => {
+        categories[category] = 0;
+      });
+      Object.values(ReportPriority).forEach((priority) => {
+        priorityBreakdown[priority] = 0;
+      });
+
+      // Count reports
+      commentReports.forEach((report) => {
+        categories[report.category]++;
+        priorityBreakdown[report.priority]++;
+      });
+
+      return {
+        totalReports: commentReports.length,
+        uniqueReporters,
+        categories,
+        priorityBreakdown,
+      };
+    } catch (error) {
+      console.error("❌ Error getting comment report stats:", error);
       throw new Error(
-        `Failed to get report stats: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Failed to get comment report stats: ${getErrorMessage(error)}`
       );
     }
   }
@@ -1908,11 +2408,7 @@ export class FirestoreService {
       console.log("✅ Appeal saved successfully:", appeal.id);
     } catch (error) {
       console.error("❌ Error saving appeal:", error);
-      throw new Error(
-        `Failed to save appeal: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(`Failed to save appeal: ${getErrorMessage(error)}`);
     }
   }
 
@@ -2015,11 +2511,7 @@ export class FirestoreService {
       console.log("✅ Appeal updated successfully:", appealId);
     } catch (error) {
       console.error("❌ Error updating appeal:", error);
-      throw new Error(
-        `Failed to update appeal: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(`Failed to update appeal: ${getErrorMessage(error)}`);
     }
   }
 
@@ -2054,21 +2546,31 @@ export class FirestoreService {
   // Suspension methods
   async saveSuspension(suspension: Suspension): Promise<void> {
     try {
-      await setDoc(doc(this.firestore, "suspensions", suspension.id), {
-        ...suspension,
+      const suspensionData: Record<string, unknown> = {
+        id: suspension.id,
+        userId: suspension.userId,
+        type: suspension.type,
+        reason: suspension.reason,
+        moderatorId: suspension.moderatorId,
         startDate: Timestamp.fromDate(suspension.startDate),
-        endDate: Timestamp.fromDate(suspension.endDate),
+        isActive: suspension.isActive,
         createdAt: Timestamp.fromDate(suspension.createdAt),
         updatedAt: Timestamp.fromDate(suspension.updatedAt),
-      });
+      };
+
+      // Only include endDate if it exists
+      if (suspension.endDate) {
+        suspensionData.endDate = Timestamp.fromDate(suspension.endDate);
+      }
+
+      await setDoc(
+        doc(this.firestore, "suspensions", suspension.id),
+        suspensionData
+      );
       console.log("✅ Suspension saved successfully:", suspension.id);
     } catch (error) {
       console.error("❌ Error saving suspension:", error);
-      throw new Error(
-        `Failed to save suspension: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(`Failed to save suspension: ${getErrorMessage(error)}`);
     }
   }
 
@@ -2145,11 +2647,7 @@ export class FirestoreService {
       console.log("✅ Suspension updated successfully:", suspensionId);
     } catch (error) {
       console.error("❌ Error updating suspension:", error);
-      throw new Error(
-        `Failed to update suspension: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(`Failed to update suspension: ${getErrorMessage(error)}`);
     }
   }
 
@@ -2207,6 +2705,575 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error getting all suspensions:", error);
       return [];
+    }
+  }
+
+  /**
+   * Get report statistics for a specific whisper
+   */
+  async getWhisperReportStats(whisperId: string): Promise<{
+    totalReports: number;
+    uniqueReporters: number;
+    categories: Record<ReportCategory, number>;
+    priorityBreakdown: Record<ReportPriority, number>;
+  }> {
+    try {
+      const reports = await this.getReports({
+        whisperId,
+      });
+
+      const uniqueReporters = new Set(reports.map((r) => r.reporterId)).size;
+
+      const categories: Record<ReportCategory, number> = {
+        [ReportCategory.HARASSMENT]: 0,
+        [ReportCategory.HATE_SPEECH]: 0,
+        [ReportCategory.VIOLENCE]: 0,
+        [ReportCategory.SEXUAL_CONTENT]: 0,
+        [ReportCategory.SPAM]: 0,
+        [ReportCategory.SCAM]: 0,
+        [ReportCategory.COPYRIGHT]: 0,
+        [ReportCategory.PERSONAL_INFO]: 0,
+        [ReportCategory.MINOR_SAFETY]: 0,
+        [ReportCategory.OTHER]: 0,
+      };
+
+      const priorityBreakdown: Record<ReportPriority, number> = {
+        [ReportPriority.LOW]: 0,
+        [ReportPriority.MEDIUM]: 0,
+        [ReportPriority.HIGH]: 0,
+        [ReportPriority.CRITICAL]: 0,
+      };
+
+      reports.forEach((report) => {
+        categories[report.category]++;
+        priorityBreakdown[report.priority]++;
+      });
+
+      return {
+        totalReports: reports.length,
+        uniqueReporters,
+        categories,
+        priorityBreakdown,
+      };
+    } catch (error) {
+      console.error("❌ Error getting whisper report stats:", error);
+      return {
+        totalReports: 0,
+        uniqueReporters: 0,
+        categories: {} as Record<ReportCategory, number>,
+        priorityBreakdown: {} as Record<ReportPriority, number>,
+      };
+    }
+  }
+
+  // User Mute Management
+  /**
+   * Save a user mute to Firestore
+   */
+  async saveUserMute(mute: UserMute): Promise<void> {
+    try {
+      const muteData = {
+        ...mute,
+        createdAt: mute.createdAt.toISOString(),
+        updatedAt: mute.updatedAt.toISOString(),
+      };
+
+      await setDoc(doc(this.firestore, "userMutes", mute.id), muteData);
+      console.log("✅ User mute saved successfully:", mute.id);
+    } catch (error) {
+      console.error("❌ Error saving user mute:", error);
+      throw new Error(`Failed to save user mute: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Get a specific user mute
+   */
+  async getUserMute(
+    userId: string,
+    mutedUserId: string
+  ): Promise<UserMute | null> {
+    try {
+      const q = query(
+        collection(this.firestore, "userMutes"),
+        where("userId", "==", userId),
+        where("mutedUserId", "==", mutedUserId)
+      );
+
+      const querySnapshot = await getDocs(q);
+
+      if (querySnapshot.empty) {
+        return null;
+      }
+
+      const doc = querySnapshot.docs[0];
+      const data = doc.data();
+
+      return {
+        id: doc.id,
+        userId: data.userId,
+        mutedUserId: data.mutedUserId,
+        mutedUserDisplayName: data.mutedUserDisplayName,
+        createdAt: new Date(data.createdAt),
+        updatedAt: new Date(data.updatedAt),
+      };
+    } catch (error) {
+      console.error("❌ Error getting user mute:", error);
+      throw new Error(`Failed to get user mute: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Get all muted users for a user
+   */
+  async getUserMutes(userId: string): Promise<UserMute[]> {
+    try {
+      const q = query(
+        collection(this.firestore, "userMutes"),
+        where("userId", "==", userId),
+        orderBy("createdAt", "desc")
+      );
+
+      const querySnapshot = await getDocs(q);
+      const mutes: UserMute[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        mutes.push({
+          id: doc.id,
+          userId: data.userId,
+          mutedUserId: data.mutedUserId,
+          mutedUserDisplayName: data.mutedUserDisplayName,
+          createdAt: new Date(data.createdAt),
+          updatedAt: new Date(data.updatedAt),
+        });
+      });
+
+      return mutes;
+    } catch (error) {
+      console.error("❌ Error getting user mutes:", error);
+      throw new Error(`Failed to get user mutes: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Delete a user mute
+   */
+  async deleteUserMute(muteId: string): Promise<void> {
+    try {
+      await deleteDoc(doc(this.firestore, "userMutes", muteId));
+      console.log("✅ User mute deleted successfully:", muteId);
+    } catch (error) {
+      console.error("❌ Error deleting user mute:", error);
+      throw new Error(`Failed to delete user mute: ${getErrorMessage(error)}`);
+    }
+  }
+
+  // User Restriction Management
+  /**
+   * Save a user restriction to Firestore
+   */
+  async saveUserRestriction(restriction: UserRestriction): Promise<void> {
+    try {
+      const restrictionData = {
+        ...restriction,
+        createdAt: restriction.createdAt.toISOString(),
+        updatedAt: restriction.updatedAt.toISOString(),
+      };
+
+      await setDoc(
+        doc(this.firestore, "userRestrictions", restriction.id),
+        restrictionData
+      );
+      console.log("✅ User restriction saved successfully:", restriction.id);
+    } catch (error) {
+      console.error("❌ Error saving user restriction:", error);
+      throw new Error(
+        `Failed to save user restriction: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  /**
+   * Get a specific user restriction
+   */
+  async getUserRestriction(
+    userId: string,
+    restrictedUserId: string
+  ): Promise<UserRestriction | null> {
+    try {
+      const q = query(
+        collection(this.firestore, "userRestrictions"),
+        where("userId", "==", userId),
+        where("restrictedUserId", "==", restrictedUserId)
+      );
+
+      const querySnapshot = await getDocs(q);
+
+      if (querySnapshot.empty) {
+        return null;
+      }
+
+      const doc = querySnapshot.docs[0];
+      const data = doc.data();
+
+      return {
+        id: doc.id,
+        userId: data.userId,
+        restrictedUserId: data.restrictedUserId,
+        restrictedUserDisplayName: data.restrictedUserDisplayName,
+        type: data.type,
+        createdAt: new Date(data.createdAt),
+        updatedAt: new Date(data.updatedAt),
+      };
+    } catch (error) {
+      console.error("❌ Error getting user restriction:", error);
+      throw new Error(
+        `Failed to get user restriction: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  /**
+   * Get all restricted users for a user
+   */
+  async getUserRestrictions(userId: string): Promise<UserRestriction[]> {
+    try {
+      const q = query(
+        collection(this.firestore, "userRestrictions"),
+        where("userId", "==", userId),
+        orderBy("createdAt", "desc")
+      );
+
+      const querySnapshot = await getDocs(q);
+      const restrictions: UserRestriction[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        restrictions.push({
+          id: doc.id,
+          userId: data.userId,
+          restrictedUserId: data.restrictedUserId,
+          restrictedUserDisplayName: data.restrictedUserDisplayName,
+          type: data.type,
+          createdAt: new Date(data.createdAt),
+          updatedAt: new Date(data.updatedAt),
+        });
+      });
+
+      return restrictions;
+    } catch (error) {
+      console.error("❌ Error getting user restrictions:", error);
+      throw new Error(
+        `Failed to get user restrictions: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  /**
+   * Delete a user restriction
+   */
+  async deleteUserRestriction(restrictionId: string): Promise<void> {
+    try {
+      await deleteDoc(doc(this.firestore, "userRestrictions", restrictionId));
+      console.log("✅ User restriction deleted successfully:", restrictionId);
+    } catch (error) {
+      console.error("❌ Error deleting user restriction:", error);
+      throw new Error(
+        `Failed to delete user restriction: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  // User Block Management
+  /**
+   * Save a user block to Firestore
+   */
+  async saveUserBlock(block: UserBlock): Promise<void> {
+    try {
+      const blockData = {
+        ...block,
+        createdAt: block.createdAt.toISOString(),
+        updatedAt: block.updatedAt.toISOString(),
+      };
+
+      await setDoc(doc(this.firestore, "userBlocks", block.id), blockData);
+      console.log("✅ User block saved successfully:", block.id);
+    } catch (error) {
+      console.error("❌ Error saving user block:", error);
+      throw new Error(`Failed to save user block: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Get a specific user block
+   */
+  async getUserBlock(
+    userId: string,
+    blockedUserId: string
+  ): Promise<UserBlock | null> {
+    try {
+      const q = query(
+        collection(this.firestore, "userBlocks"),
+        where("userId", "==", userId),
+        where("blockedUserId", "==", blockedUserId)
+      );
+
+      const querySnapshot = await getDocs(q);
+
+      if (querySnapshot.empty) {
+        return null;
+      }
+
+      const doc = querySnapshot.docs[0];
+      const data = doc.data();
+
+      return {
+        id: doc.id,
+        userId: data.userId,
+        blockedUserId: data.blockedUserId,
+        blockedUserDisplayName: data.blockedUserDisplayName,
+        createdAt: new Date(data.createdAt),
+        updatedAt: new Date(data.updatedAt),
+      };
+    } catch (error) {
+      console.error("❌ Error getting user block:", error);
+      throw new Error(`Failed to get user block: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Get all blocked users for a user
+   */
+  async getUserBlocks(userId: string): Promise<UserBlock[]> {
+    try {
+      const q = query(
+        collection(this.firestore, "userBlocks"),
+        where("userId", "==", userId),
+        orderBy("createdAt", "desc")
+      );
+
+      const querySnapshot = await getDocs(q);
+      const blocks: UserBlock[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        blocks.push({
+          id: doc.id,
+          userId: data.userId,
+          blockedUserId: data.blockedUserId,
+          blockedUserDisplayName: data.blockedUserDisplayName,
+          createdAt: new Date(data.createdAt),
+          updatedAt: new Date(data.updatedAt),
+        });
+      });
+
+      return blocks;
+    } catch (error) {
+      console.error("❌ Error getting user blocks:", error);
+      throw new Error(`Failed to get user blocks: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Get all users who have blocked a specific user
+   */
+  async getUsersWhoBlockedMe(userId: string): Promise<UserBlock[]> {
+    try {
+      const q = query(
+        collection(this.firestore, "userBlocks"),
+        where("blockedUserId", "==", userId),
+        orderBy("createdAt", "desc")
+      );
+
+      const querySnapshot = await getDocs(q);
+      const blocks: UserBlock[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        blocks.push({
+          id: doc.id,
+          userId: data.userId,
+          blockedUserId: data.blockedUserId,
+          blockedUserDisplayName: data.blockedUserDisplayName,
+          createdAt: new Date(data.createdAt),
+          updatedAt: new Date(data.updatedAt),
+        });
+      });
+
+      return blocks;
+    } catch (error) {
+      console.error("❌ Error getting users who blocked me:", error);
+      throw new Error(
+        `Failed to get users who blocked me: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  /**
+   * Delete a user block
+   */
+  async deleteUserBlock(blockId: string): Promise<void> {
+    try {
+      await deleteDoc(doc(this.firestore, "userBlocks", blockId));
+      console.log("✅ User block deleted successfully:", blockId);
+    } catch (error) {
+      console.error("❌ Error deleting user block:", error);
+      throw new Error(`Failed to delete user block: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Get whisper likes with privacy filtering for blocked users
+   */
+  async getWhisperLikesWithPrivacy(
+    whisperId: string,
+    currentUserId: string,
+    limit: number = 50,
+    lastDoc?: QueryDocumentSnapshot<DocumentData>
+  ): Promise<{
+    likes: Like[];
+    hasMore: boolean;
+    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
+  }> {
+    try {
+      // Get the likes
+      const result = await this.getWhisperLikes(whisperId, limit, lastDoc);
+
+      // Get block lists for privacy filtering
+      const [blockedUsers, usersWhoBlockedMe] = await Promise.all([
+        this.getUserBlocks(currentUserId),
+        this.getUsersWhoBlockedMe(currentUserId),
+      ]);
+
+      const blockedSet = new Set([
+        ...blockedUsers.map((b) => b.blockedUserId),
+        ...usersWhoBlockedMe.map((b) => b.userId),
+      ]);
+
+      // Filter and anonymize blocked users' likes
+      const filteredLikes = result.likes.map((like) => {
+        if (blockedSet.has(like.userId)) {
+          return {
+            ...like,
+            userDisplayName: "Anonymous",
+            userProfileColor: "#9E9E9E", // Gray color for anonymous
+          };
+        }
+        return like;
+      });
+
+      return {
+        likes: filteredLikes,
+        hasMore: result.hasMore,
+        lastDoc: result.lastDoc,
+      };
+    } catch (error) {
+      console.error("Error getting whisper likes with privacy:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all userIds of users with active permanent bans (banType: CONTENT_HIDDEN)
+   */
+  async getPermanentlyBannedUserIds(): Promise<string[]> {
+    try {
+      const q = query(
+        collection(this.firestore, "suspensions"),
+        where("isActive", "==", true),
+        where("type", "==", "permanent"),
+        where("banType", "==", "content_hidden")
+      );
+      const querySnapshot = await getDocs(q);
+      const userIds = new Set<string>();
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.userId) userIds.add(data.userId);
+      });
+      return Array.from(userIds);
+    } catch (error) {
+      console.error("❌ Error fetching permanently banned userIds:", error);
+      return [];
+    }
+  }
+
+  // User Violation methods for escalation tracking
+  async saveUserViolation(violation: UserViolation): Promise<void> {
+    try {
+      const violationData: Record<string, unknown> = {
+        id: violation.id,
+        userId: violation.userId,
+        whisperId: violation.whisperId,
+        violationType: violation.violationType,
+        reason: violation.reason,
+        reportCount: violation.reportCount,
+        moderatorId: violation.moderatorId || "system",
+        createdAt: Timestamp.fromDate(violation.createdAt),
+      };
+
+      if (violation.expiresAt) {
+        violationData.expiresAt = Timestamp.fromDate(violation.expiresAt);
+      }
+
+      await setDoc(
+        doc(this.firestore, "userViolations", violation.id),
+        violationData
+      );
+      console.log("✅ User violation saved successfully:", violation.id);
+    } catch (error) {
+      console.error("❌ Error saving user violation:", error);
+      throw new Error(
+        `Failed to save user violation: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  async getUserViolations(
+    userId: string,
+    daysBack: number = 90
+  ): Promise<UserViolation[]> {
+    try {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+
+      const q = query(
+        collection(this.firestore, "userViolations"),
+        where("userId", "==", userId),
+        where("createdAt", ">=", Timestamp.fromDate(cutoffDate)),
+        orderBy("createdAt", "desc")
+      );
+
+      const querySnapshot = await getDocs(q);
+      const violations: UserViolation[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        violations.push({
+          ...data,
+          createdAt: data.createdAt?.toDate() || new Date(),
+          expiresAt: data.expiresAt?.toDate(),
+        } as UserViolation);
+      });
+
+      return violations;
+    } catch (error) {
+      console.error("❌ Error getting user violations:", error);
+      return [];
+    }
+  }
+
+  async getDeletedWhisperCount(
+    userId: string,
+    daysBack: number = 90
+  ): Promise<number> {
+    try {
+      const violations = await this.getUserViolations(userId, daysBack);
+      return violations.filter((v) => v.violationType === "whisper_deleted")
+        .length;
+    } catch (error) {
+      console.error("❌ Error getting deleted whisper count:", error);
+      return 0;
     }
   }
 }

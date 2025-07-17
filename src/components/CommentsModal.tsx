@@ -10,13 +10,14 @@ import {
   TextInput,
   StyleSheet,
 } from "react-native";
-import { Comment } from "../types";
+import { Comment, Whisper } from "../types";
 import CommentItem from "./CommentItem";
 
 interface CommentsModalProps {
   visible: boolean;
   onClose: () => void;
   comments: Comment[];
+  whisper: Whisper;
   loadingComments: boolean;
   commentsHasMore: boolean;
   newComment: string;
@@ -27,12 +28,14 @@ interface CommentsModalProps {
   onSubmitComment: () => void;
   onLikeComment: (commentId: string) => void;
   onDeleteComment: (commentId: string) => void;
+  onReportSubmitted?: () => void;
 }
 
 const CommentsModal: React.FC<CommentsModalProps> = ({
   visible,
   onClose,
   comments,
+  whisper,
   loadingComments,
   commentsHasMore,
   newComment,
@@ -43,6 +46,7 @@ const CommentsModal: React.FC<CommentsModalProps> = ({
   onSubmitComment,
   onLikeComment,
   onDeleteComment,
+  onReportSubmitted,
 }) => {
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -60,9 +64,11 @@ const CommentsModal: React.FC<CommentsModalProps> = ({
           renderItem={({ item }) => (
             <CommentItem
               comment={item}
+              whisper={whisper}
               currentUserId={currentUserId}
               onLikeComment={onLikeComment}
               onDeleteComment={onDeleteComment}
+              onReportSubmitted={onReportSubmitted}
             />
           )}
           onEndReached={() => commentsHasMore && onLoadMore()}

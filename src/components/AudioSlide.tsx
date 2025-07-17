@@ -42,6 +42,7 @@ interface AudioSlideProps {
   isActive: boolean;
   onWhisperUpdate?: (updatedWhisper: { id: string; replies: number }) => void;
   forceCleanupOnUnmount?: boolean; // test-only
+  onReportSubmitted?: () => void;
 }
 
 const AudioSlide: React.FC<AudioSlideProps> = React.memo(
@@ -51,6 +52,7 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
     isActive,
     onWhisperUpdate,
     forceCleanupOnUnmount,
+    onReportSubmitted,
   }) => {
     // Add performance monitoring
     usePerformanceMonitor("AudioSlide");
@@ -373,6 +375,7 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
           <WhisperInteractions
             whisper={whisper}
             onWhisperUpdate={onWhisperUpdate}
+            onReportSubmitted={onReportSubmitted}
           />
 
           {/* Report overlay - shown when whisper is reported */}
@@ -387,6 +390,7 @@ const AudioSlide: React.FC<AudioSlideProps> = React.memo(
         onWhisperUpdate,
         isReported,
         handleShowPost,
+        onReportSubmitted,
       ]
     );
 

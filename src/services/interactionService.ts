@@ -287,7 +287,8 @@ export class InteractionService {
   async getLikes(
     whisperId: string,
     limit: number = 50,
-    lastDoc?: unknown
+    lastDoc?: unknown,
+    currentUserId?: string
   ): Promise<{ likes: Like[]; hasMore: boolean; lastDoc: unknown }> {
     let lastDocId: string;
     if (hasId(lastDoc)) {
@@ -315,7 +316,8 @@ export class InteractionService {
       const result = await this.firestoreService.getWhisperLikes(
         whisperId,
         limit,
-        lastDoc as unknown as QueryDocumentSnapshot<DocumentData>
+        lastDoc as unknown as QueryDocumentSnapshot<DocumentData>,
+        currentUserId
       );
       const { likes, hasMore, lastDoc: newLastDoc } = result;
       const cacheResult: LikeListCache = {
@@ -338,7 +340,8 @@ export class InteractionService {
   async getComments(
     whisperId: string,
     limit: number = 20,
-    lastDoc?: unknown
+    lastDoc?: unknown,
+    currentUserId?: string
   ): Promise<{
     comments: Comment[];
     hasMore: boolean;
@@ -380,7 +383,8 @@ export class InteractionService {
       const result = await this.firestoreService.getComments(
         whisperId,
         limit,
-        lastDoc as unknown as QueryDocumentSnapshot<DocumentData>
+        lastDoc as unknown as QueryDocumentSnapshot<DocumentData>,
+        currentUserId
       );
       const { comments, hasMore, lastDoc: newLastDoc } = result;
       const cacheResult = {
@@ -589,7 +593,8 @@ export class InteractionService {
   async getCommentLikes(
     commentId: string,
     limit: number = 50,
-    lastDoc?: unknown
+    lastDoc?: unknown,
+    currentUserId?: string
   ): Promise<{ likes: CommentLike[]; hasMore: boolean; lastDoc: unknown }> {
     const cacheKey = `comment_likes_${commentId}`;
 
@@ -605,7 +610,8 @@ export class InteractionService {
       const result = await this.firestoreService.getCommentLikes(
         commentId,
         limit,
-        lastDoc as unknown as QueryDocumentSnapshot<DocumentData>
+        lastDoc as unknown as QueryDocumentSnapshot<DocumentData>,
+        currentUserId
       );
       // Map likes to ensure each has an id property and user display info
       const likesWithId: CommentLike[] = result.likes.map((like, idx) => ({
@@ -877,6 +883,55 @@ export class InteractionService {
       return await this.firestoreService.getComment(commentId);
     } catch (error) {
       console.error("Error getting comment:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get whisper likes with privacy filtering
+   */
+  async getWhisperLikesWithPrivacy(
+    whisperId: string,
+    limit: number = 50,
+    lastDoc?: unknown
+  ): Promise<{ likes: Like[]; hasMore: boolean; lastDoc: unknown }> {
+    const { user } = useAuthStore.getState();
+    if (!user) {
+      throw new Error("User must be authenticated to view likes");
+    }
+
+    const cacheKey = `whisper_likes_privacy_${whisperId}_${user.uid}`;
+
+    // Check cache for first page
+    if (!lastDoc && this.likeListCache[cacheKey]) {
+      const cached = this.likeListCache[cacheKey] as LikeListCache;
+      if (Date.now() - cached.timestamp < CACHE_TTL) {
+        return cached;
+      }
+    }
+
+    try {
+      const result = await this.firestoreService.getWhisperLikesWithPrivacy(
+        whisperId,
+        user.uid,
+        limit,
+        lastDoc as unknown as QueryDocumentSnapshot<DocumentData>
+      );
+
+      const cacheResult: LikeListCache = {
+        likes: result.likes,
+        hasMore: result.hasMore,
+        lastDoc: result.lastDoc,
+        timestamp: Date.now(),
+      };
+
+      if (!lastDoc) {
+        this.likeListCache[cacheKey] = cacheResult;
+      }
+
+      return cacheResult;
+    } catch (error) {
+      console.error("Error getting whisper likes with privacy:", error);
       throw error;
     }
   }

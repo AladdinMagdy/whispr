@@ -12,12 +12,29 @@ import {
   ReportStats,
   ReportFilters,
   UserReputation,
+  SuspensionType,
+  UserViolation,
+  CommentReport,
+  CommentReportResolution,
 } from "../types";
 import { getFirestoreService } from "./firestoreService";
 import { getReputationService } from "./reputationService";
-import { REPORTING_CONSTANTS } from "../constants";
+import { getSuspensionService } from "./suspensionService";
+import { REPORTING_CONSTANTS, TIME_CONSTANTS } from "../constants";
+import { useFeedStore } from "../store/useFeedStore";
 
 export interface CreateReportData {
+  whisperId: string;
+  commentId?: string; // Optional - for comment reports
+  reporterId: string;
+  reporterDisplayName: string;
+  category: ReportCategory;
+  reason: string;
+  evidence?: string;
+}
+
+export interface CreateCommentReportData {
+  commentId: string;
   whisperId: string;
   reporterId: string;
   reporterDisplayName: string;
@@ -143,6 +160,9 @@ export class ReportingService {
         await this.escalateReport(report.id);
       }
 
+      // Check for automatic escalation based on report count
+      await this.checkAutomaticEscalation(data.whisperId);
+
       return report;
     } catch (error) {
       console.error("❌ Error creating report:", error);
@@ -262,7 +282,63 @@ export class ReportingService {
    */
   async getReportStats(): Promise<ReportStats> {
     try {
-      return await this.firestoreService.getReportStats();
+      const allReports = await this.getReports();
+
+      const reportsByCategory: Record<ReportCategory, number> = {
+        [ReportCategory.HARASSMENT]: 0,
+        [ReportCategory.HATE_SPEECH]: 0,
+        [ReportCategory.VIOLENCE]: 0,
+        [ReportCategory.SEXUAL_CONTENT]: 0,
+        [ReportCategory.SPAM]: 0,
+        [ReportCategory.SCAM]: 0,
+        [ReportCategory.COPYRIGHT]: 0,
+        [ReportCategory.PERSONAL_INFO]: 0,
+        [ReportCategory.MINOR_SAFETY]: 0,
+        [ReportCategory.OTHER]: 0,
+      };
+
+      const reportsByPriority: Record<ReportPriority, number> = {
+        [ReportPriority.LOW]: 0,
+        [ReportPriority.MEDIUM]: 0,
+        [ReportPriority.HIGH]: 0,
+        [ReportPriority.CRITICAL]: 0,
+      };
+
+      let totalResolutionTime = 0;
+      let resolvedCount = 0;
+
+      allReports.forEach((report) => {
+        reportsByCategory[report.category]++;
+        reportsByPriority[report.priority]++;
+
+        if (report.status === ReportStatus.RESOLVED && report.reviewedAt) {
+          const resolutionTime =
+            report.reviewedAt.getTime() - report.createdAt.getTime();
+          totalResolutionTime += resolutionTime;
+          resolvedCount++;
+        }
+      });
+
+      const averageResolutionTime =
+        resolvedCount > 0
+          ? totalResolutionTime / resolvedCount / (1000 * 60 * 60) // Convert to hours
+          : 0;
+
+      return {
+        totalReports: allReports.length,
+        pendingReports: allReports.filter(
+          (r) => r.status === ReportStatus.PENDING
+        ).length,
+        criticalReports: allReports.filter(
+          (r) => r.priority === ReportPriority.CRITICAL
+        ).length,
+        resolvedReports: allReports.filter(
+          (r) => r.status === ReportStatus.RESOLVED
+        ).length,
+        averageResolutionTime,
+        reportsByCategory,
+        reportsByPriority,
+      };
     } catch (error) {
       console.error("❌ Error getting report stats:", error);
       throw new Error(
@@ -427,13 +503,31 @@ export class ReportingService {
     try {
       const whisper = await this.firestoreService.getWhisper(whisperId);
       if (whisper) {
+        // Create permanent suspension
+        const suspensionService = getSuspensionService();
+        await suspensionService.createSuspension({
+          userId: whisper.userId,
+          reason: `Banned due to report: ${reason}`,
+          type: SuspensionType.PERMANENT,
+          moderatorId: "system",
+        });
+
         // Set user reputation to 0 (banned)
         await this.firestoreService.adjustUserReputationScore(
           whisper.userId,
           0,
           `Banned due to report: ${reason}`
         );
-        console.log(`🚫 User ${whisper.userId} banned: ${reason}`);
+
+        // Clear feed cache to ensure banned user's content is immediately hidden
+        const { clearCache } = useFeedStore.getState();
+        clearCache();
+
+        // Force refresh of all active feeds by triggering a cache invalidation
+        // This ensures the banned user's content disappears immediately
+        console.log(
+          `🚫 User ${whisper.userId} banned and suspended: ${reason}. Feed cache cleared.`
+        );
       }
     } catch (error) {
       console.error("❌ Error banning user:", error);
@@ -541,6 +635,646 @@ export class ReportingService {
         categories: {} as Record<ReportCategory, number>,
         priorityBreakdown: {} as Record<ReportPriority, number>,
       };
+    }
+  }
+
+  /**
+   * Check for automatic escalation based on report count
+   * New fairer approach: whisper-level actions first, user-level bans only for repeated violations
+   */
+  private async checkAutomaticEscalation(whisperId: string): Promise<void> {
+    try {
+      const whisper = await this.firestoreService.getWhisper(whisperId);
+      if (!whisper) {
+        console.log(
+          `⚠️ Whisper ${whisperId} not found for automatic escalation check`
+        );
+        return;
+      }
+
+      // Get all reports for this whisper within the escalation window
+      const escalationWindow = new Date();
+      escalationWindow.setDate(
+        escalationWindow.getDate() -
+          REPORTING_CONSTANTS.AUTO_ESCALATION.ESCALATION_WINDOW_DAYS
+      );
+
+      const reports = await this.firestoreService.getReports({
+        whisperId,
+        dateRange: { start: escalationWindow, end: new Date() },
+      });
+
+      // Count unique reporters
+      const uniqueReporters = new Set(reports.map((r) => r.reporterId)).size;
+
+      console.log(
+        `📊 Automatic escalation check for whisper ${whisperId}: ${uniqueReporters} unique reporters`
+      );
+
+      // Check if user is already suspended
+      const suspensionService = getSuspensionService();
+      const activeSuspensions =
+        await suspensionService.getUserActiveSuspensions(whisper.userId);
+
+      if (activeSuspensions.length > 0) {
+        console.log(
+          `⚠️ User ${whisper.userId} already has active suspension: ${activeSuspensions[0].type}`
+        );
+        return;
+      }
+
+      // WHISPER-LEVEL ESCALATION
+      let whisperActionTaken = false;
+
+      // Flag whisper for review (5 reports)
+      if (
+        uniqueReporters >=
+          REPORTING_CONSTANTS.AUTO_ESCALATION.WHISPER.FLAG_FOR_REVIEW &&
+        uniqueReporters <
+          REPORTING_CONSTANTS.AUTO_ESCALATION.WHISPER.AUTO_DELETE
+      ) {
+        console.log(
+          `🚩 Auto-flagging whisper ${whisperId} for review after ${uniqueReporters} reports`
+        );
+
+        // Record the violation
+        const violation: UserViolation = {
+          id: `violation-${Date.now()}-${Math.random()
+            .toString(36)
+            .substr(2, 9)}`,
+          userId: whisper.userId,
+          whisperId,
+          violationType: "whisper_flagged",
+          reason: `Auto-flagged for review: ${uniqueReporters} unique reports`,
+          reportCount: uniqueReporters,
+          moderatorId: "system",
+          createdAt: new Date(),
+        };
+
+        await this.firestoreService.saveUserViolation(violation);
+        whisperActionTaken = true;
+      }
+
+      // Auto-delete whisper (15 reports)
+      if (
+        uniqueReporters >=
+          REPORTING_CONSTANTS.AUTO_ESCALATION.WHISPER.AUTO_DELETE &&
+        uniqueReporters <
+          REPORTING_CONSTANTS.AUTO_ESCALATION.WHISPER.DELETE_AND_TEMP_BAN
+      ) {
+        console.log(
+          `🗑️ Auto-deleting whisper ${whisperId} after ${uniqueReporters} reports`
+        );
+
+        // Delete the whisper
+        await this.firestoreService.deleteWhisper(whisperId);
+
+        // Record the violation
+        const violation: UserViolation = {
+          id: `violation-${Date.now()}-${Math.random()
+            .toString(36)
+            .substr(2, 9)}`,
+          userId: whisper.userId,
+          whisperId,
+          violationType: "whisper_deleted",
+          reason: `Auto-deleted: ${uniqueReporters} unique reports`,
+          reportCount: uniqueReporters,
+          moderatorId: "system",
+          createdAt: new Date(),
+        };
+
+        await this.firestoreService.saveUserViolation(violation);
+        whisperActionTaken = true;
+      }
+
+      // Delete whisper + temporary ban user (25 reports)
+      if (
+        uniqueReporters >=
+        REPORTING_CONSTANTS.AUTO_ESCALATION.WHISPER.DELETE_AND_TEMP_BAN
+      ) {
+        console.log(
+          `🚫 Auto-deleting whisper ${whisperId} and temporarily banning user ${whisper.userId} after ${uniqueReporters} reports`
+        );
+
+        // Delete the whisper
+        await this.firestoreService.deleteWhisper(whisperId);
+
+        // Record the violation
+        const violation: UserViolation = {
+          id: `violation-${Date.now()}-${Math.random()
+            .toString(36)
+            .substr(2, 9)}`,
+          userId: whisper.userId,
+          whisperId,
+          violationType: "whisper_deleted",
+          reason: `Auto-deleted + temp ban: ${uniqueReporters} unique reports`,
+          reportCount: uniqueReporters,
+          moderatorId: "system",
+          createdAt: new Date(),
+        };
+
+        await this.firestoreService.saveUserViolation(violation);
+
+        // Apply temporary ban
+        await suspensionService.createSuspension({
+          userId: whisper.userId,
+          reason: `Automatic temporary ban: ${uniqueReporters} reports on single whisper`,
+          type: SuspensionType.TEMPORARY,
+          moderatorId: "system",
+          duration: TIME_CONSTANTS.TEMPORARY_SUSPENSION_DURATION,
+        });
+
+        whisperActionTaken = true;
+      }
+
+      // USER-LEVEL ESCALATION (only if whisper action was taken)
+      if (whisperActionTaken) {
+        await this.checkUserLevelEscalation(whisper.userId);
+      }
+
+      // Clear feed cache if any action was taken
+      if (whisperActionTaken) {
+        const { clearCache } = useFeedStore.getState();
+        clearCache();
+      }
+    } catch (error) {
+      console.error("❌ Error in automatic escalation check:", error);
+      // Don't throw - this is a background process that shouldn't break report creation
+    }
+  }
+
+  /**
+   * Check for user-level escalation based on deleted whisper count
+   */
+  private async checkUserLevelEscalation(userId: string): Promise<void> {
+    try {
+      // Get deleted whisper count within the user escalation window
+      const deletedCount = await this.firestoreService.getDeletedWhisperCount(
+        userId,
+        REPORTING_CONSTANTS.AUTO_ESCALATION.USER.ESCALATION_WINDOW_DAYS
+      );
+
+      console.log(
+        `📊 User-level escalation check for user ${userId}: ${deletedCount} deleted whispers`
+      );
+
+      // Check if user is already suspended
+      const suspensionService = getSuspensionService();
+      const activeSuspensions =
+        await suspensionService.getUserActiveSuspensions(userId);
+
+      if (activeSuspensions.length > 0) {
+        console.log(
+          `⚠️ User ${userId} already has active suspension: ${activeSuspensions[0].type}`
+        );
+        return;
+      }
+
+      // Apply user-level bans based on deleted whisper count
+      if (
+        deletedCount >= REPORTING_CONSTANTS.AUTO_ESCALATION.USER.PERMANENT_BAN
+      ) {
+        console.log(
+          `🚫 Auto-applying permanent ban to user ${userId} after ${deletedCount} deleted whispers`
+        );
+
+        await suspensionService.createSuspension({
+          userId,
+          reason: `Automatic permanent ban: ${deletedCount} deleted whispers within ${REPORTING_CONSTANTS.AUTO_ESCALATION.USER.ESCALATION_WINDOW_DAYS} days`,
+          type: SuspensionType.PERMANENT,
+          moderatorId: "system",
+        });
+
+        // Set user reputation to 0 (banned)
+        await this.firestoreService.adjustUserReputationScore(
+          userId,
+          0,
+          `Automatic permanent ban: ${deletedCount} deleted whispers`
+        );
+      } else if (
+        deletedCount >= REPORTING_CONSTANTS.AUTO_ESCALATION.USER.EXTENDED_BAN
+      ) {
+        console.log(
+          `🚫 Auto-applying extended ban to user ${userId} after ${deletedCount} deleted whispers`
+        );
+
+        await suspensionService.createSuspension({
+          userId,
+          reason: `Automatic extended ban: ${deletedCount} deleted whispers within ${REPORTING_CONSTANTS.AUTO_ESCALATION.USER.ESCALATION_WINDOW_DAYS} days`,
+          type: SuspensionType.TEMPORARY,
+          moderatorId: "system",
+          duration: TIME_CONSTANTS.EXTENDED_SUSPENSION_DURATION, // 7 days
+        });
+      } else if (
+        deletedCount >= REPORTING_CONSTANTS.AUTO_ESCALATION.USER.TEMPORARY_BAN
+      ) {
+        console.log(
+          `🚫 Auto-applying temporary ban to user ${userId} after ${deletedCount} deleted whispers`
+        );
+
+        await suspensionService.createSuspension({
+          userId,
+          reason: `Automatic temporary ban: ${deletedCount} deleted whispers within ${REPORTING_CONSTANTS.AUTO_ESCALATION.USER.ESCALATION_WINDOW_DAYS} days`,
+          type: SuspensionType.TEMPORARY,
+          moderatorId: "system",
+          duration: TIME_CONSTANTS.TEMPORARY_SUSPENSION_DURATION, // 24 hours
+        });
+      }
+    } catch (error) {
+      console.error("❌ Error in user-level escalation check:", error);
+    }
+  }
+
+  /**
+   * Create a new comment report
+   */
+  async createCommentReport(
+    data: CreateCommentReportData
+  ): Promise<CommentReport> {
+    try {
+      // Get reporter's reputation
+      const reporterReputation = await this.reputationService.getUserReputation(
+        data.reporterId
+      );
+
+      // Check if user can report (not banned)
+      if (reporterReputation.level === "banned") {
+        throw new Error("Banned users cannot submit reports");
+      }
+
+      // Check for existing reports from the same user on the same comment
+      const existingReports = await this.firestoreService.getCommentReports({
+        reporterId: data.reporterId,
+      });
+
+      const existingCommentReport = existingReports.find(
+        (report) => report.commentId === data.commentId
+      );
+
+      // If user has already reported this comment, check if it's a different category
+      if (existingCommentReport) {
+        // If same category, provide feedback but allow the report
+        if (existingCommentReport.category === data.category) {
+          console.log(
+            `📝 User ${data.reporterId} reporting same comment again with same category: ${data.category}`
+          );
+
+          // Update the existing report with new information
+          const updatedReport: CommentReport = {
+            ...existingCommentReport,
+            reason: `${existingCommentReport.reason}\n\n--- Additional Report ---\n${data.reason}`,
+            updatedAt: new Date(),
+            // Increase priority if this is a repeat report
+            priority: this.escalatePriority(existingCommentReport.priority),
+          };
+
+          await this.firestoreService.updateCommentReport(
+            existingCommentReport.id,
+            updatedReport
+          );
+
+          console.log(
+            `📝 Updated existing comment report: ${existingCommentReport.id} with escalated priority`
+          );
+
+          return updatedReport;
+        } else {
+          // Different category - create new report but link to existing one
+          console.log(
+            `📝 User ${data.reporterId} reporting same comment with different category: ${existingCommentReport.category} → ${data.category}`
+          );
+        }
+      }
+
+      // Calculate priority based on reporter reputation and category
+      const priority = this.calculatePriority(
+        reporterReputation,
+        data.category
+      );
+
+      // Calculate reputation weight
+      const reputationWeight =
+        this.calculateReputationWeight(reporterReputation);
+
+      // Create report object
+      const report: CommentReport = {
+        id: `comment-report-${Date.now()}-${Math.random()
+          .toString(36)
+          .substr(2, 9)}`,
+        commentId: data.commentId,
+        whisperId: data.whisperId,
+        reporterId: data.reporterId,
+        reporterDisplayName: data.reporterDisplayName,
+        reporterReputation: reporterReputation.score,
+        category: data.category,
+        priority,
+        status: ReportStatus.PENDING,
+        reason: data.reason,
+        evidence: data.evidence,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        reputationWeight,
+      };
+
+      // Save to Firestore
+      await this.firestoreService.saveCommentReport(report);
+
+      console.log(
+        `📝 Comment report created: ${report.id} (${priority} priority)`
+      );
+
+      // If critical priority, trigger immediate review
+      if (priority === ReportPriority.CRITICAL) {
+        await this.escalateCommentReport(report.id);
+      }
+
+      // Check for automatic escalation based on report count
+      await this.checkCommentAutomaticEscalation(data.commentId);
+
+      return report;
+    } catch (error) {
+      console.error("❌ Error creating comment report:", error);
+      throw new Error(
+        `Failed to create comment report: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Get comment reports with filtering
+   */
+  async getCommentReports(
+    filters: ReportFilters = {}
+  ): Promise<CommentReport[]> {
+    try {
+      return await this.firestoreService.getCommentReports(filters);
+    } catch (error) {
+      console.error("❌ Error getting comment reports:", error);
+      throw new Error(
+        `Failed to get comment reports: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Get comment report by ID
+   */
+  async getCommentReport(reportId: string): Promise<CommentReport | null> {
+    try {
+      return await this.firestoreService.getCommentReport(reportId);
+    } catch (error) {
+      console.error("❌ Error getting comment report:", error);
+      throw new Error(
+        `Failed to get comment report: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Update comment report status
+   */
+  async updateCommentReportStatus(
+    reportId: string,
+    status: ReportStatus,
+    moderatorId?: string
+  ): Promise<void> {
+    try {
+      await this.firestoreService.updateCommentReportStatus(
+        reportId,
+        status,
+        moderatorId
+      );
+      console.log("✅ Comment report status updated:", reportId, status);
+    } catch (error) {
+      console.error("❌ Error updating comment report status:", error);
+      throw new Error(
+        `Failed to update comment report status: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Resolve comment report with action
+   */
+  async resolveCommentReport(
+    reportId: string,
+    resolution: CommentReportResolution
+  ): Promise<void> {
+    try {
+      const report = await this.getCommentReport(reportId);
+      if (!report) {
+        throw new Error("Comment report not found");
+      }
+
+      // Update report with resolution
+      await this.firestoreService.updateCommentReport(reportId, {
+        status: ReportStatus.RESOLVED,
+        resolution,
+        reviewedAt: new Date(),
+        reviewedBy: resolution.moderatorId,
+      });
+
+      // Apply the resolution action
+      await this.applyCommentResolution(reportId, resolution);
+
+      console.log("✅ Comment report resolved:", reportId, resolution.action);
+    } catch (error) {
+      console.error("❌ Error resolving comment report:", error);
+      throw new Error(
+        `Failed to resolve comment report: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Check if user has reported a comment
+   */
+  async hasUserReportedComment(
+    commentId: string,
+    userId: string
+  ): Promise<{ hasReported: boolean; existingReport?: CommentReport }> {
+    try {
+      return await this.firestoreService.hasUserReportedComment(
+        commentId,
+        userId
+      );
+    } catch (error) {
+      console.error("❌ Error checking comment report status:", error);
+      return { hasReported: false };
+    }
+  }
+
+  /**
+   * Get comment report stats for a specific comment
+   */
+  async getCommentReportStats(commentId: string): Promise<{
+    totalReports: number;
+    uniqueReporters: number;
+    categories: Record<ReportCategory, number>;
+    priorityBreakdown: Record<ReportPriority, number>;
+  }> {
+    try {
+      return await this.firestoreService.getCommentReportStats(commentId);
+    } catch (error) {
+      console.error("❌ Error getting comment report stats:", error);
+      throw new Error(
+        `Failed to get comment report stats: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Private method to escalate comment report
+   */
+  private async escalateCommentReport(reportId: string): Promise<void> {
+    try {
+      await this.firestoreService.updateCommentReportStatus(
+        reportId,
+        ReportStatus.ESCALATED
+      );
+      console.log("🚨 Comment report escalated:", reportId);
+    } catch (error) {
+      console.error("❌ Error escalating comment report:", error);
+    }
+  }
+
+  /**
+   * Private method to apply comment resolution
+   */
+  private async applyCommentResolution(
+    reportId: string,
+    resolution: CommentReportResolution
+  ): Promise<void> {
+    try {
+      const report = await this.getCommentReport(reportId);
+      if (!report) {
+        throw new Error("Comment report not found");
+      }
+
+      switch (resolution.action) {
+        case "hide":
+          await this.hideComment(report.commentId, resolution.reason);
+          break;
+        case "delete":
+          await this.deleteComment(report.commentId, resolution.reason);
+          break;
+        case "dismiss":
+          // No action needed for dismissed reports
+          console.log("📝 Comment report dismissed:", reportId);
+          break;
+        default:
+          console.warn(
+            "⚠️ Unknown comment resolution action:",
+            resolution.action
+          );
+      }
+    } catch (error) {
+      console.error("❌ Error applying comment resolution:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Hide comment (mark as hidden but don't delete)
+   */
+  private async hideComment(commentId: string, reason: string): Promise<void> {
+    try {
+      // For now, we'll just log this action
+      // In a full implementation, you might add a 'hidden' field to comments
+      console.log(`👁️ Comment ${commentId} hidden: ${reason}`);
+    } catch (error) {
+      console.error("❌ Error hiding comment:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete comment
+   */
+  private async deleteComment(
+    commentId: string,
+    reason: string
+  ): Promise<void> {
+    try {
+      // Get the comment to find the whisperId for updating reply count
+      const comment = await this.firestoreService.getComment(commentId);
+      if (!comment) {
+        throw new Error("Comment not found");
+      }
+
+      // Delete the comment (this will also update the whisper reply count)
+      await this.firestoreService.deleteComment(commentId, "system");
+
+      console.log(`🗑️ Comment ${commentId} deleted: ${reason}`);
+    } catch (error) {
+      console.error("❌ Error deleting comment:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check for automatic escalation based on comment report count
+   */
+  private async checkCommentAutomaticEscalation(
+    commentId: string
+  ): Promise<void> {
+    try {
+      const reportStats = await this.getCommentReportStats(commentId);
+      const { uniqueReporters } = reportStats;
+
+      // Get the comment to find the whisper owner
+      const comment = await this.firestoreService.getComment(commentId);
+      if (!comment) {
+        console.log("Comment not found for escalation check:", commentId);
+        return;
+      }
+
+      let commentActionTaken = false;
+
+      // Hide comment after 3 reports
+      if (uniqueReporters >= 3 && uniqueReporters < 5) {
+        console.log(
+          `👁️ Auto-hiding comment ${commentId} after ${uniqueReporters} reports`
+        );
+        await this.hideComment(
+          commentId,
+          `Auto-hidden: ${uniqueReporters} unique reports`
+        );
+        commentActionTaken = true;
+      }
+
+      // Delete comment after 5 reports
+      if (uniqueReporters >= 5) {
+        console.log(
+          `🗑️ Auto-deleting comment ${commentId} after ${uniqueReporters} reports`
+        );
+        await this.deleteComment(
+          commentId,
+          `Auto-deleted: ${uniqueReporters} unique reports`
+        );
+        commentActionTaken = true;
+      }
+
+      // Clear feed cache if any action was taken
+      if (commentActionTaken) {
+        const { clearCache } = useFeedStore.getState();
+        clearCache();
+      }
+    } catch (error) {
+      console.error("❌ Error in comment automatic escalation check:", error);
+      // Don't throw - this is a background process that shouldn't break report creation
     }
   }
 

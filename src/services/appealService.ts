@@ -13,6 +13,7 @@ import {
 import { getFirestoreService } from "./firestoreService";
 import { getReputationService } from "./reputationService";
 import { TIME_CONSTANTS, REPUTATION_CONSTANTS } from "../constants";
+import { getErrorMessage } from "../utils/errorHelpers";
 
 export interface CreateAppealData {
   userId: string;
@@ -132,11 +133,7 @@ export class AppealService {
       return appeal;
     } catch (error) {
       console.error("❌ Error creating appeal:", error);
-      throw new Error(
-        `Failed to create appeal: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(getErrorMessage(error));
     }
   }
 
@@ -227,11 +224,7 @@ export class AppealService {
       console.log(`✅ Appeal ${data.appealId} reviewed: ${data.action}`);
     } catch (error) {
       console.error("❌ Error reviewing appeal:", error);
-      throw new Error(
-        `Failed to review appeal: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      throw new Error(getErrorMessage(error));
     }
   }
 

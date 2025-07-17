@@ -14,16 +14,19 @@ import { ReportCategory, Report } from "../types";
 import { getReportingService } from "../services/reportingService";
 import { useAuth } from "../providers/AuthProvider";
 import { useFeedStore } from "../store/useFeedStore";
+import { Ionicons } from "@expo/vector-icons";
+import { getUserMuteService } from "../services/userMuteService";
+import { getUserRestrictService } from "../services/userRestrictService";
+import { getUserBlockService } from "../services/userBlockService";
+import { Whisper } from "../types";
 
 interface ReportButtonProps {
-  whisperId: string;
-  whisperUserDisplayName: string;
+  whisper: Whisper;
   onReportSubmitted?: () => void;
 }
 
 const ReportButton: React.FC<ReportButtonProps> = ({
-  whisperId,
-  whisperUserDisplayName,
+  whisper,
   onReportSubmitted,
 }) => {
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -37,10 +40,14 @@ const ReportButton: React.FC<ReportButtonProps> = ({
   const [existingReport, setExistingReport] = useState<Report | null>(null);
   const [isCheckingReport, setIsCheckingReport] = useState(false);
   const [currentReport, setCurrentReport] = useState<Report | null>(null);
+  const [isActionLoading, setIsActionLoading] = useState(false);
 
   const { user } = useAuth();
   const reportingService = getReportingService();
   const { markWhisperAsReported } = useFeedStore();
+  const muteService = getUserMuteService();
+  const restrictService = getUserRestrictService();
+  const blockService = getUserBlockService();
 
   // Check if user has already reported this content
   useEffect(() => {
@@ -50,7 +57,7 @@ const ReportButton: React.FC<ReportButtonProps> = ({
       setIsCheckingReport(true);
       try {
         const result = await reportingService.hasUserReportedContent(
-          whisperId,
+          whisper.id,
           user.uid
         );
         setHasReported(result.hasReported);
@@ -63,7 +70,7 @@ const ReportButton: React.FC<ReportButtonProps> = ({
     };
 
     checkExistingReport();
-  }, [whisperId, user, reportingService]);
+  }, [whisper.id, user, reportingService]);
 
   const reportCategories = [
     {
@@ -146,7 +153,7 @@ const ReportButton: React.FC<ReportButtonProps> = ({
 
     try {
       const report = await reportingService.createReport({
-        whisperId,
+        whisperId: whisper.id,
         reporterId: user.uid,
         reporterDisplayName: user.displayName || "Anonymous",
         category: selectedCategory,
@@ -154,7 +161,7 @@ const ReportButton: React.FC<ReportButtonProps> = ({
       });
 
       // Mark the whisper as reported in the feed store
-      markWhisperAsReported(whisperId);
+      markWhisperAsReported(whisper.id);
 
       // Store the current report and show post-report modal
       setCurrentReport(report);
@@ -200,66 +207,113 @@ const ReportButton: React.FC<ReportButtonProps> = ({
     onReportSubmitted?.();
   };
 
-  const handleMuteUser = () => {
-    Alert.alert(
-      "Mute User",
-      `You won't see content from ${whisperUserDisplayName} in your feed anymore. You can unmute them anytime in your settings.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Mute",
-          style: "destructive",
-          onPress: () => {
-            // TODO: Implement mute user functionality
-            Alert.alert(
-              "User Muted",
-              `${whisperUserDisplayName} has been muted.`
-            );
-            closePostReportModal();
+  const handleMuteUser = async () => {
+    if (!user) return;
+
+    setIsActionLoading(true);
+    try {
+      await muteService.muteUser({
+        userId: user.uid,
+        mutedUserId: whisper.userId,
+        mutedUserDisplayName: whisper.userDisplayName,
+      });
+
+      Alert.alert(
+        "User Muted",
+        `You won't see content from ${whisper.userDisplayName} anymore. You can unmute them in your settings.`,
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              setIsPostReportModalVisible(false);
+              // Refresh the feed to remove muted user's content
+              onReportSubmitted?.();
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    } catch (error) {
+      console.error("Failed to mute user:", error);
+      Alert.alert("Error", "Failed to mute user");
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
-  const handleRestrictUser = () => {
-    Alert.alert(
-      "Restrict User",
-      `${whisperUserDisplayName} won't be able to see when you're online or when you've read their messages.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Restrict",
-          style: "destructive",
-          onPress: () => {
-            // TODO: Implement restrict user functionality
-            Alert.alert(
-              "User Restricted",
-              `${whisperUserDisplayName} has been restricted.`
-            );
-            closePostReportModal();
+  const handleRestrictUser = async () => {
+    if (!user) return;
+
+    setIsActionLoading(true);
+    try {
+      await restrictService.restrictUser({
+        userId: user.uid,
+        restrictedUserId: whisper.userId,
+        restrictedUserDisplayName: whisper.userDisplayName,
+        type: "interaction", // Default to interaction restriction
+      });
+
+      Alert.alert(
+        "User Restricted",
+        `${whisper.userDisplayName} is now restricted. They can't interact with your content.`,
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              setIsPostReportModalVisible(false);
+              // Refresh the feed to apply restrictions
+              onReportSubmitted?.();
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    } catch (error) {
+      console.error("Failed to restrict user:", error);
+      Alert.alert("Error", "Failed to restrict user");
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
-  const handleBlockUser = () => {
+  const handleBlockUser = async () => {
+    if (!user) return;
+
     Alert.alert(
       "Block User",
-      `${whisperUserDisplayName} won't be able to find your profile, see your posts, or start conversations with you.`,
+      `Are you sure you want to block ${whisper.userDisplayName}? This action cannot be undone.`,
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Block",
           style: "destructive",
-          onPress: () => {
-            // TODO: Implement block user functionality
-            Alert.alert(
-              "User Blocked",
-              `${whisperUserDisplayName} has been blocked.`
-            );
-            closePostReportModal();
+          onPress: async () => {
+            setIsActionLoading(true);
+            try {
+              await blockService.blockUser({
+                userId: user.uid,
+                blockedUserId: whisper.userId,
+                blockedUserDisplayName: whisper.userDisplayName,
+              });
+
+              Alert.alert(
+                "User Blocked",
+                `${whisper.userDisplayName} has been blocked. You won't see their content and they won't see yours.`,
+                [
+                  {
+                    text: "OK",
+                    onPress: () => {
+                      setIsPostReportModalVisible(false);
+                      // Refresh the feed to remove blocked user's content
+                      onReportSubmitted?.();
+                    },
+                  },
+                ]
+              );
+            } catch (error) {
+              console.error("Failed to block user:", error);
+              Alert.alert("Error", "Failed to block user");
+            } finally {
+              setIsActionLoading(false);
+            }
           },
         },
       ]
@@ -268,8 +322,8 @@ const ReportButton: React.FC<ReportButtonProps> = ({
 
   const handleLearnMore = () => {
     Alert.alert(
-      "Community Standards",
-      "Our community standards help ensure Whispr remains a safe and welcoming space for everyone. We review reports within 24 hours and take appropriate action based on our policies.",
+      "About Reporting",
+      "Your reports help keep Whispr safe. Reports are reviewed by our moderation team and may result in content removal or user action. False reports may result in account restrictions.",
       [{ text: "OK" }]
     );
   };
@@ -318,7 +372,7 @@ const ReportButton: React.FC<ReportButtonProps> = ({
 
           <ScrollView style={styles.modalContent}>
             <Text style={styles.whisperInfo}>
-              Reporting whisper by: {whisperUserDisplayName}
+              Reporting whisper by: {whisper.userDisplayName}
             </Text>
 
             <Text style={styles.sectionTitle}>Select Category</Text>
@@ -439,12 +493,13 @@ const ReportButton: React.FC<ReportButtonProps> = ({
               <TouchableOpacity
                 style={styles.actionButton}
                 onPress={handleMuteUser}
+                disabled={isActionLoading}
               >
-                <Text style={styles.actionIcon}>🔇</Text>
+                <Ionicons name="volume-mute" size={20} color="#666" />
                 <View style={styles.actionTextContainer}>
                   <Text style={styles.actionLabel}>Mute User</Text>
                   <Text style={styles.actionDescription}>
-                    Stop seeing content from {whisperUserDisplayName}
+                    Stop seeing content from {whisper.userDisplayName}
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -452,8 +507,9 @@ const ReportButton: React.FC<ReportButtonProps> = ({
               <TouchableOpacity
                 style={styles.actionButton}
                 onPress={handleRestrictUser}
+                disabled={isActionLoading}
               >
-                <Text style={styles.actionIcon}>🚫</Text>
+                <Ionicons name="lock-closed" size={20} color="#666" />
                 <View style={styles.actionTextContainer}>
                   <Text style={styles.actionLabel}>Restrict User</Text>
                   <Text style={styles.actionDescription}>
@@ -463,14 +519,17 @@ const ReportButton: React.FC<ReportButtonProps> = ({
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.actionButton}
+                style={[styles.actionButton, styles.blockButton]}
                 onPress={handleBlockUser}
+                disabled={isActionLoading}
               >
-                <Text style={styles.actionIcon}>🚫</Text>
+                <Ionicons name="ban" size={20} color="#FF3B30" />
                 <View style={styles.actionTextContainer}>
-                  <Text style={styles.actionLabel}>Block User</Text>
+                  <Text style={[styles.actionLabel, styles.blockButtonText]}>
+                    Block User
+                  </Text>
                   <Text style={styles.actionDescription}>
-                    Completely block {whisperUserDisplayName}
+                    Completely block {whisper.userDisplayName}
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -683,10 +742,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e9ecef",
   },
-  actionIcon: {
-    fontSize: 24,
-    marginRight: 12,
-  },
   actionTextContainer: {
     flex: 1,
   },
@@ -726,6 +781,12 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "bold",
+  },
+  blockButton: {
+    backgroundColor: "#ffebee",
+  },
+  blockButtonText: {
+    color: "#FF3B30",
   },
 });
 
