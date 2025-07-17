@@ -3,58 +3,35 @@
  * Handles user appeals for moderation actions and violations
  */
 
-import {
-  Appeal,
-  AppealStatus,
-  AppealResolution,
-  ViolationRecord,
-  UserReputation,
-} from "../types";
+import { Appeal, ViolationRecord, UserReputation } from "../types";
 import { getFirestoreService } from "./firestoreService";
 import { getReputationService } from "./reputationService";
-import { TIME_CONSTANTS, REPUTATION_CONSTANTS } from "../constants";
+import { REPUTATION_CONSTANTS } from "../constants";
 import { getErrorMessage } from "../utils/errorHelpers";
-
-export interface CreateAppealData {
-  userId: string;
-  whisperId: string;
-  violationId: string;
-  reason: string;
-  evidence?: string;
-}
-
-export interface AppealReviewData {
-  appealId: string;
-  action: "approve" | "reject" | "partial_approve";
-  reason: string;
-  moderatorId: string;
-  reputationAdjustment?: number;
-}
+import {
+  CreateAppealData,
+  AppealReviewData,
+  AppealStats,
+  validateAppealData,
+  generateAppealId,
+  createAppealObject,
+  getAppealTimeLimit,
+  shouldAutoApproveForUser,
+  isAppealExpired,
+  createExpirationUpdates,
+  processReviewAction,
+  createAutoApprovalUpdates,
+  calculateAppealStats,
+  getDefaultAppealStats,
+  canReviewAppeal,
+  getReputationAdjustment,
+  formatReputationReason,
+} from "../utils/appealUtils";
 
 export class AppealService {
   private static instance: AppealService | null;
   private firestoreService = getFirestoreService();
   private reputationService = getReputationService();
-
-  // Appeal time limits (in days)
-  private static readonly APPEAL_TIME_LIMITS = {
-    trusted: TIME_CONSTANTS.TRUSTED_APPEAL_TIME_LIMIT / TIME_CONSTANTS.ONE_DAY,
-    verified:
-      TIME_CONSTANTS.VERIFIED_APPEAL_TIME_LIMIT / TIME_CONSTANTS.ONE_DAY,
-    standard:
-      TIME_CONSTANTS.STANDARD_APPEAL_TIME_LIMIT / TIME_CONSTANTS.ONE_DAY,
-    flagged: TIME_CONSTANTS.FLAGGED_APPEAL_TIME_LIMIT / TIME_CONSTANTS.ONE_DAY,
-    banned: 0,
-  };
-
-  // Auto-approval thresholds for trusted users
-  private static readonly AUTO_APPROVAL_THRESHOLDS = {
-    trusted: 0.3, // Trusted users auto-approve low confidence violations
-    verified: 0.5, // Verified users auto-approve medium confidence violations
-    standard: 0.7, // Standard users auto-approve high confidence violations
-    flagged: 0.9, // Flagged users rarely auto-approve
-    banned: 1.0, // Banned users never auto-approve
-  };
 
   private constructor() {}
 
@@ -75,40 +52,17 @@ export class AppealService {
         data.userId
       );
 
-      // Check if user can appeal
-      if (reputation.level === "banned") {
-        throw new Error("Banned users cannot submit appeals");
-      }
-
-      // Check if appeal time limit has passed
+      // Get violation to validate appeal
       const violation = await this.getViolation();
-      if (!violation) {
-        throw new Error("Violation not found");
-      }
 
-      const timeLimit = this.getAppealTimeLimit(reputation.level);
-      const daysSinceViolation = this.getDaysSinceViolation(
-        violation.timestamp
-      );
-
-      if (daysSinceViolation > timeLimit) {
-        throw new Error(
-          `Appeal time limit exceeded. You have ${timeLimit} days to appeal.`
-        );
-      }
+      // Validate appeal data
+      validateAppealData(data, reputation, violation);
 
       // Create appeal object
+      const appealData = createAppealObject(data);
       const appeal: Appeal = {
-        id: `appeal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        userId: data.userId,
-        whisperId: data.whisperId,
-        violationId: data.violationId,
-        reason: data.reason,
-        evidence: data.evidence,
-        status: AppealStatus.PENDING,
-        submittedAt: new Date(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        id: generateAppealId(),
+        ...appealData,
       };
 
       // Save to Firestore
@@ -117,17 +71,8 @@ export class AppealService {
       console.log(`📝 Appeal created: ${appeal.id}`);
 
       // Check for auto-approval for trusted users
-      if (reputation.level === "trusted") {
-        const autoApprovalThreshold =
-          AppealService.AUTO_APPROVAL_THRESHOLDS.trusted;
-        const violation = await this.getViolation();
-
-        if (
-          violation &&
-          this.shouldAutoApprove(violation, autoApprovalThreshold)
-        ) {
-          await this.autoApproveAppeal(appeal.id, reputation);
-        }
+      if (violation && shouldAutoApproveForUser(reputation, violation)) {
+        await this.autoApproveAppeal(appeal.id, reputation);
       }
 
       return appeal;
@@ -183,38 +128,26 @@ export class AppealService {
         throw new Error("Appeal not found");
       }
 
-      if (appeal.status !== AppealStatus.PENDING) {
+      if (!canReviewAppeal(appeal)) {
         throw new Error("Appeal has already been reviewed");
       }
 
-      // Create resolution
-      const resolution: AppealResolution = {
-        action: data.action,
-        reason: data.reason,
-        moderatorId: data.moderatorId,
-        reputationAdjustment: data.reputationAdjustment || 0,
-      };
-
-      // Update appeal status
-      const updates: Partial<Appeal> = {
-        status:
-          data.action === "approve"
-            ? AppealStatus.APPROVED
-            : AppealStatus.REJECTED,
-        resolution,
-        reviewedAt: new Date(),
-        reviewedBy: data.moderatorId,
-        updatedAt: new Date(),
-      };
+      // Process review action
+      const updates = processReviewAction(data);
 
       await this.firestoreService.updateAppeal(data.appealId, updates);
 
       // Apply reputation adjustment
-      if (data.reputationAdjustment) {
+      const reputationAdjustment = getReputationAdjustment(
+        data.action,
+        data.reputationAdjustment
+      );
+
+      if (reputationAdjustment !== 0) {
         await this.firestoreService.adjustUserReputationScore(
           appeal.userId,
-          data.reputationAdjustment || 0,
-          `Appeal ${data.action}: ${data.reason}`
+          reputationAdjustment,
+          formatReputationReason(data.action, data.reason)
         );
       }
 
@@ -236,20 +169,7 @@ export class AppealService {
     reputation: UserReputation
   ): Promise<void> {
     try {
-      const resolution: AppealResolution = {
-        action: "approve",
-        reason: "Auto-approved for trusted user",
-        moderatorId: "system",
-        reputationAdjustment: REPUTATION_CONSTANTS.APPEAL_APPROVED_BONUS, // Small reputation boost for successful appeal
-      };
-
-      const updates: Partial<Appeal> = {
-        status: AppealStatus.APPROVED,
-        resolution,
-        reviewedAt: new Date(),
-        reviewedBy: "system",
-        updatedAt: new Date(),
-      };
+      const updates = createAutoApprovalUpdates();
 
       await this.firestoreService.updateAppeal(appealId, updates);
 
@@ -264,18 +184,6 @@ export class AppealService {
     } catch (error) {
       console.error("❌ Error auto-approving appeal:", error);
     }
-  }
-
-  /**
-   * Check if violation should be auto-approved
-   */
-  private shouldAutoApprove(
-    violation: ViolationRecord,
-    threshold: number
-  ): boolean {
-    // This would need to be implemented based on violation confidence
-    // For now, we'll use a simple heuristic
-    return violation.severity === "low" && Math.random() < threshold;
   }
 
   /**
@@ -302,26 +210,6 @@ export class AppealService {
   }
 
   /**
-   * Get appeal time limit based on reputation level
-   */
-  private getAppealTimeLimit(reputationLevel: string): number {
-    return (
-      AppealService.APPEAL_TIME_LIMITS[
-        reputationLevel as keyof typeof AppealService.APPEAL_TIME_LIMITS
-      ] || 7
-    );
-  }
-
-  /**
-   * Calculate days since violation
-   */
-  private getDaysSinceViolation(violationDate: Date): number {
-    const now = new Date();
-    const diffTime = Math.abs(now.getTime() - violationDate.getTime());
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  }
-
-  /**
    * Check if appeal is expired
    */
   async checkAppealExpiration(): Promise<void> {
@@ -332,18 +220,11 @@ export class AppealService {
         const reputation = await this.reputationService.getUserReputation(
           appeal.userId
         );
-        const timeLimit = this.getAppealTimeLimit(reputation.level);
-        const daysSinceSubmission = this.getDaysSinceViolation(
-          appeal.submittedAt
-        );
+        const timeLimit = getAppealTimeLimit(reputation.level);
 
-        if (daysSinceSubmission > timeLimit) {
+        if (isAppealExpired(appeal, timeLimit)) {
           // Expire the appeal
-          const updates: Partial<Appeal> = {
-            status: AppealStatus.EXPIRED,
-            updatedAt: new Date(),
-          };
-
+          const updates = createExpirationUpdates();
           await this.firestoreService.updateAppeal(appeal.id, updates);
           console.log(`⏰ Appeal ${appeal.id} expired`);
         }
@@ -356,44 +237,13 @@ export class AppealService {
   /**
    * Get appeal statistics
    */
-  async getAppealStats(): Promise<{
-    total: number;
-    pending: number;
-    approved: number;
-    rejected: number;
-    expired: number;
-    approvalRate: number;
-  }> {
+  async getAppealStats(): Promise<AppealStats> {
     try {
       const appeals = await this.firestoreService.getAllAppeals();
-
-      const stats = {
-        total: appeals.length,
-        pending: appeals.filter((a) => a.status === AppealStatus.PENDING)
-          .length,
-        approved: appeals.filter((a) => a.status === AppealStatus.APPROVED)
-          .length,
-        rejected: appeals.filter((a) => a.status === AppealStatus.REJECTED)
-          .length,
-        expired: appeals.filter((a) => a.status === AppealStatus.EXPIRED)
-          .length,
-        approvalRate: 0,
-      };
-
-      const resolved = stats.approved + stats.rejected;
-      stats.approvalRate = resolved > 0 ? (stats.approved / resolved) * 100 : 0;
-
-      return stats;
+      return calculateAppealStats(appeals);
     } catch (error) {
       console.error("❌ Error getting appeal stats:", error);
-      return {
-        total: 0,
-        pending: 0,
-        approved: 0,
-        rejected: 0,
-        expired: 0,
-        approvalRate: 0,
-      };
+      return getDefaultAppealStats();
     }
   }
 }
