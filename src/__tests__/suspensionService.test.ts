@@ -5,8 +5,8 @@
 import {
   SuspensionService,
   getSuspensionService,
-  CreateSuspensionData,
 } from "../services/suspensionService";
+import { CreateSuspensionData } from "../utils/suspensionUtils";
 import { getFirestoreService } from "../services/firestoreService";
 import { getReputationService } from "../services/reputationService";
 import { SuspensionType } from "../types";
@@ -14,6 +14,20 @@ import { SuspensionType } from "../types";
 // Mock the services
 jest.mock("../services/firestoreService");
 jest.mock("../services/reputationService");
+
+// Mock constants to match test expectations
+jest.mock("../constants", () => ({
+  TIME_CONSTANTS: {
+    WARNING_DURATION: 0,
+    TEMPORARY_SUSPENSION_DURATION: 24 * 60 * 60 * 1000,
+    EXTENDED_SUSPENSION_DURATION: 7 * 24 * 60 * 60 * 1000,
+    PERMANENT_SUSPENSION_DURATION: 100 * 365 * 24 * 60 * 60 * 1000,
+  },
+  REPUTATION_CONSTANTS: {
+    SUSPENSION_PENALTY: -5,
+    SUSPENSION_RESTORATION_BONUS: 5,
+  },
+}));
 
 // Create mock objects manually
 const mockFirestoreService = {
@@ -39,6 +53,8 @@ describe("SuspensionService", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // Reset singleton instance to ensure fresh mocks
+    (SuspensionService as any).instance = null;
     suspensionService = getSuspensionService();
   });
 

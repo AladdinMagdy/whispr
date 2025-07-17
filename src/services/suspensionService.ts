@@ -3,47 +3,34 @@
  * Handles user suspensions, temporary bans, and warning systems
  */
 
-import { Suspension, SuspensionType, BanType } from "../types";
+import { Suspension, SuspensionType } from "../types";
 import { getFirestoreService } from "./firestoreService";
 import { getReputationService } from "./reputationService";
-import { TIME_CONSTANTS, REPUTATION_CONSTANTS } from "../constants";
-
-export interface CreateSuspensionData {
-  userId: string;
-  reason: string;
-  type: SuspensionType;
-  duration?: number; // in milliseconds, required for temporary suspensions
-  moderatorId?: string;
-  appealable?: boolean;
-}
-
-export interface SuspensionReviewData {
-  suspensionId: string;
-  action: "extend" | "reduce" | "remove" | "make_permanent";
-  reason: string;
-  moderatorId: string;
-  newDuration?: number;
-}
+import {
+  CreateSuspensionData,
+  SuspensionReviewData,
+  SuspensionStats,
+  UserSuspensionStatus,
+  validateSuspensionData,
+  generateSuspensionId,
+  createSuspensionObject,
+  determineAutomaticSuspension,
+  isSuspensionExpired,
+  determineUserSuspensionStatus,
+  processReviewAction,
+  calculateSuspensionStats,
+  formatAutomaticSuspensionReason,
+  shouldAffectReputation,
+  getReputationPenalty,
+  getReputationRestorationBonus,
+  createDeactivationUpdates,
+  shouldRestoreReputationOnExpiry,
+} from "../utils/suspensionUtils";
 
 export class SuspensionService {
   private static instance: SuspensionService | null;
   private firestoreService = getFirestoreService();
   private reputationService = getReputationService();
-
-  // Default suspension durations (in milliseconds)
-  private static readonly DEFAULT_DURATIONS = {
-    warning: TIME_CONSTANTS.WARNING_DURATION,
-    temporary: TIME_CONSTANTS.TEMPORARY_SUSPENSION_DURATION,
-    permanent: 0, // No duration for permanent
-  };
-
-  // Suspension thresholds based on violation count
-  private static readonly SUSPENSION_THRESHOLDS = {
-    FIRST_VIOLATION: SuspensionType.WARNING,
-    SECOND_VIOLATION: SuspensionType.TEMPORARY,
-    THIRD_VIOLATION: SuspensionType.TEMPORARY,
-    FOURTH_VIOLATION: SuspensionType.PERMANENT,
-  };
 
   private constructor() {}
 
@@ -60,47 +47,20 @@ export class SuspensionService {
   async createSuspension(data: CreateSuspensionData): Promise<Suspension> {
     try {
       // Validate suspension data
-      if (data.type === SuspensionType.TEMPORARY && !data.duration) {
-        throw new Error("Temporary suspensions require a duration");
-      }
-
-      if (data.type === SuspensionType.PERMANENT && data.duration) {
-        throw new Error("Permanent suspensions cannot have a duration");
-      }
-
-      // Calculate end date
-      const startDate = new Date();
-      const endDate =
-        data.type === SuspensionType.PERMANENT
-          ? new Date(Date.now() + TIME_CONSTANTS.PERMANENT_SUSPENSION_DURATION) // 100 years for "permanent"
-          : new Date(
-              startDate.getTime() +
-                (data.duration ||
-                  SuspensionService.DEFAULT_DURATIONS[data.type])
-            );
+      validateSuspensionData(data);
 
       // Create suspension object
+      const suspensionData = createSuspensionObject(data);
       const suspension: Suspension = {
-        id: `suspension-${Date.now()}-${Math.random()
-          .toString(36)
-          .substr(2, 9)}`,
-        userId: data.userId,
-        reason: data.reason,
-        type: data.type,
-        banType: this.getBanTypeForSuspension(data.type),
-        moderatorId: data.moderatorId || "system",
-        startDate,
-        endDate,
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        id: generateSuspensionId(),
+        ...suspensionData,
       };
 
       // Save to Firestore
       await this.firestoreService.saveSuspension(suspension);
 
       // Update user reputation if this is a suspension (not just a warning)
-      if (data.type !== SuspensionType.WARNING) {
+      if (shouldAffectReputation(data.type)) {
         await this.updateUserReputationForSuspension(data.userId, data.type);
       }
 
@@ -149,23 +109,12 @@ export class SuspensionService {
   /**
    * Check if user is currently suspended
    */
-  async isUserSuspended(userId: string): Promise<{
-    suspended: boolean;
-    suspensions: Suspension[];
-    canAppeal: boolean;
-  }> {
+  async isUserSuspended(userId: string): Promise<UserSuspensionStatus> {
     try {
-      const activeSuspensions = await this.getUserActiveSuspensions(userId);
-      const suspended = activeSuspensions.length > 0;
-      const canAppeal = activeSuspensions.some(
-        (s) => s.type !== SuspensionType.PERMANENT
+      const suspensions = await this.firestoreService.getUserSuspensions(
+        userId
       );
-
-      return {
-        suspended,
-        suspensions: activeSuspensions,
-        canAppeal,
-      };
+      return determineUserSuspensionStatus(suspensions);
     } catch (error) {
       console.error("❌ Error checking user suspension status:", error);
       return {
@@ -190,44 +139,11 @@ export class SuspensionService {
         throw new Error("Cannot modify inactive suspension");
       }
 
-      let updates: Partial<Suspension> = {
-        updatedAt: new Date(),
-      };
-
-      switch (data.action) {
-        case "extend":
-          if (suspension.type === SuspensionType.PERMANENT) {
-            throw new Error("Cannot extend permanent suspension");
-          }
-          if (suspension.endDate) {
-            updates.endDate = new Date(
-              suspension.endDate.getTime() + (data.newDuration || 0)
-            );
-          }
-          break;
-
-        case "reduce":
-          if (suspension.type === SuspensionType.PERMANENT) {
-            throw new Error("Cannot reduce permanent suspension");
-          }
-          if (suspension.endDate) {
-            updates.endDate = new Date(
-              suspension.endDate.getTime() - (data.newDuration || 0)
-            );
-          }
-          break;
-
-        case "remove":
-          updates.isActive = false;
-          break;
-
-        case "make_permanent":
-          updates.type = SuspensionType.PERMANENT;
-          updates.endDate = new Date(
-            Date.now() + TIME_CONSTANTS.PERMANENT_SUSPENSION_DURATION
-          );
-          break;
-      }
+      const updates = processReviewAction(
+        suspension,
+        data.action,
+        data.newDuration
+      );
 
       await this.firestoreService.updateSuspension(data.suspensionId, updates);
 
@@ -253,31 +169,18 @@ export class SuspensionService {
     reason: string
   ): Promise<Suspension | null> {
     try {
-      let suspensionType: SuspensionType;
-      let duration: number | undefined;
-
-      if (violationCount === 1) {
-        suspensionType = SuspensionType.WARNING;
-      } else if (violationCount === 2) {
-        suspensionType = SuspensionType.TEMPORARY;
-        duration = TIME_CONSTANTS.TEMPORARY_SUSPENSION_DURATION; // 24 hours
-      } else if (violationCount === 3) {
-        suspensionType = SuspensionType.TEMPORARY;
-        duration = TIME_CONSTANTS.EXTENDED_SUSPENSION_DURATION; // 7 days
-      } else {
-        suspensionType = SuspensionType.PERMANENT;
-      }
+      const { type, duration } = determineAutomaticSuspension(violationCount);
 
       // Don't create warnings (they're just recorded)
-      if (suspensionType === SuspensionType.WARNING) {
+      if (type === SuspensionType.WARNING) {
         console.log(`⚠️ Warning recorded for user ${userId}: ${reason}`);
         return null;
       }
 
       return await this.createSuspension({
         userId,
-        reason: `Automatic suspension: ${reason} (violation #${violationCount})`,
-        type: suspensionType,
+        reason: formatAutomaticSuspensionReason(reason, violationCount),
+        type,
         duration,
         moderatorId: "system",
       });
@@ -294,24 +197,15 @@ export class SuspensionService {
     try {
       const activeSuspensions =
         await this.firestoreService.getActiveSuspensions();
-      const now = new Date();
 
       for (const suspension of activeSuspensions) {
-        if (
-          suspension.endDate &&
-          suspension.endDate <= now &&
-          suspension.isActive
-        ) {
+        if (isSuspensionExpired(suspension)) {
           // Deactivate expired suspension
-          const updates: Partial<Suspension> = {
-            isActive: false,
-            updatedAt: new Date(),
-          };
-
+          const updates = createDeactivationUpdates();
           await this.firestoreService.updateSuspension(suspension.id, updates);
 
           // Restore user reputation if it was a temporary suspension
-          if (suspension.type === SuspensionType.TEMPORARY) {
+          if (shouldRestoreReputationOnExpiry(suspension.type)) {
             await this.restoreUserReputationAfterSuspension(suspension.userId);
           }
 
@@ -331,11 +225,14 @@ export class SuspensionService {
     suspensionType: SuspensionType
   ): Promise<void> {
     try {
-      await this.firestoreService.adjustUserReputationScore(
-        userId,
-        REPUTATION_CONSTANTS.SUSPENSION_PENALTY,
-        `Suspension: ${suspensionType}`
-      );
+      const penalty = getReputationPenalty(suspensionType);
+      if (penalty !== 0) {
+        await this.firestoreService.adjustUserReputationScore(
+          userId,
+          penalty,
+          `Suspension: ${suspensionType}`
+        );
+      }
     } catch (error) {
       console.error("❌ Error updating reputation for suspension:", error);
     }
@@ -348,10 +245,10 @@ export class SuspensionService {
     userId: string
   ): Promise<void> {
     try {
-      // Give a small reputation boost when suspension expires
+      const bonus = getReputationRestorationBonus();
       await this.firestoreService.adjustUserReputationScore(
         userId,
-        REPUTATION_CONSTANTS.SUSPENSION_RESTORATION_BONUS,
+        bonus,
         "Suspension expired - reputation restored"
       );
     } catch (error) {
@@ -362,30 +259,10 @@ export class SuspensionService {
   /**
    * Get suspension statistics
    */
-  async getSuspensionStats(): Promise<{
-    total: number;
-    active: number;
-    warnings: number;
-    temporary: number;
-    permanent: number;
-    expired: number;
-  }> {
+  async getSuspensionStats(): Promise<SuspensionStats> {
     try {
       const suspensions = await this.firestoreService.getAllSuspensions();
-
-      return {
-        total: suspensions.length,
-        active: suspensions.filter((s) => s.isActive).length,
-        warnings: suspensions.filter((s) => s.type === SuspensionType.WARNING)
-          .length,
-        temporary: suspensions.filter(
-          (s) => s.type === SuspensionType.TEMPORARY
-        ).length,
-        permanent: suspensions.filter(
-          (s) => s.type === SuspensionType.PERMANENT
-        ).length,
-        expired: suspensions.filter((s) => !s.isActive).length,
-      };
+      return calculateSuspensionStats(suspensions);
     } catch (error) {
       console.error("❌ Error getting suspension stats:", error);
       return {
@@ -396,22 +273,6 @@ export class SuspensionService {
         permanent: 0,
         expired: 0,
       };
-    }
-  }
-
-  /**
-   * Get appropriate banType for suspension type
-   */
-  private getBanTypeForSuspension(suspensionType: SuspensionType): BanType {
-    switch (suspensionType) {
-      case SuspensionType.WARNING:
-        return BanType.NONE; // Warnings don't hide content
-      case SuspensionType.TEMPORARY:
-        return BanType.CONTENT_VISIBLE; // Content stays visible but user cant post
-      case SuspensionType.PERMANENT:
-        return BanType.CONTENT_HIDDEN; // Content becomes invisible to all
-      default:
-        return BanType.NONE;
     }
   }
 }
