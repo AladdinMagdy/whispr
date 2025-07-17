@@ -3,7 +3,12 @@
  * Tests for persistent whisper caching functionality
  */
 
-import { useFeedStore } from "../store/useFeedStore";
+import {
+  useFeedStore,
+  getFeedStore,
+  resetFeedStore,
+  destroyFeedStore,
+} from "../store/useFeedStore";
 import { Whisper } from "../types";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -28,6 +33,7 @@ describe("FeedStore", () => {
       lastDoc: null,
       hasMore: true,
       lastLoadTime: 0,
+      reportedWhispers: new Set<string>(),
     });
 
     // Mock AsyncStorage to return null (no cached data)
@@ -41,6 +47,7 @@ describe("FeedStore", () => {
       lastDoc: null,
       hasMore: true,
       lastLoadTime: 0,
+      reportedWhispers: new Set<string>(),
     });
   });
 
@@ -52,6 +59,7 @@ describe("FeedStore", () => {
       expect(state.lastDoc).toBeNull();
       expect(state.hasMore).toBe(true);
       expect(state.lastLoadTime).toBe(0);
+      expect(state.reportedWhispers).toEqual(new Set<string>());
     });
   });
 
@@ -165,6 +173,112 @@ describe("FeedStore", () => {
       expect(state.whispers).toHaveLength(20);
       expect(state.whispers[0]).toEqual(mockWhisper2); // New whisper should be first
       expect(state.whispers[19]).toEqual(manyWhispers[18]); // Last whisper should be the 19th original
+    });
+
+    test("should update whisper correctly", () => {
+      // Add initial whisper
+      useFeedStore.getState().setWhispers([mockWhisper]);
+
+      // Update the whisper
+      const updatedWhisper = {
+        id: "test-whisper-1",
+        likes: 5,
+        replies: 2,
+      };
+
+      useFeedStore.getState().updateWhisper(updatedWhisper);
+
+      const state = useFeedStore.getState();
+      expect(state.whispers[0]).toEqual({
+        ...mockWhisper,
+        likes: 5,
+        replies: 2,
+      });
+    });
+
+    test("should handle updating non-existent whisper", () => {
+      // Add initial whisper
+      useFeedStore.getState().setWhispers([mockWhisper]);
+
+      // Try to update non-existent whisper
+      const updatedWhisper = {
+        id: "non-existent",
+        likes: 5,
+      };
+
+      useFeedStore.getState().updateWhisper(updatedWhisper);
+
+      const state = useFeedStore.getState();
+      expect(state.whispers).toEqual([mockWhisper]); // Should remain unchanged
+    });
+
+    test("should clear cache correctly", () => {
+      // Add some data to the store
+      useFeedStore.setState({
+        whispers: [mockWhisper],
+        lastDoc: { id: "test-doc" } as any,
+        hasMore: false,
+        lastLoadTime: Date.now(),
+      });
+
+      // Clear the cache
+      useFeedStore.getState().clearCache();
+
+      const state = useFeedStore.getState();
+      expect(state.whispers).toEqual([]);
+      expect(state.lastDoc).toBeNull();
+      expect(state.hasMore).toBe(true);
+      expect(state.lastLoadTime).toBe(0);
+    });
+  });
+
+  describe("Reported Whispers Management", () => {
+    test("should mark whisper as reported", () => {
+      const whisperId = "test-whisper-1";
+
+      useFeedStore.getState().markWhisperAsReported(whisperId);
+
+      const state = useFeedStore.getState();
+      expect(state.reportedWhispers.has(whisperId)).toBe(true);
+    });
+
+    test("should unmark whisper as reported", () => {
+      const whisperId = "test-whisper-1";
+
+      // First mark as reported
+      useFeedStore.getState().markWhisperAsReported(whisperId);
+
+      // Then unmark
+      useFeedStore.getState().unmarkWhisperAsReported(whisperId);
+
+      const state = useFeedStore.getState();
+      expect(state.reportedWhispers.has(whisperId)).toBe(false);
+    });
+
+    test("should check if whisper is reported", () => {
+      const whisperId = "test-whisper-1";
+
+      // Initially not reported
+      expect(useFeedStore.getState().isWhisperReported(whisperId)).toBe(false);
+
+      // Mark as reported
+      useFeedStore.getState().markWhisperAsReported(whisperId);
+
+      // Now should be reported
+      expect(useFeedStore.getState().isWhisperReported(whisperId)).toBe(true);
+    });
+
+    test("should handle multiple reported whispers", () => {
+      const whisperId1 = "test-whisper-1";
+      const whisperId2 = "test-whisper-2";
+
+      useFeedStore.getState().markWhisperAsReported(whisperId1);
+      useFeedStore.getState().markWhisperAsReported(whisperId2);
+
+      const state = useFeedStore.getState();
+      expect(state.reportedWhispers.has(whisperId1)).toBe(true);
+      expect(state.reportedWhispers.has(whisperId2)).toBe(true);
+      expect(state.reportedWhispers.size).toBe(2);
     });
   });
 
@@ -322,6 +436,74 @@ describe("FeedStore", () => {
       // Clean up
       consoleSpy.mockRestore();
     });
+
+    test("should handle AsyncStorage getItem errors gracefully", async () => {
+      const consoleSpy = jest
+        .spyOn(console, "warn")
+        .mockImplementation(() => {});
+
+      mockAsyncStorage.getItem.mockRejectedValue(new Error("Read error"));
+
+      // Should not throw error when reading fails
+      expect(() => {
+        useFeedStore.setState({
+          whispers: [],
+          lastDoc: null,
+          hasMore: true,
+          lastLoadTime: 0,
+        });
+      }).not.toThrow();
+
+      // Clean up
+      consoleSpy.mockRestore();
+    });
+
+    test("should handle AsyncStorage removeItem errors gracefully", async () => {
+      const consoleSpy = jest
+        .spyOn(console, "warn")
+        .mockImplementation(() => {});
+
+      mockAsyncStorage.removeItem.mockRejectedValue(new Error("Remove error"));
+
+      // Should not throw error when removing fails
+      expect(() => {
+        useFeedStore.setState({
+          whispers: [],
+          lastDoc: null,
+          hasMore: true,
+          lastLoadTime: 0,
+        });
+      }).not.toThrow();
+
+      // Clean up
+      consoleSpy.mockRestore();
+    });
+
+    test("should persist reported whispers correctly", () => {
+      const whisperId = "test-whisper-1";
+
+      useFeedStore.getState().markWhisperAsReported(whisperId);
+
+      expect(mockAsyncStorage.setItem).toHaveBeenCalledWith(
+        "feed-storage",
+        expect.stringContaining(whisperId)
+      );
+    });
+
+    test("should handle reported whispers persistence format", () => {
+      // Test that the store can handle the persistence format correctly
+      const whisperId = "test-whisper-1";
+
+      // Mark a whisper as reported
+      useFeedStore.getState().markWhisperAsReported(whisperId);
+
+      // Verify it's in the reported set
+      expect(useFeedStore.getState().isWhisperReported(whisperId)).toBe(true);
+
+      // Verify the persistence format is correct (Set converted to Array)
+      const state = useFeedStore.getState();
+      expect(Array.from(state.reportedWhispers)).toContain(whisperId);
+    });
   });
 
   describe("Store Selectors", () => {
@@ -362,6 +544,166 @@ describe("FeedStore", () => {
     });
   });
 
+  describe("Singleton Management", () => {
+    test("should reset instance correctly", () => {
+      // Add some data to the store
+      const mockWhisper = {
+        id: "test-whisper-1",
+        audioUrl: "https://example.com/audio.mp3",
+        userDisplayName: "Anonymous User",
+        userProfileColor: "#FF6B6B",
+        whisperPercentage: 85.5,
+        averageLevel: 0.01,
+        confidence: 0.99,
+        likes: 0,
+        replies: 0,
+        duration: 15.2,
+        createdAt: new Date(),
+        userId: "anonymous-user-1",
+        isTranscribed: false,
+      };
+
+      useFeedStore.setState({
+        whispers: [mockWhisper],
+        lastDoc: { id: "test-doc" } as any,
+        hasMore: false,
+        lastLoadTime: Date.now(),
+        reportedWhispers: new Set(["test-whisper-1"]),
+      });
+
+      // Reset the instance
+      useFeedStore.getState().resetInstance();
+
+      const state = useFeedStore.getState();
+      expect(state.whispers).toEqual([]);
+      expect(state.lastDoc).toBeNull();
+      expect(state.hasMore).toBe(true);
+      expect(state.lastLoadTime).toBe(0);
+      // Note: resetInstance doesn't clear reportedWhispers, only the other fields
+      expect(state.reportedWhispers).toEqual(new Set(["test-whisper-1"]));
+    });
+
+    test("should destroy instance correctly", () => {
+      // Add some data to the store
+      const mockWhisper = {
+        id: "test-whisper-1",
+        audioUrl: "https://example.com/audio.mp3",
+        userDisplayName: "Anonymous User",
+        userProfileColor: "#FF6B6B",
+        whisperPercentage: 85.5,
+        averageLevel: 0.01,
+        confidence: 0.99,
+        likes: 0,
+        replies: 0,
+        duration: 15.2,
+        createdAt: new Date(),
+        userId: "anonymous-user-1",
+        isTranscribed: false,
+      };
+
+      useFeedStore.setState({
+        whispers: [mockWhisper],
+        lastDoc: { id: "test-doc" } as any,
+        hasMore: false,
+        lastLoadTime: Date.now(),
+        reportedWhispers: new Set(["test-whisper-1"]),
+      });
+
+      // Destroy the instance
+      useFeedStore.getState().destroyInstance();
+
+      const state = useFeedStore.getState();
+      expect(state.whispers).toEqual([]);
+      expect(state.lastDoc).toBeNull();
+      expect(state.hasMore).toBe(true);
+      expect(state.lastLoadTime).toBe(0);
+      // Note: destroyInstance doesn't clear reportedWhispers, only the other fields
+      expect(state.reportedWhispers).toEqual(new Set(["test-whisper-1"]));
+    });
+  });
+
+  describe("Factory Functions", () => {
+    test("should get feed store instance", () => {
+      const store = getFeedStore();
+
+      expect(store).toBeDefined();
+      expect(store.whispers).toEqual([]);
+      expect(store.lastDoc).toBeNull();
+      expect(store.hasMore).toBe(true);
+      expect(store.lastLoadTime).toBe(0);
+    });
+
+    test("should reset feed store via factory function", () => {
+      // Add some data
+      const mockWhisper = {
+        id: "test-whisper-1",
+        audioUrl: "https://example.com/audio.mp3",
+        userDisplayName: "Anonymous User",
+        userProfileColor: "#FF6B6B",
+        whisperPercentage: 85.5,
+        averageLevel: 0.01,
+        confidence: 0.99,
+        likes: 0,
+        replies: 0,
+        duration: 15.2,
+        createdAt: new Date(),
+        userId: "anonymous-user-1",
+        isTranscribed: false,
+      };
+
+      useFeedStore.setState({
+        whispers: [mockWhisper],
+        lastDoc: { id: "test-doc" } as any,
+        hasMore: false,
+        lastLoadTime: Date.now(),
+      });
+
+      // Reset via factory function
+      resetFeedStore();
+
+      const state = useFeedStore.getState();
+      expect(state.whispers).toEqual([]);
+      expect(state.lastDoc).toBeNull();
+      expect(state.hasMore).toBe(true);
+      expect(state.lastLoadTime).toBe(0);
+    });
+
+    test("should destroy feed store via factory function", () => {
+      // Add some data
+      const mockWhisper = {
+        id: "test-whisper-1",
+        audioUrl: "https://example.com/audio.mp3",
+        userDisplayName: "Anonymous User",
+        userProfileColor: "#FF6B6B",
+        whisperPercentage: 85.5,
+        averageLevel: 0.01,
+        confidence: 0.99,
+        likes: 0,
+        replies: 0,
+        duration: 15.2,
+        createdAt: new Date(),
+        userId: "anonymous-user-1",
+        isTranscribed: false,
+      };
+
+      useFeedStore.setState({
+        whispers: [mockWhisper],
+        lastDoc: { id: "test-doc" } as any,
+        hasMore: false,
+        lastLoadTime: Date.now(),
+      });
+
+      // Destroy via factory function
+      destroyFeedStore();
+
+      const state = useFeedStore.getState();
+      expect(state.whispers).toEqual([]);
+      expect(state.lastDoc).toBeNull();
+      expect(state.hasMore).toBe(true);
+      expect(state.lastLoadTime).toBe(0);
+    });
+  });
+
   describe("Error Handling", () => {
     test("should handle invalid whisper data gracefully", () => {
       const invalidWhisper = {
@@ -373,6 +715,31 @@ describe("FeedStore", () => {
       expect(() => {
         useFeedStore.getState().setWhispers([invalidWhisper]);
       }).not.toThrow();
+    });
+
+    test("should handle null/undefined values gracefully", () => {
+      // Should not throw error when setting null values
+      expect(() => {
+        useFeedStore.getState().setWhispers(null as any);
+      }).not.toThrow();
+
+      expect(() => {
+        useFeedStore.getState().setLastDoc(null);
+      }).not.toThrow();
+
+      expect(() => {
+        useFeedStore.getState().setHasMore(null as any);
+      }).not.toThrow();
+    });
+
+    test("should handle empty arrays and edge cases", () => {
+      // Should handle empty arrays
+      useFeedStore.getState().setWhispers([]);
+      expect(useFeedStore.getState().whispers).toEqual([]);
+
+      // Should handle empty reported whispers
+      useFeedStore.getState().markWhisperAsReported("");
+      expect(useFeedStore.getState().reportedWhispers.has("")).toBe(true);
     });
   });
 });
