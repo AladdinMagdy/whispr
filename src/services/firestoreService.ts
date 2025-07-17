@@ -125,7 +125,12 @@ export class FirestoreService {
     userDisplayName: string,
     userProfileColor: string,
     uploadData: WhisperUploadData,
-    suspensionServiceOverride?: any // Optional for testability
+    suspensionServiceOverride?: {
+      isUserSuspended: (userId: string) => Promise<{
+        suspended: boolean;
+        suspensions: Array<{ type: string }>;
+      }>;
+    } // Optional for testability
   ): Promise<string> {
     try {
       // Check if user is suspended before allowing whisper creation
