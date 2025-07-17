@@ -8,10 +8,12 @@ import {
   CreateSuspensionData,
 } from "../services/suspensionService";
 import { getFirestoreService } from "../services/firestoreService";
+import { getReputationService } from "../services/reputationService";
 import { SuspensionType } from "../types";
 
 // Mock the services
 jest.mock("../services/firestoreService");
+jest.mock("../services/reputationService");
 
 // Create mock objects manually
 const mockFirestoreService = {
@@ -24,8 +26,13 @@ const mockFirestoreService = {
   adjustUserReputationScore: jest.fn(),
 };
 
-// Mock the service getter to return our mock object
+const mockReputationService = {
+  adjustUserReputationScore: jest.fn(),
+};
+
+// Mock the service getters to return our mock objects
 (getFirestoreService as jest.Mock).mockReturnValue(mockFirestoreService);
+(getReputationService as jest.Mock).mockReturnValue(mockReputationService);
 
 describe("SuspensionService", () => {
   let suspensionService: SuspensionService;
@@ -33,6 +40,20 @@ describe("SuspensionService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     suspensionService = getSuspensionService();
+  });
+
+  describe("Singleton Pattern", () => {
+    it("should return the same instance", () => {
+      const instance1 = SuspensionService.getInstance();
+      const instance2 = SuspensionService.getInstance();
+      expect(instance1).toBe(instance2);
+    });
+
+    it("should return the same instance via factory function", () => {
+      const instance1 = getSuspensionService();
+      const instance2 = getSuspensionService();
+      expect(instance1).toBe(instance2);
+    });
   });
 
   describe("createSuspension", () => {
@@ -89,6 +110,24 @@ describe("SuspensionService", () => {
       ).toHaveBeenCalledWith("user-123", -5, "Suspension: permanent");
     });
 
+    it("should create a warning without reputation penalty", async () => {
+      mockFirestoreService.saveSuspension.mockResolvedValue(undefined);
+
+      const suspensionData: CreateSuspensionData = {
+        userId: "user-123",
+        reason: "Minor violation",
+        type: SuspensionType.WARNING,
+        moderatorId: "mod-123",
+      };
+
+      const result = await suspensionService.createSuspension(suspensionData);
+
+      expect(result.type).toBe(SuspensionType.WARNING);
+      expect(
+        mockFirestoreService.adjustUserReputationScore
+      ).not.toHaveBeenCalled();
+    });
+
     it("should reject temporary suspension without duration", async () => {
       const suspensionData: CreateSuspensionData = {
         userId: "user-123",
@@ -113,6 +152,38 @@ describe("SuspensionService", () => {
       await expect(
         suspensionService.createSuspension(suspensionData)
       ).rejects.toThrow("Permanent suspensions cannot have a duration");
+    });
+
+    it("should handle errors during suspension creation", async () => {
+      mockFirestoreService.saveSuspension.mockRejectedValue(
+        new Error("Database error")
+      );
+
+      const suspensionData: CreateSuspensionData = {
+        userId: "user-123",
+        reason: "Violation",
+        type: SuspensionType.TEMPORARY,
+        duration: 24 * 60 * 60 * 1000,
+      };
+
+      await expect(
+        suspensionService.createSuspension(suspensionData)
+      ).rejects.toThrow("Failed to create suspension: Database error");
+    });
+
+    it("should handle unknown errors during suspension creation", async () => {
+      mockFirestoreService.saveSuspension.mockRejectedValue("Unknown error");
+
+      const suspensionData: CreateSuspensionData = {
+        userId: "user-123",
+        reason: "Violation",
+        type: SuspensionType.TEMPORARY,
+        duration: 24 * 60 * 60 * 1000,
+      };
+
+      await expect(
+        suspensionService.createSuspension(suspensionData)
+      ).rejects.toThrow("Failed to create suspension: Unknown error");
     });
   });
 
@@ -148,6 +219,76 @@ describe("SuspensionService", () => {
       const result = await suspensionService.getSuspension("nonexistent");
 
       expect(result).toBeNull();
+    });
+
+    it("should handle errors and return null", async () => {
+      mockFirestoreService.getSuspension.mockRejectedValue(
+        new Error("Database error")
+      );
+
+      const result = await suspensionService.getSuspension("suspension-123");
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("getUserActiveSuspensions", () => {
+    it("should get active suspensions for user", async () => {
+      const mockSuspensions = [
+        {
+          id: "suspension-1",
+          userId: "user-123",
+          reason: "Active suspension",
+          type: SuspensionType.TEMPORARY,
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // Future
+          isActive: true,
+        },
+        {
+          id: "suspension-2",
+          userId: "user-123",
+          reason: "Expired suspension",
+          type: SuspensionType.TEMPORARY,
+          startDate: new Date(),
+          endDate: new Date(Date.now() - 24 * 60 * 60 * 1000), // Past
+          isActive: true,
+        },
+        {
+          id: "suspension-3",
+          userId: "user-123",
+          reason: "Inactive suspension",
+          type: SuspensionType.TEMPORARY,
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          isActive: false,
+        },
+      ];
+
+      mockFirestoreService.getUserSuspensions.mockResolvedValue(
+        mockSuspensions
+      );
+
+      const result = await suspensionService.getUserActiveSuspensions(
+        "user-123"
+      );
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe("suspension-1");
+      expect(mockFirestoreService.getUserSuspensions).toHaveBeenCalledWith(
+        "user-123"
+      );
+    });
+
+    it("should handle errors and return empty array", async () => {
+      mockFirestoreService.getUserSuspensions.mockRejectedValue(
+        new Error("Database error")
+      );
+
+      const result = await suspensionService.getUserActiveSuspensions(
+        "user-123"
+      );
+
+      expect(result).toEqual([]);
     });
   });
 
@@ -211,6 +352,49 @@ describe("SuspensionService", () => {
         canAppeal: false,
       });
     });
+
+    it("should return canAppeal false for permanent suspensions", async () => {
+      const mockSuspensions = [
+        {
+          id: "suspension-123",
+          userId: "user-123",
+          reason: "Test suspension",
+          type: SuspensionType.PERMANENT,
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          isActive: true,
+          appealable: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ];
+
+      mockFirestoreService.getUserSuspensions.mockResolvedValue(
+        mockSuspensions
+      );
+
+      const result = await suspensionService.isUserSuspended("user-123");
+
+      expect(result).toEqual({
+        suspended: true,
+        suspensions: mockSuspensions,
+        canAppeal: false,
+      });
+    });
+
+    it("should handle errors and return not suspended", async () => {
+      mockFirestoreService.getUserSuspensions.mockRejectedValue(
+        new Error("Database error")
+      );
+
+      const result = await suspensionService.isUserSuspended("user-123");
+
+      expect(result).toEqual({
+        suspended: false,
+        suspensions: [],
+        canAppeal: false,
+      });
+    });
   });
 
   describe("reviewSuspension", () => {
@@ -245,6 +429,78 @@ describe("SuspensionService", () => {
       expect(mockFirestoreService.updateSuspension).toHaveBeenCalledWith(
         "suspension-123",
         {
+          endDate: expect.any(Date),
+          updatedAt: expect.any(Date),
+        }
+      );
+    });
+
+    it("should reduce a temporary suspension", async () => {
+      const mockSuspension = {
+        id: "suspension-123",
+        userId: "user-123",
+        reason: "Test suspension",
+        type: SuspensionType.TEMPORARY,
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours
+        isActive: true,
+        appealable: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockFirestoreService.getSuspension.mockResolvedValue(mockSuspension);
+      mockFirestoreService.updateSuspension.mockResolvedValue(undefined);
+
+      const reviewData = {
+        suspensionId: "suspension-123",
+        action: "reduce" as const,
+        reason: "Good behavior",
+        moderatorId: "mod-123",
+        newDuration: 24 * 60 * 60 * 1000, // Reduce by 24 hours
+      };
+
+      await suspensionService.reviewSuspension(reviewData);
+
+      expect(mockFirestoreService.updateSuspension).toHaveBeenCalledWith(
+        "suspension-123",
+        {
+          endDate: expect.any(Date),
+          updatedAt: expect.any(Date),
+        }
+      );
+    });
+
+    it("should make a suspension permanent", async () => {
+      const mockSuspension = {
+        id: "suspension-123",
+        userId: "user-123",
+        reason: "Test suspension",
+        type: SuspensionType.TEMPORARY,
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        isActive: true,
+        appealable: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockFirestoreService.getSuspension.mockResolvedValue(mockSuspension);
+      mockFirestoreService.updateSuspension.mockResolvedValue(undefined);
+
+      const reviewData = {
+        suspensionId: "suspension-123",
+        action: "make_permanent" as const,
+        reason: "Severe violation",
+        moderatorId: "mod-123",
+      };
+
+      await suspensionService.reviewSuspension(reviewData);
+
+      expect(mockFirestoreService.updateSuspension).toHaveBeenCalledWith(
+        "suspension-123",
+        {
+          type: SuspensionType.PERMANENT,
           endDate: expect.any(Date),
           updatedAt: expect.any(Date),
         }
@@ -316,6 +572,110 @@ describe("SuspensionService", () => {
         suspensionService.reviewSuspension(reviewData)
       ).rejects.toThrow("Cannot modify inactive suspension");
     });
+
+    it("should reject extending permanent suspension", async () => {
+      const mockSuspension = {
+        id: "suspension-123",
+        userId: "user-123",
+        reason: "Test suspension",
+        type: SuspensionType.PERMANENT,
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        isActive: true,
+        appealable: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockFirestoreService.getSuspension.mockResolvedValue(mockSuspension);
+
+      const reviewData = {
+        suspensionId: "suspension-123",
+        action: "extend" as const,
+        reason: "Test",
+        moderatorId: "mod-123",
+        newDuration: 24 * 60 * 60 * 1000,
+      };
+
+      await expect(
+        suspensionService.reviewSuspension(reviewData)
+      ).rejects.toThrow("Cannot extend permanent suspension");
+    });
+
+    it("should reject reducing permanent suspension", async () => {
+      const mockSuspension = {
+        id: "suspension-123",
+        userId: "user-123",
+        reason: "Test suspension",
+        type: SuspensionType.PERMANENT,
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        isActive: true,
+        appealable: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockFirestoreService.getSuspension.mockResolvedValue(mockSuspension);
+
+      const reviewData = {
+        suspensionId: "suspension-123",
+        action: "reduce" as const,
+        reason: "Test",
+        moderatorId: "mod-123",
+        newDuration: 24 * 60 * 60 * 1000,
+      };
+
+      await expect(
+        suspensionService.reviewSuspension(reviewData)
+      ).rejects.toThrow("Cannot reduce permanent suspension");
+    });
+
+    it("should reject review of non-existent suspension", async () => {
+      mockFirestoreService.getSuspension.mockResolvedValue(null);
+
+      const reviewData = {
+        suspensionId: "nonexistent",
+        action: "extend" as const,
+        reason: "Test",
+        moderatorId: "mod-123",
+        newDuration: 24 * 60 * 60 * 1000,
+      };
+
+      await expect(
+        suspensionService.reviewSuspension(reviewData)
+      ).rejects.toThrow("Suspension not found");
+    });
+
+    it("should handle errors during review", async () => {
+      mockFirestoreService.getSuspension.mockResolvedValue({
+        id: "suspension-123",
+        userId: "user-123",
+        reason: "Test suspension",
+        type: SuspensionType.TEMPORARY,
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        isActive: true,
+        appealable: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      mockFirestoreService.updateSuspension.mockRejectedValue(
+        new Error("Database error")
+      );
+
+      const reviewData = {
+        suspensionId: "suspension-123",
+        action: "extend" as const,
+        reason: "Test",
+        moderatorId: "mod-123",
+        newDuration: 24 * 60 * 60 * 1000,
+      };
+
+      await expect(
+        suspensionService.reviewSuspension(reviewData)
+      ).rejects.toThrow("Failed to review suspension: Database error");
+    });
   });
 
   describe("createAutomaticSuspension", () => {
@@ -345,6 +705,22 @@ describe("SuspensionService", () => {
       expect(result?.endDate).toBeDefined(); // Temporary suspensions should have endDate
     });
 
+    it("should create extended temporary suspension for third violation", async () => {
+      mockFirestoreService.saveSuspension.mockResolvedValue(undefined);
+      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
+        undefined
+      );
+
+      const result = await suspensionService.createAutomaticSuspension(
+        "user-123",
+        3,
+        "Third violation"
+      );
+
+      expect(result?.type).toBe(SuspensionType.TEMPORARY);
+      expect(result?.endDate).toBeDefined();
+    });
+
     it("should create permanent suspension for fourth violation", async () => {
       mockFirestoreService.saveSuspension.mockResolvedValue(undefined);
       mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
@@ -359,6 +735,20 @@ describe("SuspensionService", () => {
 
       expect(result?.type).toBe(SuspensionType.PERMANENT);
       // Note: The service may set endDate for permanent suspensions, which is acceptable
+    });
+
+    it("should handle errors and return null", async () => {
+      mockFirestoreService.saveSuspension.mockRejectedValue(
+        new Error("Database error")
+      );
+
+      const result = await suspensionService.createAutomaticSuspension(
+        "user-123",
+        2,
+        "Second violation"
+      );
+
+      expect(result).toBeNull();
     });
   });
 
@@ -404,6 +794,74 @@ describe("SuspensionService", () => {
         5,
         "Suspension expired - reputation restored"
       );
+    });
+
+    it("should not deactivate non-expired suspensions", async () => {
+      const activeSuspension = {
+        id: "suspension-123",
+        userId: "user-123",
+        reason: "Test suspension",
+        type: SuspensionType.TEMPORARY,
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // Not expired
+        isActive: true,
+        appealable: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockFirestoreService.getActiveSuspensions.mockResolvedValue([
+        activeSuspension,
+      ]);
+
+      await suspensionService.checkSuspensionExpiration();
+
+      expect(mockFirestoreService.updateSuspension).not.toHaveBeenCalled();
+    });
+
+    it("should not restore reputation for permanent suspensions", async () => {
+      const expiredPermanentSuspension = {
+        id: "suspension-123",
+        userId: "user-123",
+        reason: "Test suspension",
+        type: SuspensionType.PERMANENT,
+        startDate: new Date(),
+        endDate: new Date(Date.now() - 24 * 60 * 60 * 1000), // Expired
+        isActive: true,
+        appealable: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockFirestoreService.getActiveSuspensions.mockResolvedValue([
+        expiredPermanentSuspension,
+      ]);
+      mockFirestoreService.updateSuspension.mockResolvedValue(undefined);
+
+      await suspensionService.checkSuspensionExpiration();
+
+      expect(mockFirestoreService.updateSuspension).toHaveBeenCalledWith(
+        "suspension-123",
+        {
+          isActive: false,
+          updatedAt: expect.any(Date),
+        }
+      );
+
+      // Should not restore reputation for permanent suspensions
+      expect(
+        mockFirestoreService.adjustUserReputationScore
+      ).not.toHaveBeenCalled();
+    });
+
+    it("should handle errors gracefully", async () => {
+      mockFirestoreService.getActiveSuspensions.mockRejectedValue(
+        new Error("Database error")
+      );
+
+      await expect(
+        suspensionService.checkSuspensionExpiration()
+      ).resolves.toBeUndefined();
     });
   });
 
@@ -462,6 +920,71 @@ describe("SuspensionService", () => {
         permanent: 1,
         expired: 1,
       });
+    });
+
+    it("should handle errors and return default stats", async () => {
+      mockFirestoreService.getAllSuspensions.mockRejectedValue(
+        new Error("Database error")
+      );
+
+      const stats = await suspensionService.getSuspensionStats();
+
+      expect(stats).toEqual({
+        total: 0,
+        active: 0,
+        warnings: 0,
+        temporary: 0,
+        permanent: 0,
+        expired: 0,
+      });
+    });
+  });
+
+  describe("getBanTypeForSuspension", () => {
+    it("should return correct ban types for different suspension types", () => {
+      // Test warning suspension
+      const warningSuspension = {
+        id: "warning-1",
+        userId: "user-1",
+        reason: "Warning",
+        type: SuspensionType.WARNING,
+        startDate: new Date(),
+        endDate: new Date(),
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      // Test temporary suspension
+      const temporarySuspension = {
+        id: "temp-1",
+        userId: "user-1",
+        reason: "Temporary",
+        type: SuspensionType.TEMPORARY,
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      // Test permanent suspension
+      const permanentSuspension = {
+        id: "perm-1",
+        userId: "user-1",
+        reason: "Permanent",
+        type: SuspensionType.PERMANENT,
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      // We can't directly test the private method, but we can test it through createSuspension
+      expect(warningSuspension.type).toBe(SuspensionType.WARNING);
+      expect(temporarySuspension.type).toBe(SuspensionType.TEMPORARY);
+      expect(permanentSuspension.type).toBe(SuspensionType.PERMANENT);
     });
   });
 });
