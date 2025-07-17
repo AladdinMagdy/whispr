@@ -160,7 +160,10 @@ export class AudioCacheService {
     }
 
     try {
+      console.log(`🔍 Cache state: ${this.state.cachedFiles.size} files`);
+      console.log(`🔍 Looking for: ${originalUrl}`);
       const cached = this.state.cachedFiles.get(originalUrl);
+      console.log(`🔍 Found in cache: ${cached ? "yes" : "no"}`);
 
       if (cached) {
         // Check if file still exists
@@ -191,7 +194,10 @@ export class AudioCacheService {
       }
 
       // Download and cache the file
-      return await this.downloadAndCache(originalUrl);
+      console.log(`🔍 About to call downloadAndCache for: ${originalUrl}`);
+      const result = await this.downloadAndCache(originalUrl);
+      console.log(`🔍 downloadAndCache returned: ${result}`);
+      return result;
     } catch (error) {
       console.error(`❌ Error in getCachedAudioUrl for ${originalUrl}:`, error);
       // Return original URL as fallback
@@ -217,6 +223,14 @@ export class AudioCacheService {
 
     const fileSize =
       fileInfo.exists && typeof fileInfo.size === "number" ? fileInfo.size : 0;
+
+    // Return original URL if file size is 0 (invalid file)
+    if (fileSize === 0) {
+      console.warn(`⚠️ Skipping cache for zero-size file: ${originalUrl}`);
+      console.log("DEBUG: fileInfo in handleLocalFileCache", fileInfo);
+      console.log("DEBUG: fileSize in handleLocalFileCache", fileSize);
+      return originalUrl;
+    }
 
     await this.manageCacheSize(fileSize);
 
@@ -269,6 +283,12 @@ export class AudioCacheService {
 
     const fileSize = typeof fileInfo.size === "number" ? fileInfo.size : 0;
 
+    // Return original URL if file size is 0 (invalid file)
+    if (fileSize === 0) {
+      console.warn(`⚠️ Skipping cache for zero-size file: ${originalUrl}`);
+      return originalUrl;
+    }
+
     // Manage cache size before adding new file
     await this.manageCacheSize(fileSize);
 
@@ -307,10 +327,23 @@ export class AudioCacheService {
       const fileExtension = getFileExtension(originalUrl);
       const localPath = `${this.cacheDir}${fileHash}${fileExtension}`;
 
+      console.log(`🔍 Generated path: ${localPath}`);
+      console.log(`🔍 File extension: ${fileExtension}`);
+      console.log(`🔍 Hash: ${fileHash}`);
+
       if (originalUrl.startsWith("file://")) {
-        return await this.handleLocalFileCache(originalUrl, localPath);
+        console.log(`📁 Handling local file: ${originalUrl}`);
+        const result = await this.handleLocalFileCache(originalUrl, localPath);
+        console.log(`📁 Local file result: ${result}`);
+        return result;
       } else {
-        return await this.handleRemoteFileDownload(originalUrl, localPath);
+        console.log(`🌐 Handling remote file: ${originalUrl}`);
+        const result = await this.handleRemoteFileDownload(
+          originalUrl,
+          localPath
+        );
+        console.log(`🌐 Remote file result: ${result}`);
+        return result;
       }
     } catch (error) {
       console.error(`❌ Error downloading audio ${originalUrl}:`, error);
