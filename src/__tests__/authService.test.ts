@@ -7,10 +7,11 @@ import {
   getAuthService,
   resetAuthService,
   destroyAuthService,
+  AuthServiceDependencies,
 } from "../services/authService";
 import { getAuthInstance, getFirestoreInstance } from "../config/firebase";
 import { signInAnonymously, signOut } from "firebase/auth";
-import { setDoc, getDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 
 // Mock Firebase modules
 jest.mock("../config/firebase", () => ({
@@ -31,10 +32,12 @@ jest.mock("firebase/auth", () => ({
 }));
 
 jest.mock("firebase/firestore", () => ({
-  doc: jest.fn(() => "mock-doc-ref"),
-  setDoc: jest.fn(),
+  doc: jest.fn(() => ({ id: "test-doc-id" })),
   getDoc: jest.fn(),
-  serverTimestamp: jest.fn(() => new Date()),
+  setDoc: jest.fn(),
+  serverTimestamp: jest.fn(() => ({
+    toDate: () => new Date("2023-01-01T00:00:00.000Z"),
+  })),
 }));
 
 describe("AuthService", () => {
@@ -249,7 +252,7 @@ describe("AuthService", () => {
 
       expect(mockSetDoc).toHaveBeenCalledWith(
         expect.anything(),
-        { lastActiveAt: expect.any(Date) },
+        { lastActiveAt: expect.any(Object) },
         { merge: true }
       );
     });
@@ -354,6 +357,366 @@ describe("AuthService", () => {
       // For testing, we'll just verify the callback is set
       expect(mockOnAuthStateChanged).toBeDefined();
       expect(mockOnError).toBeDefined();
+    });
+  });
+});
+
+describe("AuthService - Error Handling and Edge Cases", () => {
+  let service: AuthService;
+
+  beforeEach(() => {
+    service = AuthService.getInstance();
+    jest.clearAllMocks();
+  });
+
+  describe("updateLastActive", () => {
+    it("should handle error when updating last active", async () => {
+      const mockSetDoc = jest
+        .fn()
+        .mockRejectedValue(new Error("Database error"));
+      (service as any).firestore = {
+        collection: jest.fn().mockReturnValue({
+          doc: jest.fn().mockReturnValue({
+            set: mockSetDoc,
+          }),
+        }),
+      };
+
+      // Mock current user
+      (service as any).auth = {
+        currentUser: { uid: "test-user" },
+      };
+
+      await service.updateLastActive();
+      // Should not throw, just log error
+    });
+
+    it("should handle error when getting user doc in incrementWhisperCount", async () => {
+      const mockGetDoc = jest
+        .fn()
+        .mockRejectedValue(new Error("Database error"));
+      (service as any).firestore = {
+        collection: jest.fn().mockReturnValue({
+          doc: jest.fn().mockReturnValue({
+            get: mockGetDoc,
+          }),
+        }),
+      };
+
+      (service as any).auth = {
+        currentUser: { uid: "test-user" },
+      };
+
+      await service.incrementWhisperCount();
+      // Should not throw, just log error
+    });
+
+    it("should handle error when setting whisper count", async () => {
+      const mockSetDoc = jest
+        .fn()
+        .mockRejectedValue(new Error("Database error"));
+      const mockGetDoc = jest.fn().mockResolvedValue({
+        exists: () => true,
+        data: () => ({ whisperCount: 5 }),
+      });
+
+      (service as any).firestore = {
+        collection: jest.fn().mockReturnValue({
+          doc: jest.fn().mockReturnValue({
+            get: mockGetDoc,
+            set: mockSetDoc,
+          }),
+        }),
+      };
+
+      (service as any).auth = {
+        currentUser: { uid: "test-user" },
+      };
+
+      await service.incrementWhisperCount();
+      // Should not throw, just log error
+    });
+
+    it("should handle error when getting user doc in incrementReactionCount", async () => {
+      const mockGetDoc = jest
+        .fn()
+        .mockRejectedValue(new Error("Database error"));
+      (service as any).firestore = {
+        collection: jest.fn().mockReturnValue({
+          doc: jest.fn().mockReturnValue({
+            get: mockGetDoc,
+          }),
+        }),
+      };
+
+      (service as any).auth = {
+        currentUser: { uid: "test-user" },
+      };
+
+      await service.incrementReactionCount();
+      // Should not throw, just log error
+    });
+
+    it("should handle error when setting reaction count", async () => {
+      const mockSetDoc = jest
+        .fn()
+        .mockRejectedValue(new Error("Database error"));
+      const mockGetDoc = jest.fn().mockResolvedValue({
+        exists: () => true,
+        data: () => ({ totalReactions: 3 }),
+      });
+
+      (service as any).firestore = {
+        collection: jest.fn().mockReturnValue({
+          doc: jest.fn().mockReturnValue({
+            get: mockGetDoc,
+            set: mockSetDoc,
+          }),
+        }),
+      };
+
+      (service as any).auth = {
+        currentUser: { uid: "test-user" },
+      };
+
+      await service.incrementReactionCount();
+      // Should not throw, just log error
+    });
+  });
+
+  describe("generateAnonymousProfile", () => {
+    it("should generate unique profiles", () => {
+      const profile1 = (service as any).generateAnonymousProfile();
+      const profile2 = (service as any).generateAnonymousProfile();
+
+      expect(profile1.displayName).toBeDefined();
+      expect(profile1.profileColor).toBeDefined();
+      expect(profile2.displayName).toBeDefined();
+      expect(profile2.profileColor).toBeDefined();
+
+      // They might be the same due to random chance, but both should be valid
+      expect(profile1.displayName).toMatch(/^[A-Za-z]+ [A-Za-z]+$/);
+      expect(profile1.profileColor).toMatch(/^#[0-9A-Fa-f]{6}$/);
+      expect(profile2.displayName).toMatch(/^[A-Za-z]+ [A-Za-z]+$/);
+      expect(profile2.profileColor).toMatch(/^#[0-9A-Fa-f]{6}$/);
+    });
+
+    it("should generate profile with valid format", () => {
+      const profile = (service as any).generateAnonymousProfile();
+
+      expect(profile.displayName).toContain(" ");
+      expect(profile.displayName.split(" ")).toHaveLength(2);
+      expect(profile.profileColor).toMatch(/^#[0-9A-Fa-f]{6}$/);
+    });
+  });
+
+  describe("getOrCreateAnonymousUser", () => {
+    it("should handle error when getting user document", async () => {
+      const mockGetDoc = jest
+        .fn()
+        .mockRejectedValue(new Error("Database error"));
+      (service as any).firestore = {
+        collection: jest.fn().mockReturnValue({
+          doc: jest.fn().mockReturnValue({
+            get: mockGetDoc,
+          }),
+        }),
+      };
+
+      const firebaseUser = { uid: "test-user" };
+
+      await expect(
+        (service as any).getOrCreateAnonymousUser(firebaseUser)
+      ).rejects.toThrow("Failed to get user profile");
+    });
+
+    it("should handle error when creating new user", async () => {
+      const mockGetDoc = jest.fn().mockResolvedValue({
+        exists: () => false,
+      });
+      const mockSetDoc = jest
+        .fn()
+        .mockRejectedValue(new Error("Database error"));
+
+      (service as any).firestore = {
+        collection: jest.fn().mockReturnValue({
+          doc: jest.fn().mockReturnValue({
+            get: mockGetDoc,
+            set: mockSetDoc,
+          }),
+        }),
+      };
+
+      const firebaseUser = { uid: "test-user" };
+
+      await expect(
+        (service as any).getOrCreateAnonymousUser(firebaseUser)
+      ).rejects.toThrow("Failed to get user profile");
+    });
+
+    it("should handle non-Error exceptions", async () => {
+      const mockGetDoc = jest.fn().mockRejectedValue("String error");
+      (service as any).firestore = {
+        collection: jest.fn().mockReturnValue({
+          doc: jest.fn().mockReturnValue({
+            get: mockGetDoc,
+          }),
+        }),
+      };
+
+      const firebaseUser = { uid: "test-user" };
+
+      await expect(
+        (service as any).getOrCreateAnonymousUser(firebaseUser)
+      ).rejects.toThrow(/Failed to get user profile/);
+    });
+  });
+
+  describe("Static Methods", () => {
+    it("should handle resetInstance when no instance exists", () => {
+      // Destroy any existing instance
+      AuthService.destroyInstance();
+
+      // Should not throw when no instance exists
+      expect(() => AuthService.resetInstance()).not.toThrow();
+    });
+
+    it("should handle destroyInstance when no instance exists", () => {
+      // Destroy any existing instance
+      AuthService.destroyInstance();
+
+      // Should not throw when no instance exists
+      expect(() => AuthService.destroyInstance()).not.toThrow();
+    });
+
+    it("should reset instance correctly", () => {
+      const instance1 = AuthService.getInstance();
+      AuthService.resetInstance();
+      const instance2 = AuthService.getInstance();
+      // After reset, should be a new instance
+      expect(instance1).not.toBe(instance2);
+    });
+  });
+
+  describe("Factory Functions", () => {
+    it("should export factory functions correctly", () => {
+      expect(typeof getAuthService).toBe("function");
+      expect(typeof resetAuthService).toBe("function");
+      expect(typeof destroyAuthService).toBe("function");
+    });
+
+    it("should call static methods through factory functions", () => {
+      const resetSpy = jest.spyOn(AuthService, "resetInstance");
+      const destroySpy = jest.spyOn(AuthService, "destroyInstance");
+
+      resetAuthService();
+      expect(resetSpy).toHaveBeenCalled();
+
+      destroyAuthService();
+      expect(destroySpy).toHaveBeenCalled();
+
+      resetSpy.mockRestore();
+      destroySpy.mockRestore();
+    });
+  });
+
+  describe("Edge Cases", () => {
+    it("should handle incrementWhisperCount when user doc doesn't exist", async () => {
+      const mockGetDoc = jest.fn().mockResolvedValue({
+        exists: () => false,
+      });
+
+      (service as any).firestore = {
+        collection: jest.fn().mockReturnValue({
+          doc: jest.fn().mockReturnValue({
+            get: mockGetDoc,
+          }),
+        }),
+      };
+
+      (service as any).auth = {
+        currentUser: { uid: "test-user" },
+      };
+
+      await service.incrementWhisperCount();
+      // Should not throw, just return early
+    });
+
+    it("should handle incrementReactionCount when user doc doesn't exist", async () => {
+      const mockGetDoc = jest.fn().mockResolvedValue({
+        exists: () => false,
+      });
+
+      (service as any).firestore = {
+        collection: jest.fn().mockReturnValue({
+          doc: jest.fn().mockReturnValue({
+            get: mockGetDoc,
+          }),
+        }),
+      };
+
+      (service as any).auth = {
+        currentUser: { uid: "test-user" },
+      };
+
+      await service.incrementReactionCount();
+      // Should not throw, just return early
+    });
+
+    it("should handle incrementWhisperCount when whisperCount is undefined", async () => {
+      const mockSetDoc = jest.fn().mockResolvedValue(undefined);
+      const mockGetDoc = jest.fn().mockResolvedValue({
+        exists: () => true,
+        data: () => ({ whisperCount: undefined }),
+      });
+
+      // Create a new instance with mocked dependencies
+      const dependencies: AuthServiceDependencies = {
+        auth: { currentUser: { uid: "test-user" } } as any,
+        firestore: {} as any,
+      };
+
+      const testService = AuthService.createInstance(dependencies);
+
+      // Mock the Firestore functions
+      (doc as jest.Mock).mockReturnValue({ id: "test-doc-id" });
+      (getDoc as jest.Mock).mockImplementation(mockGetDoc);
+      (setDoc as jest.Mock).mockImplementation(mockSetDoc);
+
+      await testService.incrementWhisperCount();
+      expect(mockSetDoc).toHaveBeenCalledWith(
+        expect.anything(),
+        { whisperCount: 1 },
+        { merge: true }
+      );
+    });
+
+    it("should handle incrementReactionCount when totalReactions is undefined", async () => {
+      const mockSetDoc = jest.fn().mockResolvedValue(undefined);
+      const mockGetDoc = jest.fn().mockResolvedValue({
+        exists: () => true,
+        data: () => ({ totalReactions: undefined }),
+      });
+
+      // Create a new instance with mocked dependencies
+      const dependencies: AuthServiceDependencies = {
+        auth: { currentUser: { uid: "test-user" } } as any,
+        firestore: {} as any,
+      };
+
+      const testService = AuthService.createInstance(dependencies);
+
+      // Mock the Firestore functions
+      (doc as jest.Mock).mockReturnValue({ id: "test-doc-id" });
+      (getDoc as jest.Mock).mockImplementation(mockGetDoc);
+      (setDoc as jest.Mock).mockImplementation(mockSetDoc);
+
+      await testService.incrementReactionCount();
+      expect(mockSetDoc).toHaveBeenCalledWith(
+        expect.anything(),
+        { totalReactions: 1 },
+        { merge: true }
+      );
     });
   });
 });

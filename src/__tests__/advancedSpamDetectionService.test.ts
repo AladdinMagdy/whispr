@@ -501,3 +501,626 @@ describe("AdvancedSpamDetectionService", () => {
     });
   });
 });
+
+describe("AdvancedSpamDetectionService - Edge Cases and Error Handling", () => {
+  let service: AdvancedSpamDetectionService;
+
+  beforeEach(() => {
+    service = AdvancedSpamDetectionService.getInstance();
+    jest.clearAllMocks();
+  });
+
+  describe("analyzeContentPatternsOnly", () => {
+    it("should handle empty transcription", () => {
+      const result = service.analyzeContentPatternsOnly("");
+      expect(result.isSpam).toBe(false);
+      expect(result.isScam).toBe(false);
+      expect(result.confidence).toBe(0);
+    });
+
+    it("should handle very short transcription", () => {
+      const result = service.analyzeContentPatternsOnly("hi");
+      expect(result.isSpam).toBe(false);
+      expect(result.isScam).toBe(false);
+    });
+
+    it("should handle transcription with only whitespace", () => {
+      const result = service.analyzeContentPatternsOnly("   \n\t   ");
+      expect(result.isSpam).toBe(false);
+      expect(result.isScam).toBe(false);
+    });
+  });
+
+  describe("analyzeForSpamScam - Error Handling", () => {
+    it("should handle firestore service errors gracefully", async () => {
+      const mockFirestoreService = {
+        getUserWhispers: jest
+          .fn()
+          .mockRejectedValue(new Error("Database error")),
+      };
+
+      // Mock the service to inject our mock
+      (service as any).firestoreService = mockFirestoreService;
+
+      const whisper: Whisper = {
+        id: "test-whisper",
+        userId: "test-user",
+        userDisplayName: "Test User",
+        userProfileColor: "#FF0000",
+        audioUrl: "test-url",
+        duration: 10,
+        whisperPercentage: 50,
+        averageLevel: 0.5,
+        confidence: 0.8,
+        transcription: "Test transcription",
+        createdAt: new Date(),
+        likes: 0,
+        replies: 0,
+        isTranscribed: true,
+        moderationResult: undefined,
+      };
+
+      const userReputation: UserReputation = {
+        userId: "test-user",
+        score: 50,
+        level: "standard",
+        totalWhispers: 10,
+        approvedWhispers: 8,
+        flaggedWhispers: 1,
+        rejectedWhispers: 1,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const result = await service.analyzeForSpamScam(
+        whisper,
+        "test-user",
+        userReputation
+      );
+
+      expect(result.isSpam).toBe(false);
+      expect(result.isScam).toBe(false);
+      expect(result.confidence).toBe(0);
+      expect(result.reason).toContain("Analysis failed");
+    });
+
+    it("should handle reputation service errors gracefully", async () => {
+      const mockReputationService = {
+        getUserReputation: jest
+          .fn()
+          .mockRejectedValue(new Error("Reputation service error")),
+      };
+
+      (service as any).reputationService = mockReputationService;
+
+      const whisper: Whisper = {
+        id: "test-whisper",
+        userId: "test-user",
+        userDisplayName: "Test User",
+        userProfileColor: "#FF0000",
+        audioUrl: "test-url",
+        duration: 10,
+        whisperPercentage: 50,
+        averageLevel: 0.5,
+        confidence: 0.8,
+        transcription: "Test transcription",
+        createdAt: new Date(),
+        likes: 0,
+        replies: 0,
+        isTranscribed: true,
+        moderationResult: undefined,
+      };
+
+      const userReputation: UserReputation = {
+        userId: "test-user",
+        score: 50,
+        level: "standard",
+        totalWhispers: 10,
+        approvedWhispers: 8,
+        flaggedWhispers: 1,
+        rejectedWhispers: 1,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const result = await service.analyzeForSpamScam(
+        whisper,
+        "test-user",
+        userReputation
+      );
+
+      expect(result.isSpam).toBe(false);
+      expect(result.isScam).toBe(false);
+      expect(result.confidence).toBe(0);
+    });
+  });
+
+  describe("Private Method Coverage", () => {
+    it("should test calculateVariance with empty array", () => {
+      const variance = (service as any).calculateVariance([]);
+      expect(variance).toBe(0);
+    });
+
+    it("should test calculateVariance with single number", () => {
+      const variance = (service as any).calculateVariance([5]);
+      expect(variance).toBe(0);
+    });
+
+    it("should test calculateVariance with multiple numbers", () => {
+      const variance = (service as any).calculateVariance([1, 2, 3, 4, 5]);
+      expect(variance).toBeGreaterThan(0);
+    });
+
+    it("should test calculateTextSimilarity with empty strings", () => {
+      const similarity = (service as any).calculateTextSimilarity("", "");
+      expect(similarity).toBe(0);
+    });
+
+    it("should test calculateTextSimilarity with identical text", () => {
+      const similarity = (service as any).calculateTextSimilarity(
+        "hello world",
+        "hello world"
+      );
+      expect(similarity).toBe(1);
+    });
+
+    it("should test calculateTextSimilarity with different text", () => {
+      const similarity = (service as any).calculateTextSimilarity(
+        "hello world",
+        "goodbye world"
+      );
+      expect(similarity).toBeGreaterThan(0);
+      expect(similarity).toBeLessThan(1);
+    });
+
+    it("should test analyzeGeographicPatterns (placeholder method)", () => {
+      const flags = (service as any).analyzeGeographicPatterns([]);
+      expect(flags).toEqual([]);
+    });
+
+    it("should test analyzeDevicePatterns (placeholder method)", () => {
+      const flags = (service as any).analyzeDevicePatterns([]);
+      expect(flags).toEqual([]);
+    });
+  });
+
+  describe("Score Calculation Edge Cases", () => {
+    it("should handle empty flags in calculateSpamScore", () => {
+      const score = (service as any).calculateSpamScore([], [], []);
+      expect(score).toBe(0);
+    });
+
+    it("should handle unknown flag types in calculateSpamScore", () => {
+      const contentFlags = [
+        {
+          type: "unknown_type" as any,
+          severity: "medium" as const,
+          confidence: 0.5,
+          description: "Test",
+          evidence: {},
+        },
+      ];
+
+      const score = (service as any).calculateSpamScore(contentFlags, [], []);
+      expect(score).toBeGreaterThan(0);
+    });
+
+    it("should handle empty flags in calculateScamScore", () => {
+      const score = (service as any).calculateScamScore([], [], []);
+      expect(score).toBe(0);
+    });
+
+    it("should handle phishing and suspicious patterns in calculateScamScore", () => {
+      const contentFlags = [
+        {
+          type: "phishing_attempt" as const,
+          severity: "critical" as const,
+          confidence: 0.8,
+          description: "Phishing detected",
+          evidence: {},
+        },
+        {
+          type: "suspicious_patterns" as const,
+          severity: "high" as const,
+          confidence: 0.6,
+          description: "Suspicious patterns",
+          evidence: {},
+        },
+      ];
+
+      const score = (service as any).calculateScamScore(contentFlags, [], []);
+      expect(score).toBeGreaterThan(0);
+    });
+  });
+
+  describe("Action Determination Edge Cases", () => {
+    it("should handle trusted users with critical scores", () => {
+      const userReputation: UserReputation = {
+        userId: "test-user",
+        score: 100,
+        level: "trusted",
+        totalWhispers: 100,
+        totalLikes: 50,
+        totalReports: 0,
+        violations: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const action = (service as any).determineSuggestedAction(
+        0.9,
+        0.1,
+        userReputation
+      );
+      expect(action).toBe("reject");
+    });
+
+    it("should handle standard users with critical scores", () => {
+      const userReputation: UserReputation = {
+        userId: "test-user",
+        score: 50,
+        level: "standard",
+        totalWhispers: 10,
+        totalLikes: 5,
+        totalReports: 0,
+        violations: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const action = (service as any).determineSuggestedAction(
+        0.9,
+        0.1,
+        userReputation
+      );
+      expect(action).toBe("ban");
+    });
+
+    it("should handle trusted users with high scores", () => {
+      const userReputation: UserReputation = {
+        userId: "test-user",
+        score: 100,
+        level: "trusted",
+        totalWhispers: 100,
+        totalLikes: 50,
+        totalReports: 0,
+        violations: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const action = (service as any).determineSuggestedAction(
+        0.7,
+        0.1,
+        userReputation
+      );
+      expect(action).toBe("flag");
+    });
+
+    it("should handle standard users with high scores", () => {
+      const userReputation: UserReputation = {
+        userId: "test-user",
+        score: 50,
+        level: "standard",
+        totalWhispers: 10,
+        totalLikes: 5,
+        totalReports: 0,
+        violations: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const action = (service as any).determineSuggestedAction(
+        0.7,
+        0.1,
+        userReputation
+      );
+      expect(action).toBe("reject");
+    });
+
+    it("should handle trusted users with medium scores", () => {
+      const userReputation: UserReputation = {
+        userId: "test-user",
+        score: 100,
+        level: "trusted",
+        totalWhispers: 100,
+        totalLikes: 50,
+        totalReports: 0,
+        violations: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const action = (service as any).determineSuggestedAction(
+        0.5,
+        0.1,
+        userReputation
+      );
+      expect(action).toBe("warn");
+    });
+
+    it("should handle standard users with medium scores", () => {
+      const userReputation: UserReputation = {
+        userId: "test-user",
+        score: 50,
+        level: "standard",
+        totalWhispers: 10,
+        totalLikes: 5,
+        totalReports: 0,
+        violations: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const action = (service as any).determineSuggestedAction(
+        0.5,
+        0.1,
+        userReputation
+      );
+      expect(action).toBe("flag");
+    });
+
+    it("should handle low scores for any user", () => {
+      const userReputation: UserReputation = {
+        userId: "test-user",
+        score: 50,
+        level: "standard",
+        totalWhispers: 10,
+        totalLikes: 5,
+        totalReports: 0,
+        violations: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const action = (service as any).determineSuggestedAction(
+        0.2,
+        0.1,
+        userReputation
+      );
+      expect(action).toBe("warn");
+    });
+  });
+
+  describe("Reason Generation Edge Cases", () => {
+    it("should generate reason for scam detection", () => {
+      const contentFlags = [
+        {
+          type: "phishing_attempt" as const,
+          severity: "critical" as const,
+          confidence: 0.8,
+          description: "Phishing detected",
+          evidence: {},
+        },
+      ];
+
+      const reason = (service as any).generateReason(
+        contentFlags,
+        [],
+        [],
+        false,
+        true
+      );
+      expect(reason).toContain("Potential scam detected");
+    });
+
+    it("should generate reason for spam detection", () => {
+      const behavioralFlags = [
+        {
+          type: "repetitive_posting" as const,
+          severity: "high" as const,
+          confidence: 0.8,
+          description: "Repetitive posting",
+          evidence: {},
+        },
+      ];
+
+      const reason = (service as any).generateReason(
+        [],
+        behavioralFlags,
+        [],
+        true,
+        false
+      );
+      expect(reason).toContain("Spam behavior detected");
+    });
+
+    it("should generate reason for new account behavior", () => {
+      const userBehaviorFlags = [
+        {
+          type: "new_account" as const,
+          severity: "medium" as const,
+          confidence: 0.8,
+          description: "New account",
+          evidence: {},
+        },
+      ];
+
+      const reason = (service as any).generateReason(
+        [],
+        [],
+        userBehaviorFlags,
+        false,
+        false
+      );
+      expect(reason).toContain("New account behavior");
+    });
+
+    it("should generate reason for low reputation", () => {
+      const userBehaviorFlags = [
+        {
+          type: "low_reputation" as const,
+          severity: "high" as const,
+          confidence: 0.8,
+          description: "Low reputation",
+          evidence: {},
+        },
+      ];
+
+      const reason = (service as any).generateReason(
+        [],
+        [],
+        userBehaviorFlags,
+        false,
+        false
+      );
+      expect(reason).toContain("Low reputation user");
+    });
+
+    it("should generate default reason when no specific flags", () => {
+      const reason = (service as any).generateReason([], [], [], false, false);
+      expect(reason).toBe("Suspicious content patterns detected");
+    });
+  });
+
+  describe("convertToViolations Edge Cases", () => {
+    it("should convert scam result with critical severity", () => {
+      const result: SpamAnalysisResult = {
+        isSpam: false,
+        isScam: true,
+        confidence: 0.9,
+        spamScore: 0.1,
+        scamScore: 0.9,
+        behavioralFlags: [],
+        contentFlags: [],
+        userBehaviorFlags: [],
+        suggestedAction: "ban",
+        reason: "Critical scam detected",
+      };
+
+      const violations =
+        AdvancedSpamDetectionService.convertToViolations(result);
+      expect(violations).toHaveLength(1);
+      expect(violations[0].type).toBe(ViolationType.SCAM);
+      expect(violations[0].severity).toBe("critical");
+    });
+
+    it("should convert scam result with high severity", () => {
+      const result: SpamAnalysisResult = {
+        isSpam: false,
+        isScam: true,
+        confidence: 0.7,
+        spamScore: 0.1,
+        scamScore: 0.7,
+        behavioralFlags: [],
+        contentFlags: [],
+        userBehaviorFlags: [],
+        suggestedAction: "reject",
+        reason: "High scam detected",
+      };
+
+      const violations =
+        AdvancedSpamDetectionService.convertToViolations(result);
+      expect(violations).toHaveLength(1);
+      expect(violations[0].type).toBe(ViolationType.SCAM);
+      expect(violations[0].severity).toBe("high");
+    });
+
+    it("should convert scam result with medium severity", () => {
+      const result: SpamAnalysisResult = {
+        isSpam: false,
+        isScam: true,
+        confidence: 0.5,
+        spamScore: 0.1,
+        scamScore: 0.5,
+        behavioralFlags: [],
+        contentFlags: [],
+        userBehaviorFlags: [],
+        suggestedAction: "flag",
+        reason: "Medium scam detected",
+      };
+
+      const violations =
+        AdvancedSpamDetectionService.convertToViolations(result);
+      expect(violations).toHaveLength(1);
+      expect(violations[0].type).toBe(ViolationType.SCAM);
+      expect(violations[0].severity).toBe("medium");
+    });
+
+    it("should convert spam result with high severity", () => {
+      const result: SpamAnalysisResult = {
+        isSpam: true,
+        isScam: false,
+        confidence: 0.8,
+        spamScore: 0.8,
+        scamScore: 0.1,
+        behavioralFlags: [],
+        contentFlags: [],
+        userBehaviorFlags: [],
+        suggestedAction: "reject",
+        reason: "High spam detected",
+      };
+
+      const violations =
+        AdvancedSpamDetectionService.convertToViolations(result);
+      expect(violations).toHaveLength(1);
+      expect(violations[0].type).toBe(ViolationType.SPAM);
+      expect(violations[0].severity).toBe("high");
+    });
+
+    it("should convert spam result with medium severity", () => {
+      const result: SpamAnalysisResult = {
+        isSpam: true,
+        isScam: false,
+        confidence: 0.6,
+        spamScore: 0.6,
+        scamScore: 0.1,
+        behavioralFlags: [],
+        contentFlags: [],
+        userBehaviorFlags: [],
+        suggestedAction: "flag",
+        reason: "Medium spam detected",
+      };
+
+      const violations =
+        AdvancedSpamDetectionService.convertToViolations(result);
+      expect(violations).toHaveLength(1);
+      expect(violations[0].type).toBe(ViolationType.SPAM);
+      expect(violations[0].severity).toBe("medium");
+    });
+
+    it("should convert spam result with low severity", () => {
+      const result: SpamAnalysisResult = {
+        isSpam: true,
+        isScam: false,
+        confidence: 0.4,
+        spamScore: 0.4,
+        scamScore: 0.1,
+        behavioralFlags: [],
+        contentFlags: [],
+        userBehaviorFlags: [],
+        suggestedAction: "warn",
+        reason: "Low spam detected",
+      };
+
+      const violations =
+        AdvancedSpamDetectionService.convertToViolations(result);
+      expect(violations).toHaveLength(1);
+      expect(violations[0].type).toBe(ViolationType.SPAM);
+      expect(violations[0].severity).toBe("low");
+    });
+
+    it("should convert both spam and scam results", () => {
+      const result: SpamAnalysisResult = {
+        isSpam: true,
+        isScam: true,
+        confidence: 0.8,
+        spamScore: 0.8,
+        scamScore: 0.9,
+        behavioralFlags: [],
+        contentFlags: [],
+        userBehaviorFlags: [],
+        suggestedAction: "ban",
+        reason: "Both spam and scam detected",
+      };
+
+      const violations =
+        AdvancedSpamDetectionService.convertToViolations(result);
+      expect(violations).toHaveLength(2);
+      expect(violations.some((v) => v.type === ViolationType.SPAM)).toBe(true);
+      expect(violations.some((v) => v.type === ViolationType.SCAM)).toBe(true);
+    });
+  });
+});

@@ -9,8 +9,15 @@ import {
   onAuthStateChanged,
   signOut,
   User as FirebaseUser,
+  Auth,
 } from "firebase/auth";
-import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import {
+  doc,
+  setDoc,
+  getDoc,
+  serverTimestamp,
+  Firestore,
+} from "firebase/firestore";
 
 export interface AnonymousUser {
   uid: string;
@@ -42,20 +49,28 @@ export interface AuthCallbacks {
   onError?: (error: string) => void;
 }
 
+export interface AuthServiceDependencies {
+  auth: Auth;
+  firestore: Firestore;
+}
+
 export class AuthService {
   private static instance: AuthService;
   private callbacks: AuthCallbacks = {};
   private unsubscribeAuth: (() => void) | null = null;
+  private auth: Auth;
+  private firestore: Firestore;
 
-  // Use lazy getters for auth and firestore
-  private get auth() {
-    return getAuthInstance();
-  }
-  private get firestore() {
-    return getFirestoreInstance();
-  }
+  constructor(dependencies?: AuthServiceDependencies) {
+    if (dependencies) {
+      this.auth = dependencies.auth;
+      this.firestore = dependencies.firestore;
+    } else {
+      // Use default instances for backward compatibility
+      this.auth = getAuthInstance();
+      this.firestore = getFirestoreInstance();
+    }
 
-  private constructor() {
     this.initializeAuthListener();
   }
 
@@ -64,6 +79,13 @@ export class AuthService {
       AuthService.instance = new AuthService();
     }
     return AuthService.instance;
+  }
+
+  /**
+   * Create a new instance with custom dependencies (for testing)
+   */
+  static createInstance(dependencies: AuthServiceDependencies): AuthService {
+    return new AuthService(dependencies);
   }
 
   /**
