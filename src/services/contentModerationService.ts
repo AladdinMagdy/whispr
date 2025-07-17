@@ -210,43 +210,44 @@ export class ContentModerationService {
     );
 
     // Determine content rank based on thresholds
+    // Check from most restrictive to least restrictive
     if (
-      maxToxicity <= this.CONTENT_RANKING.G.maxToxicity &&
-      maxSexualContent <= this.CONTENT_RANKING.G.maxSexualContent &&
-      maxViolence <= this.CONTENT_RANKING.G.maxViolence &&
-      maxHateSpeech <= this.CONTENT_RANKING.G.maxHateSpeech
+      maxToxicity > this.CONTENT_RANKING.NC17.maxToxicity ||
+      maxSexualContent > this.CONTENT_RANKING.NC17.maxSexualContent ||
+      maxViolence > this.CONTENT_RANKING.NC17.maxViolence ||
+      maxHateSpeech > this.CONTENT_RANKING.NC17.maxHateSpeech
     ) {
-      return ContentRank.G;
+      return ContentRank.NC17;
     }
 
     if (
-      maxToxicity <= this.CONTENT_RANKING.PG.maxToxicity &&
-      maxSexualContent <= this.CONTENT_RANKING.PG.maxSexualContent &&
-      maxViolence <= this.CONTENT_RANKING.PG.maxViolence &&
-      maxHateSpeech <= this.CONTENT_RANKING.PG.maxHateSpeech
+      maxToxicity > this.CONTENT_RANKING.R.maxToxicity ||
+      maxSexualContent > this.CONTENT_RANKING.R.maxSexualContent ||
+      maxViolence > this.CONTENT_RANKING.R.maxViolence ||
+      maxHateSpeech > this.CONTENT_RANKING.R.maxHateSpeech
     ) {
-      return ContentRank.PG;
+      return ContentRank.R;
     }
 
     if (
-      maxToxicity <= this.CONTENT_RANKING.PG13.maxToxicity &&
-      maxSexualContent <= this.CONTENT_RANKING.PG13.maxSexualContent &&
-      maxViolence <= this.CONTENT_RANKING.PG13.maxViolence &&
-      maxHateSpeech <= this.CONTENT_RANKING.PG13.maxHateSpeech
+      maxToxicity > this.CONTENT_RANKING.PG13.maxToxicity ||
+      maxSexualContent > this.CONTENT_RANKING.PG13.maxSexualContent ||
+      maxViolence > this.CONTENT_RANKING.PG13.maxViolence ||
+      maxHateSpeech > this.CONTENT_RANKING.PG13.maxHateSpeech
     ) {
       return ContentRank.PG13;
     }
 
     if (
-      maxToxicity <= this.CONTENT_RANKING.R.maxToxicity &&
-      maxSexualContent <= this.CONTENT_RANKING.R.maxSexualContent &&
-      maxViolence <= this.CONTENT_RANKING.R.maxViolence &&
-      maxHateSpeech <= this.CONTENT_RANKING.R.maxHateSpeech
+      maxToxicity > this.CONTENT_RANKING.PG.maxToxicity ||
+      maxSexualContent > this.CONTENT_RANKING.PG.maxSexualContent ||
+      maxViolence > this.CONTENT_RANKING.PG.maxViolence ||
+      maxHateSpeech > this.CONTENT_RANKING.PG.maxHateSpeech
     ) {
-      return ContentRank.R;
+      return ContentRank.PG;
     }
 
-    return ContentRank.NC17;
+    return ContentRank.G;
   }
 
   /**

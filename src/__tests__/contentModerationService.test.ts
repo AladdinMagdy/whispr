@@ -4,15 +4,136 @@
 
 import { ContentModerationService } from "../services/contentModerationService";
 import { LocalModerationService } from "../services/localModerationService";
-import { ModerationStatus, ContentRank } from "../types";
+import { OpenAIModerationService } from "../services/openAIModerationService";
+import { PerspectiveAPIService } from "../services/perspectiveAPIService";
+import {
+  ModerationStatus,
+  ContentRank,
+  ViolationType,
+  Violation,
+} from "../types";
+
+jest.unmock("../services/localModerationService");
 
 // Mock the API services
 jest.mock("../services/openAIModerationService");
 jest.mock("../services/perspectiveAPIService");
+jest.mock("../services/reputationService", () => ({
+  getReputationService: jest.fn(() => ({
+    applyReputationBasedActions: jest.fn((result) => Promise.resolve(result)),
+  })),
+}));
+
+const mockOpenAIModerationService = OpenAIModerationService as jest.Mocked<
+  typeof OpenAIModerationService
+>;
+const mockPerspectiveAPIService = PerspectiveAPIService as jest.Mocked<
+  typeof PerspectiveAPIService
+>;
+const mockLocalModerationService = LocalModerationService as jest.Mocked<
+  typeof LocalModerationService
+>;
 
 describe("ContentModerationService", () => {
+  beforeAll(() => {
+    jest.mock("../services/localModerationService");
+  });
   beforeEach(() => {
     jest.clearAllMocks();
+
+    // Mock LocalModerationService methods
+    jest.spyOn(LocalModerationService, "checkKeywords").mockResolvedValue({
+      flagged: false,
+      matchedKeywords: [],
+      toxicityScore: 0,
+      spamScore: 0,
+      personalInfoDetected: false,
+    });
+
+    jest
+      .spyOn(LocalModerationService, "shouldRejectImmediately")
+      .mockResolvedValue(false);
+    jest
+      .spyOn(LocalModerationService, "getModerationSummary")
+      .mockReturnValue("Local moderation summary");
+
+    // Reset mocks to default behavior
+    mockOpenAIModerationService.moderateText.mockResolvedValue({
+      flagged: false,
+      categories: {
+        harassment: false,
+        harassment_threatening: false,
+        hate: false,
+        hate_threatening: false,
+        self_harm: false,
+        self_harm_instructions: false,
+        self_harm_intent: false,
+        sexual: false,
+        sexual_minors: false,
+        violence: false,
+        violence_graphic: false,
+      },
+      categoryScores: {
+        harassment: 0.1,
+        hate: 0.1,
+        sexual: 0.1,
+        sexual_minors: 0.1,
+        violence: 0.1,
+        violence_graphic: 0.1,
+        self_harm: 0.1,
+        self_harm_intent: 0.1,
+        self_harm_instructions: 0.1,
+        harassment_threatening: 0.1,
+        hate_threatening: 0.1,
+      },
+    });
+
+    // Mock local moderation service
+    (LocalModerationService.checkKeywords as jest.Mock).mockResolvedValue({
+      flagged: false,
+      matchedKeywords: [],
+      toxicityScore: 0,
+      spamScore: 0,
+      personalInfoDetected: false,
+    });
+
+    (
+      LocalModerationService.shouldRejectImmediately as jest.Mock
+    ).mockResolvedValue(false);
+    (LocalModerationService.getModerationSummary as jest.Mock).mockReturnValue(
+      "Local moderation summary"
+    );
+
+    mockOpenAIModerationService.shouldReject.mockReturnValue(false);
+    mockOpenAIModerationService.convertToViolations.mockReturnValue([]);
+    mockOpenAIModerationService.getModerationSummary.mockReturnValue(
+      "OpenAI moderation summary"
+    );
+
+    mockPerspectiveAPIService.analyzeText.mockResolvedValue({
+      toxicity: 0.1,
+      severeToxicity: 0.1,
+      identityAttack: 0.1,
+      insult: 0.1,
+      profanity: 0.1,
+      threat: 0.1,
+      sexuallyExplicit: 0.1,
+      flirtation: 0.1,
+      attackOnAuthor: 0.1,
+      attackOnCommenter: 0.1,
+      incoherent: 0.1,
+      inflammatory: 0.1,
+      likelyToReject: 0.1,
+      obscene: 0.1,
+      spam: 0.1,
+      unsubstantial: 0.1,
+    });
+
+    mockPerspectiveAPIService.shouldReject.mockReturnValue(false);
+    mockPerspectiveAPIService.convertToViolations.mockReturnValue([]);
+    mockPerspectiveAPIService.getModerationSummary.mockReturnValue(
+      "Perspective API summary"
+    );
   });
 
   describe("moderateWhisper", () => {
@@ -27,11 +148,24 @@ describe("ContentModerationService", () => {
       expect(result.contentRank).toBe(ContentRank.G);
       expect(result.isMinorSafe).toBe(true);
       expect(result.violations).toHaveLength(0);
-      // With reputation system, clean content is appealable for verified users
-      expect(result.appealable).toBe(true);
+      // Clean content is not appealable since it's approved
+      expect(result.appealable).toBe(false);
     });
 
     it("should reject content with critical violations", async () => {
+      // Mock local moderation service to detect critical violations
+      (LocalModerationService.checkKeywords as jest.Mock).mockResolvedValue({
+        flagged: true,
+        matchedKeywords: ["kill yourself", "worthless"],
+        toxicityScore: 0.9,
+        spamScore: 0,
+        personalInfoDetected: false,
+      });
+
+      (
+        LocalModerationService.shouldRejectImmediately as jest.Mock
+      ).mockResolvedValue(true);
+
       const result = await ContentModerationService.moderateWhisper(
         "kill yourself you worthless piece of shit",
         "user-123",
@@ -41,23 +175,29 @@ describe("ContentModerationService", () => {
       expect(result.status).toBe(ModerationStatus.REJECTED);
       expect(result.contentRank).toBe(ContentRank.NC17);
       expect(result.isMinorSafe).toBe(false);
-      // When rejected immediately, violations array might be empty
       expect(result.appealable).toBe(false);
       expect(result.reason).toContain("rejected");
     });
 
     it("should flag content with medium violations", async () => {
+      // Mock local moderation service to detect medium violations
+      (LocalModerationService.checkKeywords as jest.Mock).mockResolvedValue({
+        flagged: true,
+        matchedKeywords: ["stupid", "ugly"],
+        toxicityScore: 0.6,
+        spamScore: 0,
+        personalInfoDetected: false,
+      });
+
       const result = await ContentModerationService.moderateWhisper(
         "you are so stupid and ugly",
         "user-123",
         25 // User age 25
       );
 
-      // This content is rejected due to high toxicity in local moderation
       expect([ModerationStatus.FLAGGED, ModerationStatus.REJECTED]).toContain(
         result.status
       );
-      // If rejected immediately, it's not appealable
       if (result.status === ModerationStatus.REJECTED) {
         expect(result.appealable).toBe(false);
       } else {
@@ -66,7 +206,14 @@ describe("ContentModerationService", () => {
     });
 
     it("should handle API failures gracefully", async () => {
-      // This test will pass because the service handles API failures gracefully
+      // Mock API failures
+      mockOpenAIModerationService.moderateText.mockRejectedValue(
+        new Error("API Error")
+      );
+      mockPerspectiveAPIService.analyzeText.mockRejectedValue(
+        new Error("API Error")
+      );
+
       const result = await ContentModerationService.moderateWhisper(
         "Hello world",
         "user-123",
@@ -74,7 +221,6 @@ describe("ContentModerationService", () => {
       );
 
       expect(result.status).toBe(ModerationStatus.APPROVED);
-      // Moderation time should be calculated
       expect(typeof result.moderationTime).toBe("number");
     });
 
@@ -85,6 +231,7 @@ describe("ContentModerationService", () => {
         25 // User age 25
       );
 
+      // Service defaults to G for clean content
       expect(result.contentRank).toBe(ContentRank.G);
       expect(result.isMinorSafe).toBe(true);
     });
@@ -114,10 +261,665 @@ describe("ContentModerationService", () => {
 
       expect(result.status).toBe(ModerationStatus.APPROVED);
     });
+
+    it("should handle OpenAI rejection", async () => {
+      mockOpenAIModerationService.shouldReject.mockReturnValue(true);
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Test content",
+        "user-123",
+        25
+      );
+
+      expect(result.status).toBe(ModerationStatus.REJECTED);
+      expect(result.reason).toContain("OpenAI moderation");
+    });
+
+    it("should handle Perspective API rejection", async () => {
+      mockPerspectiveAPIService.shouldReject.mockReturnValue(true);
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Test content",
+        "user-123",
+        25
+      );
+
+      expect(result.status).toBe(ModerationStatus.REJECTED);
+      expect(result.reason).toContain("Perspective API");
+    });
+
+    it("should handle OpenAI API failure but continue with other services", async () => {
+      mockOpenAIModerationService.moderateText.mockRejectedValue(
+        new Error("OpenAI API Error")
+      );
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Test content",
+        "user-123",
+        25
+      );
+
+      expect(result.status).toBe(ModerationStatus.APPROVED);
+      expect(result.apiResults.openai).toBeUndefined();
+    });
+
+    it("should handle Perspective API failure but continue with other services", async () => {
+      mockPerspectiveAPIService.analyzeText.mockRejectedValue(
+        new Error("Perspective API Error")
+      );
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Test content",
+        "user-123",
+        25
+      );
+
+      expect(result.status).toBe(ModerationStatus.APPROVED);
+      expect(result.apiResults.perspective).toBeUndefined();
+    });
+
+    it("should handle complete API failure gracefully", async () => {
+      mockOpenAIModerationService.moderateText.mockRejectedValue(
+        new Error("OpenAI Error")
+      );
+      mockPerspectiveAPIService.analyzeText.mockRejectedValue(
+        new Error("Perspective Error")
+      );
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Test content",
+        "user-123",
+        25
+      );
+
+      expect(result.status).toBe(ModerationStatus.APPROVED);
+      expect(result.confidence).toBe(1.0);
+    });
+
+    it("should handle general error and return error result", async () => {
+      // Mock a service to throw an error
+      jest
+        .spyOn(LocalModerationService, "checkKeywords")
+        .mockRejectedValue(new Error("General error"));
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Test content",
+        "user-123",
+        25
+      );
+
+      expect(result.status).toBe(ModerationStatus.UNDER_REVIEW);
+      expect(result.confidence).toBe(0.0);
+      expect(result.appealable).toBe(true);
+    });
+  });
+
+  describe("Content Ranking Logic", () => {
+    it("should rank content as G for very low scores", async () => {
+      mockOpenAIModerationService.moderateText.mockResolvedValue({
+        flagged: false,
+        categories: {
+          harassment: false,
+          harassment_threatening: false,
+          hate: false,
+          hate_threatening: false,
+          self_harm: false,
+          self_harm_instructions: false,
+          self_harm_intent: false,
+          sexual: false,
+          sexual_minors: false,
+          violence: false,
+          violence_graphic: false,
+        },
+        categoryScores: {
+          harassment: 0.1,
+          hate: 0.1,
+          sexual: 0.1,
+          sexual_minors: 0.1,
+          violence: 0.1,
+          violence_graphic: 0.1,
+          self_harm: 0.1,
+          self_harm_intent: 0.1,
+          self_harm_instructions: 0.1,
+          harassment_threatening: 0.1,
+          hate_threatening: 0.1,
+        },
+      });
+
+      mockPerspectiveAPIService.analyzeText.mockResolvedValue({
+        toxicity: 0.1,
+        severeToxicity: 0.1,
+        identityAttack: 0.1,
+        insult: 0.1,
+        profanity: 0.1,
+        threat: 0.1,
+        sexuallyExplicit: 0.1,
+        flirtation: 0.1,
+      });
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Clean content",
+        "user-123",
+        25
+      );
+
+      expect(result.contentRank).toBe(ContentRank.G);
+      expect(result.isMinorSafe).toBe(true);
+    });
+
+    it("should rank content as PG for moderate scores", async () => {
+      mockOpenAIModerationService.moderateText.mockResolvedValue({
+        flagged: false,
+        categories: {
+          harassment: false,
+          harassment_threatening: false,
+          hate: false,
+          hate_threatening: false,
+          self_harm: false,
+          self_harm_instructions: false,
+          self_harm_intent: false,
+          sexual: false,
+          sexual_minors: false,
+          violence: false,
+          violence_graphic: false,
+        },
+        categoryScores: {
+          harassment: 0.4,
+          hate: 0.4,
+          sexual: 0.4,
+          sexual_minors: 0.1,
+          violence: 0.4,
+          violence_graphic: 0.1,
+          self_harm: 0.1,
+          self_harm_intent: 0.1,
+          self_harm_instructions: 0.1,
+          harassment_threatening: 0.4,
+          hate_threatening: 0.4,
+        },
+      });
+
+      mockPerspectiveAPIService.analyzeText.mockResolvedValue({
+        toxicity: 0.4,
+        severeToxicity: 0.2,
+        identityAttack: 0.4,
+        insult: 0.4,
+        profanity: 0.2,
+        threat: 0.2,
+        sexuallyExplicit: 0.4,
+        flirtation: 0.2,
+      });
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Moderate content",
+        "user-123",
+        25
+      );
+
+      expect(result.contentRank).toBe(ContentRank.PG);
+      expect(result.isMinorSafe).toBe(true);
+    });
+
+    it("should rank content as PG13 for higher scores", async () => {
+      mockOpenAIModerationService.moderateText.mockResolvedValue({
+        flagged: false,
+        categories: {
+          harassment: false,
+          harassment_threatening: false,
+          hate: false,
+          hate_threatening: false,
+          self_harm: false,
+          self_harm_instructions: false,
+          self_harm_intent: false,
+          sexual: false,
+          sexual_minors: false,
+          violence: false,
+          violence_graphic: false,
+        },
+        categoryScores: {
+          harassment: 0.6,
+          hate: 0.6,
+          sexual: 0.6,
+          sexual_minors: 0.2,
+          violence: 0.6,
+          violence_graphic: 0.2,
+          self_harm: 0.2,
+          self_harm_intent: 0.2,
+          self_harm_instructions: 0.2,
+          harassment_threatening: 0.6,
+          hate_threatening: 0.6,
+        },
+      });
+
+      mockPerspectiveAPIService.analyzeText.mockResolvedValue({
+        toxicity: 0.6,
+        severeToxicity: 0.4,
+        identityAttack: 0.6,
+        insult: 0.6,
+        profanity: 0.4,
+        threat: 0.4,
+        sexuallyExplicit: 0.6,
+        flirtation: 0.4,
+      });
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Mature content",
+        "user-123",
+        25
+      );
+
+      expect(result.contentRank).toBe(ContentRank.PG13);
+      expect(result.isMinorSafe).toBe(false);
+    });
+
+    it("should rank content as R for high scores", async () => {
+      // Mock local moderation service for this test
+      mockLocalModerationService.checkKeywords.mockResolvedValue({
+        flagged: false,
+        matchedKeywords: [],
+        toxicityScore: 0,
+        spamScore: 0,
+        personalInfoDetected: false,
+      });
+
+      mockOpenAIModerationService.moderateText.mockResolvedValue({
+        flagged: false,
+        categories: {
+          harassment: false,
+          harassment_threatening: false,
+          hate: false,
+          hate_threatening: false,
+          self_harm: false,
+          self_harm_instructions: false,
+          self_harm_intent: false,
+          sexual: false,
+          sexual_minors: false,
+          violence: false,
+          violence_graphic: false,
+        },
+        categoryScores: {
+          harassment: 0.91,
+          hate: 0.91,
+          sexual: 0.91,
+          sexual_minors: 0.3,
+          violence: 0.91,
+          violence_graphic: 0.3,
+          self_harm: 0.3,
+          self_harm_intent: 0.3,
+          self_harm_instructions: 0.3,
+          harassment_threatening: 0.91,
+          hate_threatening: 0.91,
+        },
+      });
+
+      mockPerspectiveAPIService.analyzeText.mockResolvedValue({
+        toxicity: 0.91,
+        severeToxicity: 0.6,
+        identityAttack: 0.91,
+        insult: 0.91,
+        profanity: 0.6,
+        threat: 0.91,
+        sexuallyExplicit: 0.91,
+        flirtation: 0.6,
+        attackOnAuthor: 0.1,
+        attackOnCommenter: 0.1,
+        incoherent: 0.1,
+        inflammatory: 0.1,
+        likelyToReject: 0.1,
+        obscene: 0.1,
+        spam: 0.1,
+        unsubstantial: 0.1,
+      });
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Adult content",
+        "user-123",
+        25
+      );
+
+      expect(result.contentRank).toBe(ContentRank.R);
+      expect(result.isMinorSafe).toBe(false);
+    });
+
+    it("should rank content as NC17 for very high scores", async () => {
+      // Mock local moderation service for this test
+      mockLocalModerationService.checkKeywords.mockResolvedValue({
+        flagged: false,
+        matchedKeywords: [],
+        toxicityScore: 0,
+        spamScore: 0,
+        personalInfoDetected: false,
+      });
+
+      mockOpenAIModerationService.moderateText.mockResolvedValue({
+        flagged: false,
+        categories: {
+          harassment: false,
+          harassment_threatening: false,
+          hate: false,
+          hate_threatening: false,
+          self_harm: false,
+          self_harm_instructions: false,
+          self_harm_intent: false,
+          sexual: false,
+          sexual_minors: false,
+          violence: false,
+          violence_graphic: false,
+        },
+        categoryScores: {
+          harassment: 1.01,
+          hate: 1.01,
+          sexual: 1.01,
+          sexual_minors: 0.5,
+          violence: 1.01,
+          violence_graphic: 0.5,
+          self_harm: 0.5,
+          self_harm_intent: 0.5,
+          self_harm_instructions: 0.5,
+          harassment_threatening: 1.01,
+          hate_threatening: 1.01,
+        },
+      });
+
+      mockPerspectiveAPIService.analyzeText.mockResolvedValue({
+        toxicity: 1.01,
+        severeToxicity: 0.8,
+        identityAttack: 1.01,
+        insult: 1.01,
+        profanity: 0.8,
+        threat: 1.01,
+        sexuallyExplicit: 1.01,
+        flirtation: 0.8,
+        attackOnAuthor: 0.1,
+        attackOnCommenter: 0.1,
+        incoherent: 0.1,
+        inflammatory: 0.1,
+        likelyToReject: 0.1,
+        obscene: 0.1,
+        spam: 0.1,
+        unsubstantial: 0.1,
+      });
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Extreme content",
+        "user-123",
+        25
+      );
+
+      expect(result.contentRank).toBe(ContentRank.NC17);
+      expect(result.isMinorSafe).toBe(false);
+    });
+  });
+
+  describe("Violation Handling", () => {
+    it("should combine violations from multiple APIs", async () => {
+      const openaiViolations: Violation[] = [
+        {
+          type: ViolationType.HATE_SPEECH,
+          severity: "high",
+          confidence: 0.8,
+          description: "OpenAI hate speech detection",
+          suggestedAction: "reject",
+        },
+      ];
+
+      const perspectiveViolations: Violation[] = [
+        {
+          type: ViolationType.HARASSMENT,
+          severity: "low",
+          confidence: 0.6,
+          description: "Perspective harassment detection",
+          suggestedAction: "warn",
+        },
+      ];
+
+      // Mock services to return violations
+      jest.spyOn(LocalModerationService, "checkKeywords").mockResolvedValue({
+        flagged: true,
+        matchedKeywords: ["stupid"],
+        toxicityScore: 0.7,
+        spamScore: 0.1,
+        personalInfoDetected: false,
+      });
+
+      mockOpenAIModerationService.convertToViolations.mockReturnValue(
+        openaiViolations
+      );
+      mockPerspectiveAPIService.convertToViolations.mockReturnValue(
+        perspectiveViolations
+      );
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Test content with violations",
+        "user-123",
+        25
+      );
+
+      expect(result.violations.length).toBeGreaterThan(0);
+      expect(result.status).toBe(ModerationStatus.REJECTED); // Due to high severity violation
+    });
+
+    it("should handle critical violations correctly", async () => {
+      const criticalViolations: Violation[] = [
+        {
+          type: ViolationType.HARASSMENT,
+          severity: "critical",
+          confidence: 0.9,
+          description: "Critical harassment",
+          suggestedAction: "ban",
+        },
+      ];
+
+      mockOpenAIModerationService.convertToViolations.mockReturnValue(
+        criticalViolations
+      );
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Critical violation content",
+        "user-123",
+        25
+      );
+
+      expect(result.status).toBe(ModerationStatus.REJECTED);
+      expect(result.appealable).toBe(false);
+    });
+
+    it("should handle high severity violations correctly", async () => {
+      const highViolations: Violation[] = [
+        {
+          type: ViolationType.HATE_SPEECH,
+          severity: "high",
+          confidence: 0.8,
+          description: "High severity hate speech",
+          suggestedAction: "reject",
+        },
+      ];
+
+      mockOpenAIModerationService.convertToViolations.mockReturnValue(
+        highViolations
+      );
+
+      const result = await ContentModerationService.moderateWhisper(
+        "High violation content",
+        "user-123",
+        25
+      );
+
+      expect(result.status).toBe(ModerationStatus.REJECTED);
+      expect(result.appealable).toBe(true);
+    });
+
+    it("should handle medium severity violations correctly", async () => {
+      const mediumViolations: Violation[] = [
+        {
+          type: ViolationType.HARASSMENT,
+          severity: "medium",
+          confidence: 0.6,
+          description: "Medium severity harassment",
+          suggestedAction: "flag",
+        },
+      ];
+
+      mockOpenAIModerationService.convertToViolations.mockReturnValue(
+        mediumViolations
+      );
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Medium violation content",
+        "user-123",
+        25
+      );
+
+      expect(result.status).toBe(ModerationStatus.FLAGGED);
+      expect(result.appealable).toBe(true);
+    });
+
+    it("should handle low severity violations correctly", async () => {
+      // Mock local moderation service to detect low severity violations
+      (LocalModerationService.checkKeywords as jest.Mock).mockResolvedValue({
+        flagged: true,
+        matchedKeywords: ["buy now"],
+        toxicityScore: 0.2,
+        spamScore: 0.4,
+        personalInfoDetected: false,
+      });
+
+      // Mock OpenAI to return low severity violations
+      const lowViolations: Violation[] = [
+        {
+          type: ViolationType.SPAM,
+          severity: "low",
+          confidence: 0.4,
+          description: "Low severity spam",
+          suggestedAction: "warn",
+        },
+      ];
+
+      mockOpenAIModerationService.convertToViolations.mockReturnValue(
+        lowViolations
+      );
+
+      // Mock Perspective API to return low severity violations
+      mockPerspectiveAPIService.convertToViolations.mockReturnValue([
+        {
+          type: ViolationType.HARASSMENT,
+          severity: "low",
+          confidence: 0.3,
+          description: "Low severity harassment",
+          suggestedAction: "warn",
+        },
+      ]);
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Low violation content",
+        "user-123",
+        25
+      );
+
+      // Low severity violations result in approved status
+      expect(result.status).toBe(ModerationStatus.APPROVED);
+      expect(result.appealable).toBe(false);
+    });
+
+    it("should calculate confidence correctly", async () => {
+      const violations: Violation[] = [
+        {
+          type: ViolationType.HARASSMENT,
+          severity: "medium",
+          confidence: 0.6,
+          description: "Test violation",
+          suggestedAction: "flag",
+        },
+        {
+          type: ViolationType.SPAM,
+          severity: "low",
+          confidence: 0.4,
+          description: "Test violation 2",
+          suggestedAction: "warn",
+        },
+      ];
+
+      mockOpenAIModerationService.convertToViolations.mockReturnValue(
+        violations
+      );
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Test content",
+        "user-123",
+        25
+      );
+
+      // Confidence is calculated from all violations, not just the mocked ones
+      expect(result.confidence).toBeGreaterThan(0);
+      expect(result.confidence).toBeLessThanOrEqual(1.0);
+    });
+
+    it("should generate correct reason for violations", async () => {
+      const violations: Violation[] = [
+        {
+          type: ViolationType.HARASSMENT,
+          severity: "medium",
+          confidence: 0.6,
+          description: "Test violation",
+          suggestedAction: "flag",
+        },
+        {
+          type: ViolationType.SPAM,
+          severity: "low",
+          confidence: 0.4,
+          description: "Test violation 2",
+          suggestedAction: "warn",
+        },
+      ];
+
+      mockOpenAIModerationService.convertToViolations.mockReturnValue(
+        violations
+      );
+
+      const result = await ContentModerationService.moderateWhisper(
+        "Test content",
+        "user-123",
+        25
+      );
+
+      expect(result.reason).toContain("harassment");
+      expect(result.reason).toContain("flagged");
+    });
+  });
+
+  describe("Cost Estimation", () => {
+    it("should estimate costs for different text lengths", () => {
+      const shortTextCost = ContentModerationService.estimateCost(50);
+      const longTextCost = ContentModerationService.estimateCost(500);
+
+      expect(shortTextCost).toBeGreaterThan(0);
+      expect(longTextCost).toBeGreaterThan(shortTextCost);
+      expect(typeof shortTextCost).toBe("number");
+      expect(typeof longTextCost).toBe("number");
+    });
+
+    it("should include Perspective API cost when enabled", () => {
+      const cost = ContentModerationService.estimateCost(100);
+      expect(cost).toBeGreaterThan(0);
+    });
   });
 });
 
-describe("LocalModerationService", () => {
+// Unmock LocalModerationService for its own tests
+const localModerationDescribe = describe;
+localModerationDescribe("LocalModerationService", () => {
+  beforeAll(() => {
+    jest.unmock("../services/localModerationService");
+  });
+
+  beforeEach(() => {
+    // Restore the real implementation for each test
+    jest.restoreAllMocks();
+  });
+
+  afterAll(() => {
+    jest.mock("../services/localModerationService");
+  });
+
   describe("checkKeywords", () => {
     it("should detect harassment keywords", async () => {
       const result = await LocalModerationService.checkKeywords(
@@ -185,6 +987,34 @@ describe("LocalModerationService", () => {
       const summary = LocalModerationService.getModerationSummary(result);
       expect(summary).toContain("Local moderation");
       expect(summary).toContain("keyword violations");
+    });
+
+    it("should handle high toxicity scores", async () => {
+      const result = await LocalModerationService.checkKeywords(
+        "you are so stupid and worthless"
+      );
+
+      expect(result.flagged).toBe(true);
+      expect(result.toxicityScore).toBeGreaterThan(0.5);
+    });
+
+    it("should handle spam detection", async () => {
+      const result = await LocalModerationService.checkKeywords(
+        "buy now click here free money"
+      );
+
+      expect(result.flagged).toBe(true);
+      expect(result.spamScore).toBeGreaterThan(0);
+    });
+
+    it("should handle mixed violations", async () => {
+      const result = await LocalModerationService.checkKeywords(
+        "you are stupid buy now click here"
+      );
+
+      expect(result.flagged).toBe(true);
+      expect(result.toxicityScore).toBeGreaterThan(0);
+      expect(result.spamScore).toBeGreaterThan(0);
     });
   });
 });
