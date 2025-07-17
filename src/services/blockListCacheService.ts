@@ -56,9 +56,15 @@ export class BlockListCacheService {
       this.firestoreService.getUserMutes(userId),
     ]);
     const blockLists = {
-      blockedUsers: new Set(blocked.map((b) => b.blockedUserId)),
-      blockedByUsers: new Set(blockedBy.map((b) => b.userId)),
-      mutedUsers: new Set(muted.map((m) => m.mutedUserId)),
+      blockedUsers: new Set<string>(
+        blocked.map((b: { blockedUserId: string }) => b.blockedUserId)
+      ),
+      blockedByUsers: new Set<string>(
+        blockedBy.map((b: { userId: string }) => b.userId)
+      ),
+      mutedUsers: new Set<string>(
+        muted.map((m: { mutedUserId: string }) => m.mutedUserId)
+      ),
     };
     await this.cacheBlockLists(cacheKey, blockLists, userId);
     return blockLists;
@@ -80,7 +86,11 @@ export class BlockListCacheService {
   async invalidateCache(userId: string): Promise<void> {
     const cacheKey = `blocklist_${userId}`;
     this.cache.delete(cacheKey);
-    await AsyncStorage.removeItem(cacheKey);
+    try {
+      await AsyncStorage.removeItem(cacheKey);
+    } catch {
+      // Swallow errors to ensure graceful handling
+    }
   }
 
   private async cacheBlockLists(
