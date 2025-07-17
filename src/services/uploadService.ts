@@ -131,9 +131,17 @@ export class UploadService {
       console.log("✅ Whisper created successfully:", whisperId);
 
       // Step 6: Record successful whisper for reputation
-      const reputationService = getReputationService();
-      await reputationService.recordSuccessfulWhisper(user.uid);
-      console.log("✅ Reputation updated");
+      try {
+        const reputationService = getReputationService();
+        await reputationService.recordSuccessfulWhisper(user.uid);
+        console.log("✅ Reputation updated");
+      } catch (error) {
+        console.warn(
+          "⚠️ Reputation update failed, but upload completed:",
+          error
+        );
+        // Don't fail the upload if reputation update fails
+      }
 
       return whisperId;
     } catch (error) {
