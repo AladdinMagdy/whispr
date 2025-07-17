@@ -9,9 +9,23 @@ import {
   ViolationType,
   ViolationRecord,
   ModerationResult,
-  Violation,
 } from "../types";
 import { getFirestoreService } from "./firestoreService";
+import {
+  getReputationLevel,
+  calculateReputationImpact,
+  calculateViolationImpact,
+  isAppealable,
+  getAppealTimeLimit,
+  getPenaltyMultiplier,
+  getAutoAppealThreshold,
+  getRecoveryRate,
+  getDaysSinceLastViolation,
+  getDefaultReputation,
+  calculateNewScoreAfterViolation,
+  calculateNewScoreAfterRecovery,
+  calculateRecoveryPoints,
+} from "../utils/reputationUtils";
 
 export interface ReputationAction {
   type: "warn" | "flag" | "reject" | "ban" | "appeal" | "perk";
@@ -33,38 +47,6 @@ export interface ReputationThresholds {
 export class ReputationService {
   private static instance: ReputationService | null;
   private firestoreService = getFirestoreService();
-
-  // Reputation thresholds
-  private static readonly THRESHOLDS: ReputationThresholds = {
-    trusted: 90,
-    verified: 75,
-    standard: 50,
-    flagged: 25,
-    banned: 0,
-  };
-
-  // Violation impact scores
-  private static readonly VIOLATION_IMPACT: Record<string, number> = {
-    [ViolationType.HARASSMENT]: 15,
-    [ViolationType.HATE_SPEECH]: 25,
-    [ViolationType.VIOLENCE]: 30,
-    [ViolationType.SEXUAL_CONTENT]: 20,
-    [ViolationType.DRUGS]: 15,
-    [ViolationType.SPAM]: 5,
-    [ViolationType.SCAM]: 20,
-    [ViolationType.COPYRIGHT]: 10,
-    [ViolationType.PERSONAL_INFO]: 15,
-    [ViolationType.MINOR_SAFETY]: 35, // Highest penalty for minor safety violations
-  };
-
-  // Reputation recovery rates (points per day)
-  private static readonly RECOVERY_RATES = {
-    trusted: 2, // Trusted users recover faster
-    verified: 1.5, // Verified users recover moderately
-    standard: 1, // Standard users recover normally
-    flagged: 0.5, // Flagged users recover slowly
-    banned: 0, // Banned users don't recover
-  };
 
   private constructor() {}
 
@@ -90,13 +72,13 @@ export class ReputationService {
       }
 
       // Create default reputation for new users
-      const defaultReputation = this.getDefaultReputation(userId);
+      const defaultReputation = getDefaultReputation(userId);
       await this.firestoreService.saveUserReputation(defaultReputation);
 
       return defaultReputation;
     } catch (error) {
       console.error("❌ Error fetching user reputation:", error);
-      return this.getDefaultReputation(userId);
+      return getDefaultReputation(userId);
     }
   }
 
@@ -109,19 +91,19 @@ export class ReputationService {
   ): Promise<ModerationResult> {
     try {
       const reputation = await this.getUserReputation(userId);
-      const reputationLevel = this.getReputationLevel(reputation.score);
+      const reputationLevel = getReputationLevel(reputation.score);
 
       // Apply reputation-based modifications
       const modifiedResult = {
         ...moderationResult,
-        reputationImpact: this.calculateReputationImpact(
+        reputationImpact: calculateReputationImpact(
           moderationResult,
           reputationLevel
         ),
-        appealable: this.isAppealable(moderationResult, reputationLevel),
-        appealTimeLimit: this.getAppealTimeLimit(reputationLevel),
-        penaltyMultiplier: this.getPenaltyMultiplier(reputationLevel),
-        autoAppealThreshold: this.getAutoAppealThreshold(reputationLevel),
+        appealable: isAppealable(moderationResult, reputationLevel),
+        appealTimeLimit: getAppealTimeLimit(reputationLevel),
+        penaltyMultiplier: getPenaltyMultiplier(reputationLevel),
+        autoAppealThreshold: getAutoAppealThreshold(reputationLevel),
       };
 
       console.log(
@@ -152,10 +134,13 @@ export class ReputationService {
   ): Promise<void> {
     try {
       const reputation = await this.getUserReputation(userId);
-      const impact = this.calculateViolationImpact(violationType, severity);
+      const impact = calculateViolationImpact(violationType, severity);
 
       // Update reputation score
-      const newScore = Math.max(0, reputation.score - impact);
+      const newScore = calculateNewScoreAfterViolation(
+        reputation.score,
+        impact
+      );
 
       // Create violation record
       const violationRecord: ViolationRecord = {
@@ -172,7 +157,7 @@ export class ReputationService {
       const updatedReputation: UserReputation = {
         ...reputation,
         score: newScore,
-        level: this.getReputationLevel(newScore),
+        level: getReputationLevel(newScore),
         flaggedWhispers: reputation.flaggedWhispers + 1,
         lastViolation: new Date(),
         violationHistory: [...reputation.violationHistory, violationRecord],
@@ -187,7 +172,7 @@ export class ReputationService {
         severity,
         impact,
         newScore,
-        level: this.getReputationLevel(newScore),
+        level: getReputationLevel(newScore),
       });
     } catch (error) {
       console.error("❌ Error recording violation:", error);
@@ -200,7 +185,7 @@ export class ReputationService {
   async recordSuccessfulWhisper(userId: string): Promise<void> {
     try {
       const reputation = await this.getUserReputation(userId);
-      const recovery = this.getRecoveryRate(reputation.score);
+      const recovery = getRecoveryRate(reputation.score);
 
       // Small positive impact for successful whispers
       const newScore = Math.min(100, reputation.score + recovery);
@@ -209,7 +194,7 @@ export class ReputationService {
       const updatedReputation: UserReputation = {
         ...reputation,
         score: newScore,
-        level: this.getReputationLevel(newScore),
+        level: getReputationLevel(newScore),
         approvedWhispers: reputation.approvedWhispers + 1,
         totalWhispers: reputation.totalWhispers + 1,
         updatedAt: new Date(),
@@ -221,7 +206,7 @@ export class ReputationService {
       console.log(`✅ Recorded successful whisper for user ${userId}:`, {
         recovery,
         newScore,
-        level: this.getReputationLevel(newScore),
+        level: getReputationLevel(newScore),
       });
     } catch (error) {
       console.error("❌ Error recording successful whisper:", error);
@@ -234,19 +219,25 @@ export class ReputationService {
   async processReputationRecovery(userId: string): Promise<void> {
     try {
       const reputation = await this.getUserReputation(userId);
-      const daysSinceLastViolation = this.getDaysSinceLastViolation(reputation);
-      const recoveryRate = this.getRecoveryRate(reputation.score);
+      const daysSinceLastViolation = getDaysSinceLastViolation(reputation);
+      const recoveryRate = getRecoveryRate(reputation.score);
 
       // Apply time-based recovery
-      const recoveryPoints = daysSinceLastViolation * recoveryRate;
-      const newScore = Math.min(100, reputation.score + recoveryPoints);
+      const recoveryPoints = calculateRecoveryPoints(
+        reputation,
+        daysSinceLastViolation
+      );
+      const newScore = calculateNewScoreAfterRecovery(
+        reputation.score,
+        recoveryPoints
+      );
 
       if (newScore > reputation.score) {
         // Update reputation with recovery
         const updatedReputation: UserReputation = {
           ...reputation,
           score: newScore,
-          level: this.getReputationLevel(newScore),
+          level: getReputationLevel(newScore),
           updatedAt: new Date(),
         };
 
@@ -266,166 +257,11 @@ export class ReputationService {
   }
 
   /**
-   * Get reputation level from score
-   */
-  getReputationLevel(score: number): UserReputation["level"] {
-    if (score >= ReputationService.THRESHOLDS.trusted) return "trusted";
-    if (score >= ReputationService.THRESHOLDS.verified) return "verified";
-    if (score >= ReputationService.THRESHOLDS.standard) return "standard";
-    if (score >= ReputationService.THRESHOLDS.flagged) return "flagged";
-    return "banned";
-  }
-
-  /**
-   * Calculate reputation impact for a moderation result
-   */
-  private calculateReputationImpact(
-    moderationResult: ModerationResult,
-    reputationLevel: string
-  ): number {
-    const baseImpact =
-      moderationResult.violations?.reduce(
-        (total: number, violation: Violation) => {
-          return (
-            total + (ReputationService.VIOLATION_IMPACT[violation.type] || 10)
-          );
-        },
-        0
-      ) || 0;
-
-    // Apply reputation-based multiplier
-    const multiplier = this.getPenaltyMultiplier(reputationLevel);
-    return Math.round(baseImpact * multiplier);
-  }
-
-  /**
-   * Calculate violation impact
-   */
-  private calculateViolationImpact(
-    violationType: ViolationType,
-    severity: string
-  ): number {
-    const baseImpact = ReputationService.VIOLATION_IMPACT[violationType] || 10;
-    const severityMultiplier =
-      {
-        low: 0.5,
-        medium: 1.0,
-        high: 1.5,
-        critical: 2.0,
-      }[severity] || 1.0;
-
-    return Math.round(baseImpact * severityMultiplier);
-  }
-
-  /**
-   * Check if violation is appealable based on reputation
-   */
-  private isAppealable(
-    moderationResult: ModerationResult,
-    reputationLevel: string
-  ): boolean {
-    // Banned users cannot appeal
-    if (reputationLevel === "banned") return false;
-
-    // Critical violations are rarely appealable
-    const hasCriticalViolation = moderationResult.violations?.some(
-      (v: Violation) => v.severity === "critical"
-    );
-
-    if (hasCriticalViolation && reputationLevel === "flagged") return false;
-
-    return true;
-  }
-
-  /**
-   * Get appeal time limit based on reputation level
-   */
-  private getAppealTimeLimit(reputationLevel: string): number {
-    const timeLimits = {
-      trusted: 30, // 30 days for trusted users
-      verified: 14, // 14 days for verified users
-      standard: 7, // 7 days for standard users
-      flagged: 3, // 3 days for flagged users
-      banned: 0, // No appeals for banned users
-    };
-
-    return timeLimits[reputationLevel as keyof typeof timeLimits] ?? 7;
-  }
-
-  /**
-   * Get penalty multiplier based on reputation level
-   */
-  private getPenaltyMultiplier(reputationLevel: string): number {
-    const multipliers = {
-      trusted: 0.5, // Trusted users get reduced penalties
-      verified: 0.75, // Verified users get slightly reduced penalties
-      standard: 1.0, // Standard users get normal penalties
-      flagged: 1.5, // Flagged users get increased penalties
-      banned: 2.0, // Banned users get maximum penalties
-    };
-
-    return multipliers[reputationLevel as keyof typeof multipliers] || 1.0;
-  }
-
-  /**
-   * Get auto-appeal threshold based on reputation level
-   */
-  private getAutoAppealThreshold(reputationLevel: string): number {
-    const thresholds = {
-      trusted: 0.3, // Trusted users auto-appeal low confidence violations
-      verified: 0.5, // Verified users auto-appeal medium confidence violations
-      standard: 0.7, // Standard users auto-appeal high confidence violations
-      flagged: 0.9, // Flagged users rarely auto-appeal
-      banned: 1.0, // Banned users never auto-appeal
-    };
-
-    return thresholds[reputationLevel as keyof typeof thresholds] || 0.7;
-  }
-
-  /**
-   * Get recovery rate based on current score
-   */
-  private getRecoveryRate(score: number): number {
-    const level = this.getReputationLevel(score);
-    return ReputationService.RECOVERY_RATES[level] || 0;
-  }
-
-  /**
-   * Get days since last violation
-   */
-  private getDaysSinceLastViolation(reputation: UserReputation): number {
-    if (!reputation.lastViolation) return 365; // No violations = full recovery
-
-    const now = new Date();
-    const lastViolation = new Date(reputation.lastViolation);
-    const diffTime = Math.abs(now.getTime() - lastViolation.getTime());
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  }
-
-  /**
-   * Get default reputation for new users
-   */
-  private getDefaultReputation(userId: string): UserReputation {
-    return {
-      userId,
-      score: 75, // Start with "verified" level
-      level: "verified",
-      totalWhispers: 0,
-      approvedWhispers: 0,
-      flaggedWhispers: 0,
-      rejectedWhispers: 0,
-      violationHistory: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-  }
-
-  /**
    * Reset reputation (for testing or admin actions)
    */
   async resetReputation(userId: string): Promise<void> {
     try {
-      const defaultReputation = this.getDefaultReputation(userId);
+      const defaultReputation = getDefaultReputation(userId);
       await this.firestoreService.saveUserReputation(defaultReputation);
       console.log(`🔄 Reset reputation for user ${userId}`);
     } catch (error) {

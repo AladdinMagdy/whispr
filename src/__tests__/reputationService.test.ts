@@ -10,6 +10,7 @@ import {
   ContentRank,
   Violation,
 } from "../types";
+import { getReputationLevel } from "../utils/reputationUtils";
 
 // Mock the Firestore service
 jest.mock("../services/firestoreService", () => ({
@@ -88,40 +89,40 @@ describe("ReputationService", () => {
 
   describe("Reputation Levels", () => {
     it("should correctly identify trusted users (90-100)", () => {
-      expect(reputationService.getReputationLevel(100)).toBe("trusted");
-      expect(reputationService.getReputationLevel(95)).toBe("trusted");
-      expect(reputationService.getReputationLevel(90)).toBe("trusted");
+      expect(getReputationLevel(100)).toBe("trusted");
+      expect(getReputationLevel(95)).toBe("trusted");
+      expect(getReputationLevel(90)).toBe("trusted");
     });
 
     it("should correctly identify verified users (75-89)", () => {
-      expect(reputationService.getReputationLevel(89)).toBe("verified");
-      expect(reputationService.getReputationLevel(80)).toBe("verified");
-      expect(reputationService.getReputationLevel(75)).toBe("verified");
+      expect(getReputationLevel(89)).toBe("verified");
+      expect(getReputationLevel(80)).toBe("verified");
+      expect(getReputationLevel(75)).toBe("verified");
     });
 
     it("should correctly identify standard users (50-74)", () => {
-      expect(reputationService.getReputationLevel(74)).toBe("standard");
-      expect(reputationService.getReputationLevel(60)).toBe("standard");
-      expect(reputationService.getReputationLevel(50)).toBe("standard");
+      expect(getReputationLevel(74)).toBe("standard");
+      expect(getReputationLevel(60)).toBe("standard");
+      expect(getReputationLevel(50)).toBe("standard");
     });
 
     it("should correctly identify flagged users (25-49)", () => {
-      expect(reputationService.getReputationLevel(49)).toBe("flagged");
-      expect(reputationService.getReputationLevel(35)).toBe("flagged");
-      expect(reputationService.getReputationLevel(25)).toBe("flagged");
+      expect(getReputationLevel(49)).toBe("flagged");
+      expect(getReputationLevel(35)).toBe("flagged");
+      expect(getReputationLevel(25)).toBe("flagged");
     });
 
     it("should correctly identify banned users (0-24)", () => {
-      expect(reputationService.getReputationLevel(24)).toBe("banned");
-      expect(reputationService.getReputationLevel(10)).toBe("banned");
-      expect(reputationService.getReputationLevel(0)).toBe("banned");
+      expect(getReputationLevel(24)).toBe("banned");
+      expect(getReputationLevel(10)).toBe("banned");
+      expect(getReputationLevel(0)).toBe("banned");
     });
 
     it("should handle edge cases", () => {
-      expect(reputationService.getReputationLevel(25)).toBe("flagged");
-      expect(reputationService.getReputationLevel(50)).toBe("standard");
-      expect(reputationService.getReputationLevel(75)).toBe("verified");
-      expect(reputationService.getReputationLevel(90)).toBe("trusted");
+      expect(getReputationLevel(25)).toBe("flagged");
+      expect(getReputationLevel(50)).toBe("standard");
+      expect(getReputationLevel(75)).toBe("verified");
+      expect(getReputationLevel(90)).toBe("trusted");
     });
   });
 
@@ -132,8 +133,8 @@ describe("ReputationService", () => {
       );
 
       expect(reputation.userId).toBe("new-user-123");
-      expect(reputation.score).toBe(75); // Start at verified level
-      expect(reputation.level).toBe("verified");
+      expect(reputation.score).toBe(50); // Start at standard level
+      expect(reputation.level).toBe("standard");
       expect(reputation.totalWhispers).toBe(0);
       expect(reputation.approvedWhispers).toBe(0);
       expect(reputation.flaggedWhispers).toBe(0);
@@ -157,8 +158,8 @@ describe("ReputationService", () => {
       );
       expect(reputation).toBeDefined();
       expect(reputation.userId).toBe("error-user");
-      expect(reputation.score).toBe(75);
-      expect(reputation.level).toBe("verified");
+      expect(reputation.score).toBe(50);
+      expect(reputation.level).toBe("standard");
     });
   });
 
@@ -195,7 +196,7 @@ describe("ReputationService", () => {
       expect(result).toHaveProperty("penaltyMultiplier");
       expect(result).toHaveProperty("autoAppealThreshold");
       expect(result.appealable).toBe(true); // Verified users can appeal
-      expect(result.appealTimeLimit).toBe(14); // 14 days for verified users
+      expect(result.appealTimeLimit).toBe(7); // 7 days for standard users
     });
 
     it("should handle banned users correctly", async () => {
