@@ -5,11 +5,9 @@
 
 import {
   ModerationResult,
-  ModerationStatus,
   ContentRank,
   ViolationType,
   Violation,
-  UserReputation,
   OpenAIModerationResult,
   PerspectiveAPIResult,
   LocalModerationResult,
@@ -21,7 +19,15 @@ import { LocalModerationService } from "./localModerationService";
 import { OpenAIModerationService } from "./openAIModerationService";
 import { PerspectiveAPIService } from "./perspectiveAPIService";
 import { getReputationService } from "./reputationService";
-import { getErrorMessage } from "../utils/errorHelpers";
+import {
+  deduplicateViolations,
+  determineFinalStatus,
+  calculateOverallConfidence,
+  isAppealable,
+  generateReason,
+  createRejectionResult,
+  createErrorResult,
+} from "../utils/moderationUtils";
 
 export class ContentModerationService {
   private static readonly FEATURE_FLAGS: ModerationFeatureFlags =
@@ -55,7 +61,7 @@ export class ContentModerationService {
       // Check if we should reject immediately
       if (await LocalModerationService.shouldRejectImmediately(transcription)) {
         console.log("❌ Content rejected by local moderation");
-        return this.createRejectionResult(
+        return createRejectionResult(
           "Content rejected by local keyword filtering",
           localResult,
           startTime
@@ -72,7 +78,7 @@ export class ContentModerationService {
 
         if (OpenAIModerationService.shouldReject(openaiResult)) {
           console.log("❌ Content rejected by OpenAI moderation");
-          return this.createRejectionResult(
+          return createRejectionResult(
             "Content rejected by OpenAI moderation",
             localResult,
             startTime,
@@ -99,7 +105,7 @@ export class ContentModerationService {
 
           if (PerspectiveAPIService.shouldReject(perspectiveResult)) {
             console.log("❌ Content rejected by Perspective API");
-            return this.createRejectionResult(
+            return createRejectionResult(
               "Content rejected by Perspective API",
               localResult,
               startTime,
@@ -137,24 +143,24 @@ export class ContentModerationService {
 
       // Step 6: Create base moderation result
       const baseResult = {
-        status: this.determineFinalStatus(allViolations),
+        status: determineFinalStatus(allViolations),
         contentRank,
         isMinorSafe,
         violations: allViolations,
-        confidence: this.calculateOverallConfidence(allViolations),
+        confidence: calculateOverallConfidence(allViolations),
         moderationTime: Date.now() - startTime,
         apiResults: {
           local: localResult,
           openai: openaiResult ?? undefined,
           perspective: perspectiveResult ?? undefined,
         },
-        appealable: this.isAppealable(
-          this.determineFinalStatus(allViolations),
+        appealable: isAppealable(
+          determineFinalStatus(allViolations),
           allViolations
         ),
-        reason: this.generateReason(
+        reason: generateReason(
           allViolations,
-          this.determineFinalStatus(allViolations)
+          determineFinalStatus(allViolations)
         ),
         reputationImpact: 0,
       };
@@ -172,7 +178,7 @@ export class ContentModerationService {
       return finalResult;
     } catch (error) {
       console.error("❌ Content moderation failed:", error);
-      return this.createErrorResult(error, startTime);
+      return createErrorResult(error, startTime);
     }
   }
 
@@ -319,238 +325,7 @@ export class ContentModerationService {
     // TODO: Implement post-save behavioral analysis
 
     // Remove duplicates and sort by severity
-    return this.deduplicateViolations(violations);
-  }
-
-  /**
-   * Remove duplicate violations and sort by severity
-   */
-  private static deduplicateViolations(violations: Violation[]): Violation[] {
-    const seen = new Set<string>();
-    const severityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
-
-    return violations
-      .filter((violation) => {
-        const key = `${violation.type}-${violation.severity}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .sort((a, b) => severityOrder[b.severity] - severityOrder[a.severity]);
-  }
-
-  /**
-   * Apply reputation-based actions
-   */
-  private static applyReputationBasedActions(
-    violations: Violation[],
-    userReputation?: UserReputation
-  ): Violation[] {
-    if (!userReputation || !this.FEATURE_FLAGS.ENABLE_REPUTATION_SYSTEM) {
-      return violations;
-    }
-
-    const reputationLevel = this.getReputationLevel(userReputation.score);
-    const reputationActions =
-      this.REPUTATION.REPUTATION_ACTIONS[reputationLevel];
-
-    // Apply reputation-based adjustments
-    return violations.map((violation) => {
-      let adjustedViolation = { ...violation };
-
-      // Trusted users get reduced penalties
-      if (reputationActions.reducedPenalties) {
-        if (violation.severity === "critical")
-          adjustedViolation.severity = "high";
-        if (violation.severity === "high")
-          adjustedViolation.severity = "medium";
-        if (violation.severity === "medium") adjustedViolation.severity = "low";
-      }
-
-      // Trusted users get more lenient suggested actions
-      if (reputationActions.reducedPenalties) {
-        if (violation.suggestedAction === "ban")
-          adjustedViolation.suggestedAction = "reject";
-        if (violation.suggestedAction === "reject")
-          adjustedViolation.suggestedAction = "flag";
-        if (violation.suggestedAction === "flag")
-          adjustedViolation.suggestedAction = "warn";
-      }
-
-      return adjustedViolation;
-    });
-  }
-
-  /**
-   * Determine final moderation status
-   */
-  private static determineFinalStatus(
-    violations: Violation[]
-  ): ModerationStatus {
-    if (violations.length === 0) {
-      return ModerationStatus.APPROVED;
-    }
-
-    // Check for critical violations
-    const criticalViolations = violations.filter(
-      (v) => v.severity === "critical"
-    );
-    if (criticalViolations.length > 0) {
-      return ModerationStatus.REJECTED;
-    }
-
-    // Check for high severity violations
-    const highViolations = violations.filter((v) => v.severity === "high");
-    if (highViolations.length > 0) {
-      return ModerationStatus.REJECTED;
-    }
-
-    // Check for medium severity violations
-    const mediumViolations = violations.filter((v) => v.severity === "medium");
-    if (mediumViolations.length > 0) {
-      return ModerationStatus.FLAGGED;
-    }
-
-    // Low severity violations
-    return ModerationStatus.APPROVED;
-  }
-
-  /**
-   * Calculate overall confidence
-   */
-  private static calculateOverallConfidence(violations: Violation[]): number {
-    if (violations.length === 0) return 1.0;
-
-    const totalConfidence = violations.reduce(
-      (sum, v) => sum + v.confidence,
-      0
-    );
-    return totalConfidence / violations.length;
-  }
-
-  /**
-   * Calculate reputation impact
-   */
-  private static calculateReputationImpact(
-    violations: Violation[],
-    userReputation?: UserReputation
-  ): number {
-    if (!userReputation || violations.length === 0) return 0;
-
-    let totalImpact = 0;
-    violations.forEach((violation) => {
-      switch (violation.severity) {
-        case "critical":
-          totalImpact += this.REPUTATION.SCORE_ADJUSTMENTS.CRITICAL_VIOLATION;
-          break;
-        case "high":
-          totalImpact += this.REPUTATION.SCORE_ADJUSTMENTS.VIOLATION;
-          break;
-        case "medium":
-          totalImpact += this.REPUTATION.SCORE_ADJUSTMENTS.FLAGGED_WHISPER;
-          break;
-        case "low":
-          totalImpact += this.REPUTATION.SCORE_ADJUSTMENTS.APPROVED_WHISPER;
-          break;
-      }
-    });
-
-    return totalImpact;
-  }
-
-  /**
-   * Check if content is appealable
-   */
-  private static isAppealable(
-    status: ModerationStatus,
-    violations: Violation[]
-  ): boolean {
-    if (status === ModerationStatus.APPROVED) return false;
-
-    // Critical violations are not appealable
-    const hasCriticalViolations = violations.some(
-      (v) => v.severity === "critical"
-    );
-    if (hasCriticalViolations) return false;
-
-    return true;
-  }
-
-  /**
-   * Generate reason for moderation decision
-   */
-  private static generateReason(
-    violations: Violation[],
-    status: ModerationStatus
-  ): string {
-    if (violations.length === 0) {
-      return "Content approved";
-    }
-
-    const violationTypes = violations.map((v) => v.type).join(", ");
-    return `Content ${status} due to: ${violationTypes}`;
-  }
-
-  /**
-   * Get reputation level from score
-   */
-  private static getReputationLevel(
-    score: number
-  ): keyof typeof CONTENT_MODERATION.REPUTATION.REPUTATION_ACTIONS {
-    if (score >= this.REPUTATION.TRUSTED_THRESHOLD) return "TRUSTED";
-    if (score >= this.REPUTATION.VERIFIED_THRESHOLD) return "VERIFIED";
-    if (score >= this.REPUTATION.STANDARD_THRESHOLD) return "STANDARD";
-    if (score >= this.REPUTATION.FLAGGED_THRESHOLD) return "FLAGGED";
-    return "BANNED";
-  }
-
-  /**
-   * Create rejection result
-   */
-  private static createRejectionResult(
-    reason: string,
-    localResult: LocalModerationResult,
-    startTime: number,
-    openaiResult?: OpenAIModerationResult | null,
-    perspectiveResult?: PerspectiveAPIResult | null
-  ): ModerationResult {
-    return {
-      status: ModerationStatus.REJECTED,
-      contentRank: ContentRank.NC17,
-      isMinorSafe: false,
-      violations: [],
-      confidence: 1.0,
-      moderationTime: Date.now() - startTime,
-      apiResults: {
-        local: localResult,
-        openai: openaiResult,
-        perspective: perspectiveResult,
-      },
-      reputationImpact: -15,
-      appealable: false,
-      reason,
-    };
-  }
-
-  /**
-   * Create error result
-   */
-  private static createErrorResult(
-    error: unknown,
-    startTime: number
-  ): ModerationResult {
-    return {
-      status: ModerationStatus.UNDER_REVIEW,
-      contentRank: ContentRank.PG13, // Default to conservative ranking
-      isMinorSafe: false,
-      violations: [],
-      confidence: 0.0,
-      moderationTime: Date.now() - startTime,
-      apiResults: {},
-      reputationImpact: 0,
-      appealable: true,
-      reason: getErrorMessage(error),
-    };
+    return deduplicateViolations(violations);
   }
 
   /**
