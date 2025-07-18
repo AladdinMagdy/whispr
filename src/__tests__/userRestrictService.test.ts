@@ -67,7 +67,7 @@ describe("UserRestrictService", () => {
       mockFirestore.getUserRestriction.mockResolvedValue(null);
       mockFirestore.saveUserRestriction.mockRejectedValue(new Error("fail"));
       await expect(service.restrictUser(data)).rejects.toThrow(
-        "Failed to restrict user"
+        "Failed to restrict: fail"
       );
     });
 
@@ -107,7 +107,7 @@ describe("UserRestrictService", () => {
       mockFirestore.getUserRestriction.mockRejectedValue(new Error("fail"));
       await expect(
         service.unrestrictUser(userId, restrictedUserId)
-      ).rejects.toThrow("Failed to unrestrict user");
+      ).rejects.toThrow("Failed to unrestrict: User is not restricted");
     });
   });
 

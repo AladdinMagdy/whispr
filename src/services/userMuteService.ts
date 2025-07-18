@@ -1,20 +1,24 @@
 import { getFirestoreService } from "./firestoreService";
 import { getBlockListCacheService } from "./blockListCacheService";
+import {
+  UserMute,
+  CreateMuteData,
+  MuteStats,
+  createUserMute,
+  validateUserActionData,
+  checkExistingAction,
+  checkActionDoesNotExist,
+  calculateMuteStats,
+  handleUserActionError,
+  logUserActionSuccess,
+  getDefaultMuteStats,
+} from "../utils/userActionUtils";
 
-export interface UserMute {
-  id: string;
-  userId: string; // The user who is doing the muting
-  mutedUserId: string; // The user being muted
-  mutedUserDisplayName: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface CreateMuteData {
-  userId: string;
-  mutedUserId: string;
-  mutedUserDisplayName: string;
-}
+export type {
+  UserMute,
+  CreateMuteData,
+  MuteStats,
+} from "../utils/userActionUtils";
 
 export class UserMuteService {
   private static instance: UserMuteService;
@@ -35,33 +39,30 @@ export class UserMuteService {
    */
   async muteUser(data: CreateMuteData): Promise<UserMute> {
     try {
+      // Validate input data
+      validateUserActionData(
+        data.userId,
+        data.mutedUserId,
+        data.mutedUserDisplayName
+      );
+
       // Check if already muted
       const existingMute = await this.getMute(data.userId, data.mutedUserId);
-      if (existingMute) {
-        throw new Error("User is already muted");
-      }
+      checkExistingAction(existingMute, "mute");
 
-      const mute: UserMute = {
-        id: `mute-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        userId: data.userId,
-        mutedUserId: data.mutedUserId,
-        mutedUserDisplayName: data.mutedUserDisplayName,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      // Create mute object
+      const mute = createUserMute(data);
 
+      // Save to database
       await this.firestoreService.saveUserMute(mute);
       await this.blockListCache.invalidateCache(data.userId);
-      console.log(`🔇 User ${data.mutedUserId} muted by ${data.userId}`);
+
+      // Log success
+      logUserActionSuccess("mute", "create", data.userId, data.mutedUserId);
 
       return mute;
     } catch (error) {
-      console.error("❌ Error muting user:", error);
-      throw new Error(
-        `Failed to mute user: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      handleUserActionError(error, "mute", "create");
     }
   }
 
@@ -71,20 +72,14 @@ export class UserMuteService {
   async unmuteUser(userId: string, mutedUserId: string): Promise<void> {
     try {
       const mute = await this.getMute(userId, mutedUserId);
-      if (!mute) {
-        throw new Error("User is not muted");
-      }
+      checkActionDoesNotExist(mute, "mute");
 
-      await this.firestoreService.deleteUserMute(mute.id);
+      await this.firestoreService.deleteUserMute(mute!.id);
       await this.blockListCache.invalidateCache(userId);
-      console.log(`🔊 User ${mutedUserId} unmuted by ${userId}`);
+
+      logUserActionSuccess("mute", "delete", userId, mutedUserId);
     } catch (error) {
-      console.error("❌ Error unmuting user:", error);
-      throw new Error(
-        `Failed to unmute user: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      handleUserActionError(error, "mute", "delete");
     }
   }
 
@@ -128,28 +123,13 @@ export class UserMuteService {
   /**
    * Get mute statistics
    */
-  async getMuteStats(userId: string): Promise<{
-    totalMuted: number;
-    recentlyMuted: number; // Last 7 days
-  }> {
+  async getMuteStats(userId: string): Promise<MuteStats> {
     try {
       const mutedUsers = await this.getMutedUsers(userId);
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-      const recentlyMuted = mutedUsers.filter(
-        (mute) => mute.createdAt > sevenDaysAgo
-      ).length;
-
-      return {
-        totalMuted: mutedUsers.length,
-        recentlyMuted,
-      };
+      return calculateMuteStats(mutedUsers);
     } catch (error) {
       console.error("❌ Error getting mute stats:", error);
-      return {
-        totalMuted: 0,
-        recentlyMuted: 0,
-      };
+      return getDefaultMuteStats();
     }
   }
 }

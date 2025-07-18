@@ -1,12 +1,20 @@
 import { getFirestoreService } from "./firestoreService";
 import { getBlockListCacheService } from "./blockListCacheService";
 import { UserBlock } from "../types";
+import {
+  CreateBlockData,
+  BlockStats,
+  createUserBlock,
+  validateUserActionData,
+  checkExistingAction,
+  checkActionDoesNotExist,
+  calculateBlockStats,
+  handleUserActionError,
+  logUserActionSuccess,
+  getDefaultBlockStats,
+} from "../utils/userActionUtils";
 
-export interface CreateBlockData {
-  userId: string;
-  blockedUserId: string;
-  blockedUserDisplayName: string;
-}
+export type { CreateBlockData, BlockStats } from "../utils/userActionUtils";
 
 export class UserBlockService {
   private static instance: UserBlockService;
@@ -27,36 +35,33 @@ export class UserBlockService {
    */
   async blockUser(data: CreateBlockData): Promise<UserBlock> {
     try {
+      // Validate input data
+      validateUserActionData(
+        data.userId,
+        data.blockedUserId,
+        data.blockedUserDisplayName
+      );
+
       // Check if already blocked
       const existingBlock = await this.getBlock(
         data.userId,
         data.blockedUserId
       );
-      if (existingBlock) {
-        throw new Error("User is already blocked");
-      }
+      checkExistingAction(existingBlock, "block");
 
-      const block: UserBlock = {
-        id: `block-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        userId: data.userId,
-        blockedUserId: data.blockedUserId,
-        blockedUserDisplayName: data.blockedUserDisplayName,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      // Create block object
+      const block = createUserBlock(data);
 
+      // Save to database
       await this.firestoreService.saveUserBlock(block);
       await this.blockListCache.invalidateCache(data.userId);
-      console.log(`🚫 User ${data.blockedUserId} blocked by ${data.userId}`);
+
+      // Log success
+      logUserActionSuccess("block", "create", data.userId, data.blockedUserId);
 
       return block;
     } catch (error) {
-      console.error("❌ Error blocking user:", error);
-      throw new Error(
-        `Failed to block user: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      handleUserActionError(error, "block", "create");
     }
   }
 
@@ -66,20 +71,14 @@ export class UserBlockService {
   async unblockUser(userId: string, blockedUserId: string): Promise<void> {
     try {
       const block = await this.getBlock(userId, blockedUserId);
-      if (!block) {
-        throw new Error("User is not blocked");
-      }
+      checkActionDoesNotExist(block, "block");
 
-      await this.firestoreService.deleteUserBlock(block.id);
+      await this.firestoreService.deleteUserBlock(block!.id);
       await this.blockListCache.invalidateCache(userId);
-      console.log(`✅ User ${blockedUserId} unblocked by ${userId}`);
+
+      logUserActionSuccess("block", "delete", userId, blockedUserId);
     } catch (error) {
-      console.error("❌ Error unblocking user:", error);
-      throw new Error(
-        `Failed to unblock user: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      handleUserActionError(error, "block", "delete");
     }
   }
 
@@ -126,28 +125,13 @@ export class UserBlockService {
   /**
    * Get block statistics
    */
-  async getBlockStats(userId: string): Promise<{
-    totalBlocked: number;
-    recentlyBlocked: number; // Last 7 days
-  }> {
+  async getBlockStats(userId: string): Promise<BlockStats> {
     try {
       const blockedUsers = await this.getBlockedUsers(userId);
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-      const recentlyBlocked = blockedUsers.filter(
-        (block) => block.createdAt > sevenDaysAgo
-      ).length;
-
-      return {
-        totalBlocked: blockedUsers.length,
-        recentlyBlocked,
-      };
+      return calculateBlockStats(blockedUsers);
     } catch (error) {
       console.error("❌ Error getting block stats:", error);
-      return {
-        totalBlocked: 0,
-        recentlyBlocked: 0,
-      };
+      return getDefaultBlockStats();
     }
   }
 }

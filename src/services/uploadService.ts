@@ -3,45 +3,40 @@
  * Handles audio file uploads to Firebase Storage and Firestore document creation
  */
 
-import { StorageService } from "./storageService";
-import { getFirestoreService } from "./firestoreService";
-import { getAuthService } from "./authService";
-import { ContentModerationService } from "./contentModerationService";
-import { TranscriptionService } from "./transcriptionService";
-import { AgeVerificationService } from "./ageVerificationService";
-import { getReputationService } from "./reputationService";
-
 import {
-  formatFileSize,
-  generateUniqueFilename,
-  isValidAudioFormat,
-} from "../utils/fileUtils";
+  WhisperUploadData,
+  UploadProgress,
+  validateUserAuthentication,
+  validateAudioFormat,
+  uploadAudioToStorage,
+  transcribeAudio,
+  verifyUserAge,
+  moderateContent,
+  createWhisperDocument,
+  updateUserReputation,
+  getWhisperForDeletion,
+  validateWhisperOwnership,
+  deleteWhisperFromFirestore,
+  deleteAudioFromStorage,
+  updateWhisperTranscription,
+  formatUploadProgress,
+  generateUniqueFilenameForUpload,
+  validateAudioFileFormat,
+  createAudioUploadData,
+  createWhisperData,
+  createAgeVerificationData,
+  createModerationData,
+  logUploadProgress,
+  validateUploadData,
+} from "../utils/uploadUtils";
 
-export interface UploadProgress {
-  progress: number;
-  bytesTransferred: number;
-  totalBytes: number;
-}
-
-export interface WhisperUploadData {
-  audioUri: string;
-  duration: number;
-  whisperPercentage: number;
-  averageLevel: number;
-  confidence: number;
-  userAge?: number; // Required for age verification
-  dateOfBirth?: Date; // Alternative to userAge
-}
+// Re-export types for backward compatibility
+export type { WhisperUploadData, UploadProgress };
 
 export class UploadService {
   private static instance: UploadService;
-  private firestoreService: ReturnType<typeof getFirestoreService>;
-  private authService: ReturnType<typeof getAuthService>;
 
-  private constructor() {
-    this.firestoreService = getFirestoreService();
-    this.authService = getAuthService();
-  }
+  private constructor() {}
 
   static getInstance(): UploadService {
     if (!UploadService.instance) {
@@ -55,98 +50,83 @@ export class UploadService {
    */
   async uploadWhisper(uploadData: WhisperUploadData): Promise<string> {
     try {
-      const user = await this.authService.getCurrentUser();
-      if (!user) {
-        throw new Error("User not authenticated");
-      }
+      // Validate upload data
+      validateUploadData(uploadData);
 
-      console.log("🚀 Starting whisper upload...");
+      // Validate user authentication
+      const { user, userId } = await validateUserAuthentication();
+
+      logUploadProgress("Starting whisper upload");
 
       // Validate audio file
-      if (!isValidAudioFormat(uploadData.audioUri)) {
-        throw new Error("Invalid audio file format");
-      }
+      validateAudioFormat(uploadData.audioUri);
 
-      // Upload audio file to storage using StorageService
-      const audioUrl = await StorageService.uploadAudio(
-        {
-          uri: uploadData.audioUri,
-          duration: uploadData.duration,
-          volume: uploadData.averageLevel,
-          isWhisper: uploadData.whisperPercentage > 0.5,
-          timestamp: new Date(),
-        },
-        user.uid
+      // Create audio upload data
+      const audioData = createAudioUploadData(
+        uploadData.audioUri,
+        uploadData.duration,
+        uploadData.averageLevel,
+        uploadData.whisperPercentage
       );
 
-      console.log("✅ Audio uploaded successfully");
+      // Upload audio file to storage
+      const audioUrl = await uploadAudioToStorage(audioData, userId);
 
-      // Step 1: Transcribe the audio
-      console.log("🎤 Transcribing audio for moderation...");
-      const transcription = await TranscriptionService.transcribeAudio(
-        audioUrl
+      // Transcribe the audio
+      const transcription = await transcribeAudio(audioUrl);
+
+      // Verify user age
+      const ageData = createAgeVerificationData(
+        uploadData.userAge,
+        uploadData.dateOfBirth
       );
-      console.log("✅ Transcription completed:", transcription.text);
+      const ageVerification = await verifyUserAge(ageData);
 
-      // Step 2: Verify user age
-      console.log("🔍 Verifying user age...");
-      const ageVerification = await AgeVerificationService.verifyAge({
-        age: uploadData.userAge,
-        dateOfBirth: uploadData.dateOfBirth,
-      });
-
-      if (!ageVerification.isVerified) {
-        throw new Error(`Age verification failed: ${ageVerification.reason}`);
-      }
-
-      // Step 3: Moderate the transcription
-      console.log("🛡️ Moderating content...");
-      const moderationResult = await ContentModerationService.moderateWhisper(
+      // Moderate the transcription
+      const moderationData = createModerationData(
         transcription.text,
-        user.uid,
+        userId,
         ageVerification.age
       );
+      const moderationResult = await moderateContent(moderationData);
 
-      // Step 4: Check if content was rejected
-      if (moderationResult.status === "rejected") {
-        throw new Error(`Content rejected: ${moderationResult.reason}`);
-      }
-
-      // Step 5: Create whisper document in Firestore with moderation data
-      const whisperId = await this.firestoreService.createWhisper(
-        user.uid,
-        user.displayName || "Anonymous",
-        user.profileColor || "#007AFF",
-        {
-          audioUrl,
-          duration: uploadData.duration,
-          whisperPercentage: uploadData.whisperPercentage,
-          averageLevel: uploadData.averageLevel,
-          confidence: uploadData.confidence,
-          transcription: transcription.text,
-          moderationResult, // Include moderation data
-        }
+      // Create whisper data
+      const whisperData = createWhisperData(
+        audioUrl,
+        uploadData.duration,
+        uploadData.whisperPercentage,
+        uploadData.averageLevel,
+        uploadData.confidence,
+        transcription.text,
+        moderationResult
       );
 
-      console.log("✅ Whisper created successfully:", whisperId);
+      // Create whisper document in Firestore
+      const whisperId = await createWhisperDocument(
+        userId,
+        user.displayName || "Anonymous",
+        user.profileColor || "#007AFF",
+        whisperData
+      );
 
-      // Step 6: Record successful whisper for reputation
+      // Update user reputation
       try {
-        const reputationService = getReputationService();
-        await reputationService.recordSuccessfulWhisper(user.uid);
-        console.log("✅ Reputation updated");
+        await updateUserReputation(userId);
       } catch (error) {
+        // Don't fail the upload if reputation update fails
         console.warn(
           "⚠️ Reputation update failed, but upload completed:",
           error
         );
-        // Don't fail the upload if reputation update fails
       }
 
       return whisperId;
     } catch (error) {
-      console.error("❌ Error uploading whisper:", error);
-      throw error;
+      console.error("❌ Error in uploadWhisper:", error);
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Unknown error in uploadWhisper: ${String(error)}`);
     }
   }
 
@@ -155,34 +135,28 @@ export class UploadService {
    */
   async deleteWhisper(whisperId: string): Promise<void> {
     try {
-      const user = await this.authService.getCurrentUser();
-      if (!user) {
-        throw new Error("User not authenticated");
-      }
+      // Validate user authentication
+      const { userId } = await validateUserAuthentication();
 
-      // Get whisper data to find audio URL
-      const whisper = await this.firestoreService.getWhisper(whisperId);
-      if (!whisper) {
-        throw new Error("Whisper not found");
-      }
+      // Get whisper data for deletion
+      const { whisper, audioUrl } = await getWhisperForDeletion(whisperId);
 
-      // Check if user owns the whisper
-      if (whisper.userId !== user.uid) {
-        throw new Error("Not authorized to delete this whisper");
-      }
+      // Validate whisper ownership
+      validateWhisperOwnership(whisper.userId, userId);
 
       // Delete from Firestore first
-      await this.firestoreService.deleteWhisper(whisperId);
+      await deleteWhisperFromFirestore(whisperId);
 
       // Delete audio file from storage
-      if (whisper.audioUrl) {
-        await StorageService.deleteAudio(whisper.audioUrl);
-      }
+      await deleteAudioFromStorage(audioUrl);
 
       console.log("✅ Whisper deleted successfully");
     } catch (error) {
-      console.error("❌ Error deleting whisper:", error);
-      throw error;
+      console.error("❌ Error in deleteWhisper:", error);
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Unknown error in deleteWhisper: ${String(error)}`);
     }
   }
 
@@ -194,11 +168,13 @@ export class UploadService {
     transcription: string
   ): Promise<void> {
     try {
-      await this.firestoreService.updateTranscription(whisperId, transcription);
-      console.log("✅ Transcription updated successfully");
+      await updateWhisperTranscription(whisperId, transcription);
     } catch (error) {
-      console.error("❌ Error updating transcription:", error);
-      throw error;
+      console.error("❌ Error in updateTranscription:", error);
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Unknown error in updateTranscription: ${String(error)}`);
     }
   }
 }
@@ -215,26 +191,28 @@ export const getUploadService = (): UploadService => {
  */
 export const UploadUtils = {
   /**
-   * Format file size for display
-   */
-  formatFileSize,
-
-  /**
    * Format upload progress for display
    */
-  formatProgress(progress: UploadProgress): string {
-    return `${progress.progress.toFixed(1)}% (${UploadUtils.formatFileSize(
-      progress.bytesTransferred
-    )} / ${UploadUtils.formatFileSize(progress.totalBytes)})`;
-  },
+  formatProgress: formatUploadProgress,
 
   /**
    * Generate unique filename
    */
-  generateFilename: generateUniqueFilename,
+  generateFilename: generateUniqueFilenameForUpload,
 
   /**
    * Validate audio file format
    */
-  isValidAudioFormat,
+  isValidAudioFormat: validateAudioFileFormat,
+
+  /**
+   * Format file size for display
+   */
+  formatFileSize: (bytes: number): string => {
+    if (bytes === 0) return "0 Bytes";
+    const k = 1024;
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  },
 };

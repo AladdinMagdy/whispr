@@ -1,375 +1,342 @@
-import { AudioConversionService } from "../services/audioConversionService";
-import * as fileUtils from "../utils/fileUtils";
-import * as FileSystem from "expo-file-system";
+/**
+ * Tests for Audio Conversion Service
+ */
 
-// Mock expo-file-system
-jest.mock("expo-file-system", () => ({
-  getInfoAsync: jest.fn(),
+import { AudioConversionService } from "../services/audioConversionService";
+
+// Mock the utils module
+jest.mock("../utils/audioConversionUtils", () => ({
+  isCompatibleFormat: jest.fn(),
+  getAudioMetadata: jest.fn(),
+  validateForTranscription: jest.fn(),
 }));
 
-describe("AudioConversionService", () => {
-  const mockFileInfo = {
-    exists: true,
-    size: 1024 * 100, // 100KB
-    uri: "file://test.mp3",
-  };
+import {
+  isCompatibleFormat,
+  getAudioMetadata,
+  validateForTranscription,
+} from "../utils/audioConversionUtils";
 
+const mockIsCompatibleFormat = isCompatibleFormat as jest.MockedFunction<
+  typeof isCompatibleFormat
+>;
+const mockGetAudioMetadata = getAudioMetadata as jest.MockedFunction<
+  typeof getAudioMetadata
+>;
+const mockValidateForTranscription =
+  validateForTranscription as jest.MockedFunction<
+    typeof validateForTranscription
+  >;
+
+describe("AudioConversionService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (FileSystem.getInfoAsync as jest.Mock).mockResolvedValue(mockFileInfo);
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
   });
 
   describe("convertForTranscription", () => {
-    it("should return original URI if already compatible format", async () => {
-      const audioUri = "file://test.mp3";
+    test("should return original URI if already compatible", async () => {
+      const audioUri = "file:///path/to/audio.mp3";
+      mockIsCompatibleFormat.mockReturnValue(true);
+
       const result = await AudioConversionService.convertForTranscription(
         audioUri
       );
+
       expect(result).toBe(audioUri);
+      expect(mockIsCompatibleFormat).toHaveBeenCalledWith(audioUri);
     });
 
-    it("should return original URI for incompatible format (not implemented yet)", async () => {
-      const audioUri = "file://test.xyz";
+    test("should return original URI if not compatible (conversion not implemented)", async () => {
+      const audioUri = "file:///path/to/audio.xyz";
+      mockIsCompatibleFormat.mockReturnValue(false);
+
       const result = await AudioConversionService.convertForTranscription(
         audioUri
       );
+
       expect(result).toBe(audioUri);
+      expect(mockIsCompatibleFormat).toHaveBeenCalledWith(audioUri);
     });
 
-    it("should handle conversion options", async () => {
-      const audioUri = "file://test.wav";
-      const result = await AudioConversionService.convertForTranscription(
-        audioUri
-      );
-      expect(result).toBe(audioUri);
-    });
-
-    it("should return original URI on error", async () => {
-      const audioUri = "file://test.mp3";
-      // Mock isCompatibleFormat to throw
-      const spy = jest.spyOn(AudioConversionService, "isCompatibleFormat");
-      spy.mockRejectedValue(new Error("Test error"));
+    test("should handle errors and return original URI", async () => {
+      const audioUri = "file:///path/to/audio.mp3";
+      mockIsCompatibleFormat.mockImplementation(() => {
+        throw new Error("Test error");
+      });
 
       const result = await AudioConversionService.convertForTranscription(
         audioUri
       );
-      expect(result).toBe(audioUri);
 
-      spy.mockRestore();
+      expect(result).toBe(audioUri);
     });
   });
 
   describe("isCompatibleFormat", () => {
-    const supportedFormats = [
-      "flac",
-      "m4a",
-      "mp3",
-      "mp4",
-      "mpeg",
-      "mpga",
-      "oga",
-      "ogg",
-      "wav",
-      "webm",
-    ];
+    test("should delegate to utility function", async () => {
+      const audioUri = "file:///path/to/audio.mp3";
+      mockIsCompatibleFormat.mockReturnValue(true);
 
-    it.each(supportedFormats)(
-      "should return true for supported format: %s",
-      async (format) => {
-        const audioUri = `file://test.${format}`;
-        const result = await AudioConversionService.isCompatibleFormat(
-          audioUri
-        );
-        expect(result).toBe(true);
-      }
-    );
-
-    it("should return false for unsupported format", async () => {
-      const audioUri = "file://test.xyz";
       const result = await AudioConversionService.isCompatibleFormat(audioUri);
-      expect(result).toBe(false);
-    });
 
-    it("should handle URLs with query parameters", async () => {
-      const audioUri = "https://example.com/audio.mp3?token=abc123";
-      const result = await AudioConversionService.isCompatibleFormat(audioUri);
       expect(result).toBe(true);
+      expect(mockIsCompatibleFormat).toHaveBeenCalledWith(audioUri);
     });
 
-    it("should handle URLs without extension", async () => {
-      const audioUri = "https://example.com/audio";
+    test("should handle false result", async () => {
+      const audioUri = "file:///path/to/audio.xyz";
+      mockIsCompatibleFormat.mockReturnValue(false);
+
       const result = await AudioConversionService.isCompatibleFormat(audioUri);
+
       expect(result).toBe(false);
-    });
-
-    it("should handle case insensitive extensions", async () => {
-      const audioUri = "file://test.MP3";
-      const result = await AudioConversionService.isCompatibleFormat(audioUri);
-      expect(result).toBe(true);
-    });
-
-    it("should return false on error", async () => {
-      // Mock extractFileExtension to throw
-      const spy = jest.spyOn(fileUtils, "extractFileExtension");
-      spy.mockImplementation(() => {
-        throw new Error("Test error");
-      });
-
-      const audioUri = "file://test.mp3";
-      const result = await AudioConversionService.isCompatibleFormat(audioUri);
-      expect(result).toBe(false);
-      spy.mockRestore();
-    });
-  });
-
-  describe("extractFileExtension", () => {
-    it("should extract extension from simple URL", () => {
-      const result = fileUtils.extractFileExtension("file://test.mp3");
-      expect(result).toBe("mp3");
-    });
-
-    it("should handle URLs with query parameters", () => {
-      const result = fileUtils.extractFileExtension(
-        "https://example.com/audio.mp3?token=abc"
-      );
-      expect(result).toBe("mp3");
-    });
-
-    it("should handle URLs with multiple dots", () => {
-      const result = fileUtils.extractFileExtension("file://my.audio.file.mp3");
-      expect(result).toBe("mp3");
-    });
-
-    it("should return empty string for URLs without extension", () => {
-      const result = fileUtils.extractFileExtension(
-        "https://example.com/audio"
-      );
-      expect(result).toBe("");
-    });
-
-    it("should return empty string for URLs ending with dot", () => {
-      const result = fileUtils.extractFileExtension("file://test.");
-      expect(result).toBe("");
-    });
-
-    it("should handle case and return lowercase", () => {
-      const result = fileUtils.extractFileExtension("file://test.MP3");
-      expect(result).toBe("mp3");
-    });
-
-    it("should return empty string on error", () => {
-      const result = fileUtils.extractFileExtension(null as any);
-      expect(result).toBe("");
+      expect(mockIsCompatibleFormat).toHaveBeenCalledWith(audioUri);
     });
   });
 
   describe("getAudioMetadata", () => {
-    it("should get metadata for local file", async () => {
-      const audioUri = "file://test.mp3";
-      const result = await AudioConversionService.getAudioMetadata(audioUri);
-
-      expect(FileSystem.getInfoAsync).toHaveBeenCalledWith(audioUri);
-      expect(result).toEqual({
-        size: 1024 * 100,
+    test("should delegate to utility function", async () => {
+      const audioUri = "file:///path/to/audio.mp3";
+      const mockMetadata = {
+        size: 1024 * 1024,
         extension: "mp3",
         duration: undefined,
-      });
-    });
+      };
 
-    it("should handle HTTP URLs", async () => {
-      const audioUri = "https://example.com/audio.mp3";
+      mockGetAudioMetadata.mockResolvedValue(mockMetadata);
+
       const result = await AudioConversionService.getAudioMetadata(audioUri);
 
-      expect(FileSystem.getInfoAsync).not.toHaveBeenCalled();
-      expect(result).toEqual({
-        size: 0,
+      expect(result).toEqual(mockMetadata);
+      expect(mockGetAudioMetadata).toHaveBeenCalledWith(audioUri);
+    });
+
+    test("should handle metadata with duration", async () => {
+      const audioUri = "file:///path/to/audio.mp3";
+      const mockMetadata = {
+        size: 1024 * 1024,
         extension: "mp3",
-        duration: undefined,
-      });
-    });
+        duration: 120, // 2 minutes
+      };
 
-    it("should handle HTTPS URLs", async () => {
-      const audioUri = "https://example.com/audio.wav";
-      const result = await AudioConversionService.getAudioMetadata(audioUri);
-
-      expect(result).toEqual({
-        size: 0,
-        extension: "wav",
-        duration: undefined,
-      });
-    });
-
-    it("should handle non-existent local file", async () => {
-      const audioUri = "file://nonexistent.mp3";
-      (FileSystem.getInfoAsync as jest.Mock).mockResolvedValue({
-        exists: false,
-      });
+      mockGetAudioMetadata.mockResolvedValue(mockMetadata);
 
       const result = await AudioConversionService.getAudioMetadata(audioUri);
-      expect(result).toEqual({
-        size: 0,
-        extension: "mp3",
-        duration: undefined,
-      });
-    });
 
-    it("should handle file info without size property", async () => {
-      const audioUri = "file://test.mp3";
-      (FileSystem.getInfoAsync as jest.Mock).mockResolvedValue({
-        exists: true,
-        uri: "file://test.mp3",
-      });
-
-      const result = await AudioConversionService.getAudioMetadata(audioUri);
-      expect(result).toEqual({
-        size: 0,
-        extension: "mp3",
-        duration: undefined,
-      });
-    });
-
-    it("should return default values on error", async () => {
-      const audioUri = "file://test.mp3";
-      (FileSystem.getInfoAsync as jest.Mock).mockRejectedValue(
-        new Error("Test error")
-      );
-
-      const result = await AudioConversionService.getAudioMetadata(audioUri);
-      expect(result).toEqual({
-        size: 0,
-        extension: "",
-        duration: undefined,
-      });
+      expect(result).toEqual(mockMetadata);
+      expect(result.duration).toBe(120);
     });
   });
 
   describe("validateForTranscription", () => {
-    it("should validate compatible local file", async () => {
-      const audioUri = "file://test.mp3";
-      const result = await AudioConversionService.validateForTranscription(
-        audioUri
-      );
-
-      expect(result).toEqual({
+    test("should delegate to utility function for valid file", async () => {
+      const audioUrl = "file:///path/to/audio.mp3";
+      const mockResult = {
         isValid: true,
-        size: 1024 * 100,
+        size: 1024 * 1024,
         format: "mp3",
-      });
-    });
+      };
 
-    it("should validate HTTP URL", async () => {
-      const audioUri = "https://example.com/audio.mp3";
-      const result = await AudioConversionService.validateForTranscription(
-        audioUri
-      );
-
-      expect(result).toEqual({
-        isValid: true,
-        size: 0,
-        format: "mp3",
-      });
-    });
-
-    it("should reject file too large", async () => {
-      const audioUri = "file://large.mp3";
-      (FileSystem.getInfoAsync as jest.Mock).mockResolvedValue({
-        exists: true,
-        size: 30 * 1024 * 1024, // 30MB
-      });
+      mockValidateForTranscription.mockResolvedValue(mockResult);
 
       const result = await AudioConversionService.validateForTranscription(
-        audioUri
+        audioUrl
       );
-      expect(result).toEqual({
-        isValid: false,
-        error: "File too large: 30 MB (max 25MB)",
-        size: 30 * 1024 * 1024,
-        format: "mp3",
-      });
+
+      expect(result).toEqual(mockResult);
+      expect(mockValidateForTranscription).toHaveBeenCalledWith(audioUrl);
     });
 
-    it("should reject unsupported format", async () => {
-      const audioUri = "file://test.xyz";
-      const result = await AudioConversionService.validateForTranscription(
-        audioUri
-      );
-
-      expect(result).toEqual({
+    test("should handle invalid file with error", async () => {
+      const audioUrl = "file:///path/to/audio.xyz";
+      const mockResult = {
         isValid: false,
         error: "Unsupported format: xyz",
-        size: 1024 * 100,
+        size: 0,
         format: "xyz",
-      });
-    });
+      };
 
-    it("should handle validation error", async () => {
-      const audioUri = "file://test.mp3";
-      // Mock getAudioMetadata to throw
-      const spy = jest.spyOn(AudioConversionService, "getAudioMetadata");
-      spy.mockRejectedValue(new Error("Test error"));
+      mockValidateForTranscription.mockResolvedValue(mockResult);
 
       const result = await AudioConversionService.validateForTranscription(
-        audioUri
+        audioUrl
       );
-      expect(result).toEqual({
-        isValid: false,
-        error: "Test error",
-        size: 0,
-        format: "",
-      });
 
-      spy.mockRestore();
+      expect(result).toEqual(mockResult);
+      expect(result.isValid).toBe(false);
+      expect(result.error).toContain("Unsupported format");
     });
 
-    it("should handle non-Error exceptions", async () => {
-      const audioUri = "file://test.mp3";
-      // Mock getAudioMetadata to throw non-Error
-      const spy = jest.spyOn(AudioConversionService, "getAudioMetadata");
-      spy.mockRejectedValue("String error");
+    test("should handle file that is too large", async () => {
+      const audioUrl = "file:///path/to/audio.mp3";
+      const mockResult = {
+        isValid: false,
+        error: "File too large: 30.0 MB (max 25MB)",
+        size: 30 * 1024 * 1024,
+        format: "mp3",
+      };
+
+      mockValidateForTranscription.mockResolvedValue(mockResult);
 
       const result = await AudioConversionService.validateForTranscription(
-        audioUri
+        audioUrl
       );
-      expect(result).toEqual({
-        isValid: false,
-        error: "Unknown error",
-        size: 0,
-        format: "",
-      });
 
-      spy.mockRestore();
+      expect(result).toEqual(mockResult);
+      expect(result.isValid).toBe(false);
+      expect(result.error).toContain("File too large");
     });
   });
 
-  describe("edge cases", () => {
-    it("should handle empty string URL", async () => {
-      const result = await AudioConversionService.isCompatibleFormat("");
-      expect(result).toBe(false);
+  describe("integration tests", () => {
+    test("should handle complete conversion flow for compatible file", async () => {
+      const audioUri = "file:///path/to/audio.mp3";
+
+      // Mock all utility functions
+      mockIsCompatibleFormat.mockReturnValue(true);
+      mockGetAudioMetadata.mockResolvedValue({
+        size: 1024 * 1024,
+        extension: "mp3",
+        duration: undefined,
+      });
+      mockValidateForTranscription.mockResolvedValue({
+        isValid: true,
+        size: 1024 * 1024,
+        format: "mp3",
+      });
+
+      // Test conversion
+      const convertedUri = await AudioConversionService.convertForTranscription(
+        audioUri
+      );
+      expect(convertedUri).toBe(audioUri);
+
+      // Test compatibility check
+      const isCompatible = await AudioConversionService.isCompatibleFormat(
+        audioUri
+      );
+      expect(isCompatible).toBe(true);
+
+      // Test metadata retrieval
+      const metadata = await AudioConversionService.getAudioMetadata(audioUri);
+      expect(metadata.size).toBe(1024 * 1024);
+      expect(metadata.extension).toBe("mp3");
+
+      // Test validation
+      const validation = await AudioConversionService.validateForTranscription(
+        audioUri
+      );
+      expect(validation.isValid).toBe(true);
+      expect(validation.format).toBe("mp3");
     });
 
-    it("should handle null URL", async () => {
-      const result = await AudioConversionService.isCompatibleFormat(
-        null as any
+    test("should handle incompatible file gracefully", async () => {
+      const audioUri = "file:///path/to/audio.xyz";
+
+      // Mock utility functions for incompatible file
+      mockIsCompatibleFormat.mockReturnValue(false);
+      mockGetAudioMetadata.mockResolvedValue({
+        size: 1024 * 1024,
+        extension: "xyz",
+        duration: undefined,
+      });
+      mockValidateForTranscription.mockResolvedValue({
+        isValid: false,
+        error: "Unsupported format: xyz",
+        size: 1024 * 1024,
+        format: "xyz",
+      });
+
+      // Test conversion (should return original URI)
+      const convertedUri = await AudioConversionService.convertForTranscription(
+        audioUri
       );
-      expect(result).toBe(false);
+      expect(convertedUri).toBe(audioUri);
+
+      // Test compatibility check
+      const isCompatible = await AudioConversionService.isCompatibleFormat(
+        audioUri
+      );
+      expect(isCompatible).toBe(false);
+
+      // Test metadata retrieval
+      const metadata = await AudioConversionService.getAudioMetadata(audioUri);
+      expect(metadata.extension).toBe("xyz");
+
+      // Test validation
+      const validation = await AudioConversionService.validateForTranscription(
+        audioUri
+      );
+      expect(validation.isValid).toBe(false);
+      expect(validation.error).toContain("Unsupported format");
     });
 
-    it("should handle URLs with only query parameters", () => {
-      const result = fileUtils.extractFileExtension(
-        "https://example.com/?param=value"
+    test("should handle HTTP URLs", async () => {
+      const audioUrl = "https://example.com/audio.mp3";
+
+      // Mock utility functions for HTTP URL
+      mockIsCompatibleFormat.mockReturnValue(true);
+      mockGetAudioMetadata.mockResolvedValue({
+        size: 0, // Can't determine size for HTTP URLs
+        extension: "mp3",
+        duration: undefined,
+      });
+      mockValidateForTranscription.mockResolvedValue({
+        isValid: true,
+        size: 0,
+        format: "mp3",
+      });
+
+      // Test all methods with HTTP URL
+      const convertedUri = await AudioConversionService.convertForTranscription(
+        audioUrl
       );
-      expect(result).toBe("");
+      expect(convertedUri).toBe(audioUrl);
+
+      const isCompatible = await AudioConversionService.isCompatibleFormat(
+        audioUrl
+      );
+      expect(isCompatible).toBe(true);
+
+      const metadata = await AudioConversionService.getAudioMetadata(audioUrl);
+      expect(metadata.size).toBe(0);
+      expect(metadata.extension).toBe("mp3");
+
+      const validation = await AudioConversionService.validateForTranscription(
+        audioUrl
+      );
+      expect(validation.isValid).toBe(true);
+      expect(validation.size).toBe(0);
     });
 
-    it("should handle URLs with multiple query parameters", () => {
-      const result = fileUtils.extractFileExtension(
-        "https://example.com/audio.mp3?param1=value1&param2=value2"
+    test("should handle errors in utility functions", async () => {
+      const audioUri = "file:///path/to/audio.mp3";
+
+      // Mock utility functions to throw errors
+      mockIsCompatibleFormat.mockImplementation(() => {
+        throw new Error("Format check error");
+      });
+      mockGetAudioMetadata.mockRejectedValue(new Error("Metadata error"));
+      mockValidateForTranscription.mockRejectedValue(
+        new Error("Validation error")
       );
-      expect(result).toBe("mp3");
+
+      // Test conversion with error
+      const convertedUri = await AudioConversionService.convertForTranscription(
+        audioUri
+      );
+      expect(convertedUri).toBe(audioUri); // Should return original URI on error
+
+      // Test other methods should throw errors
+      await expect(
+        AudioConversionService.isCompatibleFormat(audioUri)
+      ).rejects.toThrow("Format check error");
+      await expect(
+        AudioConversionService.getAudioMetadata(audioUri)
+      ).rejects.toThrow("Metadata error");
+      await expect(
+        AudioConversionService.validateForTranscription(audioUri)
+      ).rejects.toThrow("Validation error");
     });
   });
 });

@@ -417,7 +417,7 @@ describe("UploadService", () => {
         userAge: 13,
       };
       await expect(uploadService.uploadWhisper(mockUploadData)).rejects.toThrow(
-        "Age verification failed: User is under 13 years old"
+        "Age verification failed"
       );
     });
 
@@ -443,7 +443,7 @@ describe("UploadService", () => {
         userAge: 25,
       };
       await expect(uploadService.uploadWhisper(mockUploadData)).rejects.toThrow(
-        "Content rejected: Content violates community guidelines"
+        "Content moderation failed"
       );
     });
 
@@ -494,7 +494,7 @@ describe("UploadService", () => {
         userAge: 25,
       };
       await expect(uploadService.uploadWhisper(mockUploadData)).rejects.toThrow(
-        "Firestore creation failed"
+        "Firestore document creation failed"
       );
     });
 

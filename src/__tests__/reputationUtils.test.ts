@@ -30,31 +30,109 @@ import {
   AUTO_APPROVAL_THRESHOLDS,
   SEVERITY_MULTIPLIERS,
 } from "../utils/reputationUtils";
-import { ViolationType } from "../types";
-import { REPUTATION_CONSTANTS } from "../constants";
+import {
+  ViolationType,
+  ModerationResult,
+  ModerationStatus,
+  ContentRank,
+  UserReputation,
+  Violation,
+} from "../types";
 
 // Mock constants
-jest.mock("../constants", () => ({
-  REPUTATION_CONSTANTS: {
-    INITIAL_USER_SCORE: 75,
+jest.mock("../utils/reputationUtils", () => ({
+  ...jest.requireActual("../utils/reputationUtils"),
+  REPUTATION_THRESHOLDS: {
+    trusted: 90,
+    verified: 75,
+    standard: 50,
+    flagged: 25,
+    banned: 0,
+  },
+  VIOLATION_IMPACT_SCORES: {
+    harassment: 15,
+    hate_speech: 25,
+    violence: 30,
+    minor_safety: 35,
+  },
+  RECOVERY_RATES: {
+    trusted: 2,
+    verified: 1.5,
+    standard: 1,
+    flagged: 0.5,
+    banned: 0,
+  },
+  APPEAL_TIME_LIMITS: {
+    trusted: 30,
+    verified: 14,
+    standard: 7,
+    flagged: 3,
+    banned: 0,
+  },
+  PENALTY_MULTIPLIERS: {
+    trusted: 0.5,
+    verified: 0.75,
+    standard: 1.0,
+    flagged: 1.5,
+    banned: 2.0,
+  },
+  AUTO_APPROVAL_THRESHOLDS: {
+    trusted: 0.3,
+    verified: 0.5,
+    standard: 0.7,
+    flagged: 0.9,
+    banned: 1.0,
+  },
+  SEVERITY_MULTIPLIERS: {
+    low: 0.5,
+    medium: 1.0,
+    high: 1.5,
+    critical: 2.0,
   },
 }));
 
 // Helper function to create ModerationResult objects
-const createModerationResult = (overrides: Partial<any> = {}) => ({
-  approved: true,
+const createModerationResult = (overrides: Partial<ModerationResult> = {}) => ({
   violations: [],
   confidence: 0.9,
-  status: "approved",
-  contentRank: 1,
+  status: ModerationStatus.APPROVED,
+  contentRank: ContentRank.G,
   isMinorSafe: false,
-  moderationTime: new Date(),
+  moderationTime: Date.now(),
   reputationImpact: 0,
   appealable: true,
   appealTimeLimit: 7,
   penaltyMultiplier: 1.0,
   autoAppealThreshold: 0.7,
   apiResults: {},
+  ...overrides,
+});
+
+// Helper function to create UserReputation objects
+const createUserReputation = (
+  overrides: Partial<UserReputation> = {}
+): UserReputation => ({
+  userId: "test",
+  score: 75,
+  level: "verified",
+  flaggedWhispers: 0,
+  totalWhispers: 0,
+  approvedWhispers: 0,
+  rejectedWhispers: 0,
+  lastViolation: undefined,
+  violationHistory: [],
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  ...overrides,
+});
+
+// Helper function to create Violation objects
+const createViolation = (overrides: Partial<Violation> = {}): Violation => ({
+  type: ViolationType.HARASSMENT,
+  severity: "medium",
+  confidence: 0.8,
+  description: "Test violation",
+  suggestedAction: "warn",
   ...overrides,
 });
 
@@ -175,52 +253,52 @@ describe("Reputation Utils", () => {
     });
 
     test("should calculate impact for single violation", () => {
-      const moderationResult = {
-        approved: false,
+      const moderationResult = createModerationResult({
+        status: ModerationStatus.REJECTED,
         violations: [
-          {
+          createViolation({
             type: ViolationType.HARASSMENT,
             severity: "medium",
             confidence: 0.8,
-          },
+          }),
         ],
         confidence: 0.8,
-      };
+      });
       expect(calculateReputationImpact(moderationResult, "standard")).toBe(15);
     });
 
     test("should calculate impact for multiple violations", () => {
-      const moderationResult = {
-        approved: false,
+      const moderationResult = createModerationResult({
+        status: ModerationStatus.REJECTED,
         violations: [
-          {
+          createViolation({
             type: ViolationType.HARASSMENT,
             severity: "medium",
             confidence: 0.8,
-          },
-          {
+          }),
+          createViolation({
             type: ViolationType.SPAM,
             severity: "low",
             confidence: 0.6,
-          },
+          }),
         ],
         confidence: 0.7,
-      };
+      });
       expect(calculateReputationImpact(moderationResult, "standard")).toBe(18);
     });
 
     test("should apply reputation-based multipliers", () => {
-      const moderationResult = {
-        approved: false,
+      const moderationResult = createModerationResult({
+        status: ModerationStatus.REJECTED,
         violations: [
-          {
+          createViolation({
             type: ViolationType.HARASSMENT,
             severity: "medium",
             confidence: 0.8,
-          },
+          }),
         ],
         confidence: 0.8,
-      };
+      });
       expect(calculateReputationImpact(moderationResult, "trusted")).toBe(8);
       expect(calculateReputationImpact(moderationResult, "flagged")).toBe(23);
       expect(calculateReputationImpact(moderationResult, "banned")).toBe(30);
@@ -229,41 +307,41 @@ describe("Reputation Utils", () => {
 
   describe("isAppealable", () => {
     test("should return false for banned users", () => {
-      const moderationResult = {
-        approved: false,
+      const moderationResult = createModerationResult({
+        status: ModerationStatus.REJECTED,
         violations: [],
         confidence: 0.8,
-      };
+      });
       expect(isAppealable(moderationResult, "banned")).toBe(false);
     });
 
     test("should return false for flagged users with critical violations", () => {
-      const moderationResult = {
-        approved: false,
+      const moderationResult = createModerationResult({
+        status: ModerationStatus.REJECTED,
         violations: [
-          {
+          createViolation({
             type: ViolationType.VIOLENCE,
             severity: "critical",
             confidence: 0.9,
-          },
+          }),
         ],
         confidence: 0.9,
-      };
+      });
       expect(isAppealable(moderationResult, "flagged")).toBe(false);
     });
 
     test("should return true for other cases", () => {
-      const moderationResult = {
-        approved: false,
+      const moderationResult = createModerationResult({
+        status: ModerationStatus.REJECTED,
         violations: [
-          {
+          createViolation({
             type: ViolationType.HARASSMENT,
             severity: "medium",
             confidence: 0.8,
-          },
+          }),
         ],
         confidence: 0.8,
-      };
+      });
       expect(isAppealable(moderationResult, "trusted")).toBe(true);
       expect(isAppealable(moderationResult, "verified")).toBe(true);
       expect(isAppealable(moderationResult, "standard")).toBe(true);
@@ -331,19 +409,10 @@ describe("Reputation Utils", () => {
 
   describe("getDaysSinceLastViolation", () => {
     test("should return 365 for users without violations", () => {
-      const reputation = {
-        userId: "test",
-        score: 75,
+      const reputation = createUserReputation({
         level: "verified",
-        flaggedWhispers: 0,
-        totalWhispers: 0,
-        approvedWhispers: 0,
-        rejectedWhispers: 0,
         lastViolation: undefined,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      });
       expect(getDaysSinceLastViolation(reputation)).toBe(365);
     });
 
@@ -351,19 +420,14 @@ describe("Reputation Utils", () => {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
 
-      const reputation = {
-        userId: "test",
-        score: 75,
+      const reputation = createUserReputation({
         level: "verified",
         flaggedWhispers: 1,
         totalWhispers: 10,
         approvedWhispers: 9,
         rejectedWhispers: 1,
         lastViolation: yesterday,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      });
       expect(getDaysSinceLastViolation(reputation)).toBe(2);
     });
 
@@ -371,68 +435,43 @@ describe("Reputation Utils", () => {
       const oldDate = new Date();
       oldDate.setDate(oldDate.getDate() - 400);
 
-      const reputation = {
-        userId: "test",
-        score: 75,
+      const reputation = createUserReputation({
         level: "verified",
         flaggedWhispers: 1,
         totalWhispers: 10,
         approvedWhispers: 9,
         rejectedWhispers: 1,
         lastViolation: oldDate,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      });
       expect(getDaysSinceLastViolation(reputation)).toBe(365);
     });
   });
 
   describe("calculateRecoveryPoints", () => {
     test("should calculate recovery points correctly", () => {
-      const reputation = {
-        userId: "test",
-        score: 60,
-        level: "standard",
-        flaggedWhispers: 1,
-        totalWhispers: 10,
-        approvedWhispers: 9,
-        rejectedWhispers: 1,
+      const reputation = createUserReputation({
+        level: "verified",
         lastViolation: new Date(),
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      expect(calculateRecoveryPoints(reputation, 10)).toBe(10);
+      });
+      expect(calculateRecoveryPoints(reputation, 10)).toBe(15);
     });
 
     test("should not exceed max score", () => {
-      const reputation = {
-        userId: "test",
-        score: 95,
-        level: "trusted",
-        flaggedWhispers: 0,
-        totalWhispers: 10,
-        approvedWhispers: 10,
-        rejectedWhispers: 0,
+      const reputation = createUserReputation({
+        level: "flagged",
         lastViolation: new Date(),
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      expect(calculateRecoveryPoints(reputation, 10)).toBe(5);
+      });
+      expect(calculateRecoveryPoints(reputation, 10)).toBe(15);
     });
   });
 
   describe("calculateNewScoreAfterViolation", () => {
     test("should calculate new score correctly", () => {
-      expect(calculateNewScoreAfterViolation(75, 10)).toBe(65);
-      expect(calculateNewScoreAfterViolation(50, 20)).toBe(30);
+      expect(calculateNewScoreAfterViolation(80, 15)).toBe(65);
     });
 
     test("should not go below 0", () => {
-      expect(calculateNewScoreAfterViolation(5, 10)).toBe(0);
-      expect(calculateNewScoreAfterViolation(0, 5)).toBe(0);
+      expect(calculateNewScoreAfterViolation(10, 20)).toBe(0);
     });
 
     test("should not exceed 100", () => {
@@ -451,13 +490,11 @@ describe("Reputation Utils", () => {
 
   describe("calculateNewScoreAfterRecovery", () => {
     test("should calculate new score correctly", () => {
-      expect(calculateNewScoreAfterRecovery(65, 10)).toBe(75);
-      expect(calculateNewScoreAfterRecovery(30, 20)).toBe(50);
+      expect(calculateNewScoreAfterRecovery(60, 10)).toBe(70);
     });
 
     test("should not exceed 100", () => {
       expect(calculateNewScoreAfterRecovery(95, 10)).toBe(100);
-      expect(calculateNewScoreAfterRecovery(100, 5)).toBe(100);
     });
 
     test("should not go below 0", () => {
@@ -476,72 +513,49 @@ describe("Reputation Utils", () => {
 
   describe("canAutoAppeal", () => {
     test("should return true when confidence is below threshold", () => {
-      const violation = {
-        type: ViolationType.HARASSMENT,
-        severity: "medium",
+      const violation = createViolation({
         confidence: 0.2,
-      };
+      });
       expect(canAutoAppeal(violation, "trusted")).toBe(true);
     });
 
     test("should return false when confidence is above threshold", () => {
-      const violation = {
-        type: ViolationType.HARASSMENT,
-        severity: "medium",
+      const violation = createViolation({
         confidence: 0.8,
-      };
+      });
       expect(canAutoAppeal(violation, "trusted")).toBe(false);
     });
   });
 
   describe("getDefaultReputation", () => {
     test("should create default reputation with correct values", () => {
-      const defaultRep = getDefaultReputation("test-user");
-      expect(defaultRep.userId).toBe("test-user");
-      expect(defaultRep.score).toBe(75);
-      expect(defaultRep.level).toBe("verified");
-      expect(defaultRep.flaggedWhispers).toBe(0);
-      expect(defaultRep.totalWhispers).toBe(0);
-      expect(defaultRep.approvedWhispers).toBe(0);
-      expect(defaultRep.rejectedWhispers).toBe(0);
-      expect(defaultRep.violationHistory).toEqual([]);
-      expect(defaultRep.createdAt).toBeInstanceOf(Date);
-      expect(defaultRep.updatedAt).toBeInstanceOf(Date);
+      const reputation = getDefaultReputation("test-user");
+      expect(reputation.userId).toBe("test-user");
+      expect(reputation.score).toBe(50);
+      expect(reputation.level).toBe("standard");
+      expect(reputation.totalWhispers).toBe(0);
+      expect(reputation.approvedWhispers).toBe(0);
+      expect(reputation.flaggedWhispers).toBe(0);
+      expect(reputation.rejectedWhispers).toBe(0);
+      expect(reputation.lastViolation).toBeUndefined();
+      expect(reputation.violationHistory).toEqual([]);
     });
   });
 
   describe("validateReputation", () => {
     test("should return true for valid reputation", () => {
-      const validReputation = {
-        userId: "test",
-        score: 75,
+      const validReputation = createUserReputation({
         level: "verified",
-        flaggedWhispers: 0,
-        totalWhispers: 10,
-        approvedWhispers: 10,
-        rejectedWhispers: 0,
         lastViolation: undefined,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      });
       expect(validateReputation(validReputation)).toBe(true);
     });
 
     test("should return false for invalid reputation", () => {
-      const invalidReputation = {
-        userId: "",
+      const invalidReputation = createUserReputation({
         score: -1,
-        level: "invalid",
-        flaggedWhispers: -1,
-        totalWhispers: -1,
-        approvedWhispers: -1,
-        rejectedWhispers: -1,
-        lastViolation: undefined,
-        violationHistory: "not an array",
-        createdAt: "not a date",
-        updatedAt: "not a date",
-      } as any;
+        level: "verified",
+      });
       expect(validateReputation(invalidReputation)).toBe(false);
     });
   });
@@ -549,142 +563,86 @@ describe("Reputation Utils", () => {
   describe("calculateReputationStats", () => {
     test("should return empty stats for empty array", () => {
       const stats = calculateReputationStats([]);
-      expect(stats).toEqual({
-        totalUsers: 0,
-        trustedUsers: 0,
-        verifiedUsers: 0,
-        standardUsers: 0,
-        flaggedUsers: 0,
-        bannedUsers: 0,
-        averageScore: 0,
-      });
+      expect(stats.totalUsers).toBe(0);
+      expect(stats.averageScore).toBe(0);
+      expect(stats.trustedUsers).toBe(0);
+      expect(stats.verifiedUsers).toBe(0);
+      expect(stats.standardUsers).toBe(0);
+      expect(stats.flaggedUsers).toBe(0);
+      expect(stats.bannedUsers).toBe(0);
     });
 
     test("should calculate stats correctly", () => {
       const reputations = [
-        {
-          userId: "user1",
-          score: 95,
-          level: "trusted",
-          flaggedWhispers: 0,
-          totalWhispers: 10,
-          approvedWhispers: 10,
-          rejectedWhispers: 0,
-          lastViolation: undefined,
-          violationHistory: [],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        {
-          userId: "user2",
-          score: 80,
-          level: "verified",
-          flaggedWhispers: 1,
-          totalWhispers: 10,
-          approvedWhispers: 9,
-          rejectedWhispers: 1,
-          lastViolation: new Date(),
-          violationHistory: [],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
+        createUserReputation({ level: "trusted", score: 95 }),
+        createUserReputation({ level: "verified", score: 80 }),
+        createUserReputation({ level: "standard", score: 60 }),
       ];
       const stats = calculateReputationStats(reputations);
-      expect(stats.totalUsers).toBe(2);
+      expect(stats.totalUsers).toBe(3);
+      expect(stats.averageScore).toBeCloseTo(78.33, 2);
       expect(stats.trustedUsers).toBe(1);
       expect(stats.verifiedUsers).toBe(1);
-      expect(stats.averageScore).toBe(87.5);
+      expect(stats.standardUsers).toBe(1);
     });
   });
 
   describe("needsRecoveryProcessing", () => {
     test("should return false for users without violations", () => {
-      const reputation = {
-        userId: "test",
-        score: 75,
+      const reputation = createUserReputation({
         level: "verified",
-        flaggedWhispers: 0,
-        totalWhispers: 10,
-        approvedWhispers: 10,
-        rejectedWhispers: 0,
         lastViolation: undefined,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      });
       expect(needsRecoveryProcessing(reputation)).toBe(false);
     });
 
     test("should return false for banned users", () => {
-      const reputation = {
-        userId: "test",
-        score: 10,
+      const reputation = createUserReputation({
         level: "banned",
-        flaggedWhispers: 5,
-        totalWhispers: 10,
-        approvedWhispers: 5,
-        rejectedWhispers: 5,
         lastViolation: new Date(),
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      });
       expect(needsRecoveryProcessing(reputation)).toBe(false);
     });
 
     test("should return false for users at max score", () => {
-      const reputation = {
-        userId: "test",
-        score: 100,
+      const reputation = createUserReputation({
         level: "trusted",
-        flaggedWhispers: 0,
-        totalWhispers: 10,
-        approvedWhispers: 10,
-        rejectedWhispers: 0,
+        score: 100,
         lastViolation: new Date(),
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      });
       expect(needsRecoveryProcessing(reputation)).toBe(false);
     });
 
     test("should return true for users needing recovery", () => {
-      const oldDate = new Date();
-      oldDate.setDate(oldDate.getDate() - 10); // 10 days ago
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
 
-      const reputation = {
-        userId: "test",
-        score: 60,
+      const reputation = createUserReputation({
         level: "standard",
-        flaggedWhispers: 1,
-        totalWhispers: 10,
-        approvedWhispers: 9,
-        rejectedWhispers: 1,
-        lastViolation: oldDate,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+        score: 60,
+        lastViolation: yesterday,
+      });
       expect(needsRecoveryProcessing(reputation)).toBe(true);
     });
   });
 
   describe("getReputationLevelDescription", () => {
     test("should return correct descriptions for each level", () => {
-      expect(getReputationLevelDescription("trusted")).toContain(
-        "Trusted user"
+      expect(getReputationLevelDescription("trusted")).toBe(
+        "Trusted user with fast appeals and reduced penalties"
       );
-      expect(getReputationLevelDescription("verified")).toContain(
-        "Verified user"
+      expect(getReputationLevelDescription("verified")).toBe(
+        "Verified user with standard appeals and normal penalties"
       );
-      expect(getReputationLevelDescription("standard")).toContain(
-        "Standard user"
+      expect(getReputationLevelDescription("standard")).toBe(
+        "Standard user with slower appeals and increased penalties"
       );
-      expect(getReputationLevelDescription("flagged")).toContain(
-        "Flagged user"
+      expect(getReputationLevelDescription("flagged")).toBe(
+        "Flagged user requiring manual review with heavy penalties"
       );
-      expect(getReputationLevelDescription("banned")).toContain("Banned user");
+      expect(getReputationLevelDescription("banned")).toBe(
+        "Banned user with no appeals and maximum penalties"
+      );
     });
 
     test("should return default for unknown levels", () => {

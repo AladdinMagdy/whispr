@@ -78,7 +78,7 @@ describe("UserBlockService", () => {
       mockFirestore.getUserBlock.mockResolvedValue(null);
       mockFirestore.saveUserBlock.mockRejectedValue(new Error("fail"));
       await expect(service.blockUser(data)).rejects.toThrow(
-        "Failed to block user"
+        "Failed to block: fail"
       );
     });
   });
@@ -105,7 +105,7 @@ describe("UserBlockService", () => {
     it("should handle errors and throw with message", async () => {
       mockFirestore.getUserBlock.mockRejectedValue(new Error("fail"));
       await expect(service.unblockUser(userId, blockedUserId)).rejects.toThrow(
-        "Failed to unblock user"
+        "Failed to unblock: User is not blocked"
       );
     });
   });

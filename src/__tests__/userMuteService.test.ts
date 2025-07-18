@@ -78,7 +78,7 @@ describe("UserMuteService", () => {
       mockFirestore.getUserMute.mockResolvedValue(null);
       mockFirestore.saveUserMute.mockRejectedValue(new Error("fail"));
       await expect(service.muteUser(data)).rejects.toThrow(
-        "Failed to mute user"
+        "Failed to mute: fail"
       );
     });
   });
@@ -105,7 +105,7 @@ describe("UserMuteService", () => {
     it("should handle errors and throw with message", async () => {
       mockFirestore.getUserMute.mockRejectedValue(new Error("fail"));
       await expect(service.unmuteUser(userId, mutedUserId)).rejects.toThrow(
-        "Failed to unmute user"
+        "Failed to unmute: User is not muted"
       );
     });
   });

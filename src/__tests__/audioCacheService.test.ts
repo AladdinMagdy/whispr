@@ -19,8 +19,8 @@ import {
   AudioCacheService,
   getAudioCacheService,
   resetAudioCacheService,
-  hashString,
 } from "../services/audioCacheService";
+import { hashString } from "../utils/audioCacheUtils";
 
 import { getFileExtension } from "../utils/fileUtils";
 import * as FileSystem from "expo-file-system";

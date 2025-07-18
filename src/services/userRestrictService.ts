@@ -1,12 +1,23 @@
 import { getFirestoreService } from "./firestoreService";
 import { UserRestriction } from "../types";
+import {
+  CreateRestrictionData,
+  RestrictionStats,
+  createUserRestriction,
+  validateUserActionData,
+  checkExistingAction,
+  checkActionDoesNotExist,
+  calculateRestrictionStats,
+  handleUserActionError,
+  logUserActionSuccess,
+  getDefaultRestrictionStats,
+  validateRestrictionType,
+} from "../utils/userActionUtils";
 
-export interface CreateRestrictionData {
-  userId: string;
-  restrictedUserId: string;
-  restrictedUserDisplayName: string;
-  type: "interaction" | "visibility" | "full";
-}
+export type {
+  CreateRestrictionData,
+  RestrictionStats,
+} from "../utils/userActionUtils";
 
 export class UserRestrictService {
   private static instance: UserRestrictService;
@@ -26,38 +37,42 @@ export class UserRestrictService {
    */
   async restrictUser(data: CreateRestrictionData): Promise<UserRestriction> {
     try {
+      // Validate input data
+      validateUserActionData(
+        data.userId,
+        data.restrictedUserId,
+        data.restrictedUserDisplayName
+      );
+
+      // Validate restriction type
+      if (!validateRestrictionType(data.type)) {
+        throw new Error("Invalid restriction type");
+      }
+
       // Check if already restricted
       const existingRestriction = await this.getRestriction(
         data.userId,
         data.restrictedUserId
       );
-      if (existingRestriction) {
-        throw new Error("User is already restricted");
-      }
+      checkExistingAction(existingRestriction, "restrict");
 
-      const restriction: UserRestriction = {
-        id: `restrict-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        userId: data.userId,
-        restrictedUserId: data.restrictedUserId,
-        restrictedUserDisplayName: data.restrictedUserDisplayName,
-        type: data.type,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      // Create restriction object
+      const restriction = createUserRestriction(data);
 
+      // Save to database
       await this.firestoreService.saveUserRestriction(restriction);
-      console.log(
-        `🚫 User ${data.restrictedUserId} restricted by ${data.userId}`
+
+      // Log success
+      logUserActionSuccess(
+        "restrict",
+        "create",
+        data.userId,
+        data.restrictedUserId
       );
 
       return restriction;
     } catch (error) {
-      console.error("❌ Error restricting user:", error);
-      throw new Error(
-        `Failed to restrict user: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      handleUserActionError(error, "restrict", "create");
     }
   }
 
@@ -70,19 +85,13 @@ export class UserRestrictService {
   ): Promise<void> {
     try {
       const restriction = await this.getRestriction(userId, restrictedUserId);
-      if (!restriction) {
-        throw new Error("User is not restricted");
-      }
+      checkActionDoesNotExist(restriction, "restrict");
 
-      await this.firestoreService.deleteUserRestriction(restriction.id);
-      console.log(`✅ User ${restrictedUserId} unrestricted by ${userId}`);
+      await this.firestoreService.deleteUserRestriction(restriction!.id);
+
+      logUserActionSuccess("restrict", "delete", userId, restrictedUserId);
     } catch (error) {
-      console.error("❌ Error unrestricting user:", error);
-      throw new Error(
-        `Failed to unrestrict user: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+      handleUserActionError(error, "restrict", "delete");
     }
   }
 
@@ -135,32 +144,13 @@ export class UserRestrictService {
   /**
    * Get restriction statistics
    */
-  async getRestrictionStats(userId: string): Promise<{
-    totalRestricted: number;
-    byType: Record<string, number>;
-  }> {
+  async getRestrictionStats(userId: string): Promise<RestrictionStats> {
     try {
       const restrictedUsers = await this.getRestrictedUsers(userId);
-      const byType: Record<string, number> = {
-        interaction: 0,
-        visibility: 0,
-        full: 0,
-      };
-
-      restrictedUsers.forEach((restriction) => {
-        byType[restriction.type]++;
-      });
-
-      return {
-        totalRestricted: restrictedUsers.length,
-        byType,
-      };
+      return calculateRestrictionStats(restrictedUsers);
     } catch (error) {
       console.error("❌ Error getting restriction stats:", error);
-      return {
-        totalRestricted: 0,
-        byType: { interaction: 0, visibility: 0, full: 0 },
-      };
+      return getDefaultRestrictionStats();
     }
   }
 }
