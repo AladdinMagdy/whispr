@@ -17,7 +17,7 @@ import {
 export type { CreateBlockData, BlockStats } from "../utils/userActionUtils";
 
 export class UserBlockService {
-  private static instance: UserBlockService;
+  private static instance: UserBlockService | null;
   private firestoreService = getFirestoreService();
   private blockListCache = getBlockListCacheService();
 
@@ -28,6 +28,18 @@ export class UserBlockService {
       UserBlockService.instance = new UserBlockService();
     }
     return UserBlockService.instance;
+  }
+
+  /**
+   * Get users who have blocked the specified user (extracted from FirestoreService)
+   */
+  async getUsersWhoBlockedMe(userId: string): Promise<UserBlock[]> {
+    try {
+      return await this.firestoreService.getUsersWhoBlockedMe(userId);
+    } catch (error) {
+      console.error("Error getting users who blocked me:", error);
+      throw new Error("Failed to get users who blocked me");
+    }
   }
 
   /**
@@ -134,7 +146,24 @@ export class UserBlockService {
       return getDefaultBlockStats();
     }
   }
+
+  static resetInstance(): void {
+    UserBlockService.instance = null;
+  }
+
+  static destroyInstance(): void {
+    UserBlockService.instance = null;
+  }
 }
 
-// Singleton export
-export const getUserBlockService = () => UserBlockService.getInstance();
+export const getUserBlockService = (): UserBlockService => {
+  return UserBlockService.getInstance();
+};
+
+export const resetUserBlockService = (): void => {
+  UserBlockService.resetInstance();
+};
+
+export const destroyUserBlockService = (): void => {
+  UserBlockService.destroyInstance();
+};

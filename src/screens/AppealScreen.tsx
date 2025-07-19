@@ -14,7 +14,7 @@ import {
 import { Card, Button, Chip } from "react-native-paper";
 import { useAuth } from "../providers/AuthProvider";
 import { getAppealService } from "../services/appealService";
-import { getFirestoreService } from "../services/firestoreService";
+import { getPrivacyService } from "../services/privacyService";
 import { Appeal, AppealStatus, UserViolation } from "../types";
 
 const AppealScreen = () => {
@@ -35,12 +35,12 @@ const AppealScreen = () => {
     try {
       setLoading(true);
       const appealService = getAppealService();
-      const firestoreService = getFirestoreService();
+      const privacyService = getPrivacyService();
 
       // Load appeals and violations in parallel
       const [userAppeals, userViolations] = await Promise.all([
         appealService.getUserAppeals(user.uid),
-        firestoreService.getUserViolations(user.uid, 90), // Last 90 days
+        privacyService.getUserViolations(user.uid, 90), // Last 90 days
       ]);
 
       setAppeals(userAppeals);

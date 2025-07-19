@@ -41,7 +41,8 @@ const mockFirestoreService = {
 };
 
 const mockReputationService = {
-  adjustUserReputationScore: jest.fn(),
+  getUserReputation: jest.fn(),
+  updateUserReputation: jest.fn(),
 };
 
 // Mock the service getters to return our mock objects
@@ -76,9 +77,16 @@ describe("SuspensionService", () => {
     it("should create a temporary suspension successfully", async () => {
       // Mock firestore service
       mockFirestoreService.saveSuspension.mockResolvedValue(undefined);
-      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
-        undefined
-      );
+
+      // Mock reputation service
+      mockReputationService.getUserReputation.mockResolvedValue({
+        userId: "user-123",
+        score: 50,
+        level: "standard",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      mockReputationService.updateUserReputation.mockResolvedValue(undefined);
 
       const suspensionData: CreateSuspensionData = {
         userId: "user-123",
@@ -100,16 +108,27 @@ describe("SuspensionService", () => {
       expect(result.endDate).toBeDefined(); // Temporary suspensions should have endDate
 
       expect(mockFirestoreService.saveSuspension).toHaveBeenCalledWith(result);
-      expect(
-        mockFirestoreService.adjustUserReputationScore
-      ).toHaveBeenCalledWith("user-123", -5, "Suspension: temporary");
+      expect(mockReputationService.updateUserReputation).toHaveBeenCalledWith(
+        "user-123",
+        {
+          score: 45, // 50 - 5 penalty
+          updatedAt: expect.any(Date),
+        }
+      );
     });
 
     it("should create a permanent suspension", async () => {
       mockFirestoreService.saveSuspension.mockResolvedValue(undefined);
-      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
-        undefined
-      );
+
+      // Mock reputation service
+      mockReputationService.getUserReputation.mockResolvedValue({
+        userId: "user-123",
+        score: 50,
+        level: "standard",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      mockReputationService.updateUserReputation.mockResolvedValue(undefined);
 
       const suspensionData: CreateSuspensionData = {
         userId: "user-123",
@@ -121,9 +140,13 @@ describe("SuspensionService", () => {
       const result = await suspensionService.createSuspension(suspensionData);
 
       expect(result.type).toBe(SuspensionType.PERMANENT);
-      expect(
-        mockFirestoreService.adjustUserReputationScore
-      ).toHaveBeenCalledWith("user-123", -5, "Suspension: permanent");
+      expect(mockReputationService.updateUserReputation).toHaveBeenCalledWith(
+        "user-123",
+        {
+          score: 45, // 50 - 5 penalty
+          updatedAt: expect.any(Date),
+        }
+      );
     });
 
     it("should create a warning without reputation penalty", async () => {
@@ -788,9 +811,16 @@ describe("SuspensionService", () => {
         expiredSuspension,
       ]);
       mockFirestoreService.updateSuspension.mockResolvedValue(undefined);
-      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
-        undefined
-      );
+
+      // Mock reputation service
+      mockReputationService.getUserReputation.mockResolvedValue({
+        userId: "user-123",
+        score: 45,
+        level: "standard",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      mockReputationService.updateUserReputation.mockResolvedValue(undefined);
 
       await suspensionService.checkSuspensionExpiration();
 
@@ -803,12 +833,12 @@ describe("SuspensionService", () => {
       );
 
       // Should restore reputation for temporary suspensions
-      expect(
-        mockFirestoreService.adjustUserReputationScore
-      ).toHaveBeenCalledWith(
+      expect(mockReputationService.updateUserReputation).toHaveBeenCalledWith(
         "user-123",
-        5,
-        "Suspension expired - reputation restored"
+        {
+          score: 50, // 45 + 5 bonus
+          updatedAt: expect.any(Date),
+        }
       );
     });
 

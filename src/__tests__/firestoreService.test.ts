@@ -63,6 +63,13 @@ jest.mock("../services/suspensionService", () => ({
   })),
 }));
 
+// Mock privacy service
+jest.mock("../services/privacyService", () => ({
+  getPrivacyService: jest.fn(() => ({
+    getPermanentlyBannedUserIds: jest.fn().mockResolvedValue([]),
+  })),
+}));
+
 // Patch global import for dynamic import in createWhisper
 (globalThis as any).import = (path: string) => {
   if (path.includes("suspensionService")) {
@@ -92,9 +99,6 @@ describe("FirestoreService", () => {
     mockOnSnapshot = onSnapshot as jest.MockedFunction<typeof onSnapshot>;
 
     // Mock prototype methods so all instances use the mock
-    FirestoreService.prototype.getPermanentlyBannedUserIds = jest
-      .fn()
-      .mockResolvedValue([]);
     FirestoreService.prototype.getUserBlocks = jest.fn().mockResolvedValue([]);
     FirestoreService.prototype.getUsersWhoBlockedMe = jest
       .fn()

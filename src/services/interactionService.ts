@@ -1,4 +1,5 @@
-import { getFirestoreService } from "./firestoreService";
+import { getFirestoreService, CommentLikeData } from "./firestoreService";
+import { getPrivacyService } from "./privacyService";
 import { useAuthStore } from "../store/useAuthStore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Like, Comment, CommentLike } from "../types";
@@ -60,6 +61,7 @@ interface CommentLikeListCache {
 export class InteractionService {
   private static instance: InteractionService;
   private firestoreService = getFirestoreService();
+  private privacyService = getPrivacyService();
   private likeCache: LikeCache = {};
   private commentCache: { [whisperId: string]: CommentCache } = {};
   private countCache: { [whisperId: string]: CountCache } = {};
@@ -77,6 +79,119 @@ export class InteractionService {
       InteractionService.instance = new InteractionService();
     }
     return InteractionService.instance;
+  }
+
+  /**
+   * Direct like method (extracted from FirestoreService)
+   */
+  async likeWhisper(
+    whisperId: string,
+    userId: string,
+    userDisplayName?: string,
+    userProfileColor?: string
+  ): Promise<void> {
+    try {
+      await this.firestoreService.likeWhisper(
+        whisperId,
+        userId,
+        userDisplayName,
+        userProfileColor
+      );
+
+      // Update cache after successful like
+      const cacheKey = `${whisperId}_${userId}`;
+      const currentState = this.likeCache[cacheKey] || {
+        isLiked: false,
+        count: 0,
+        timestamp: 0,
+      };
+
+      this.likeCache[cacheKey] = {
+        isLiked: true,
+        count: currentState.count + 1,
+        timestamp: Date.now(),
+      };
+
+      // Update count cache
+      this.countCache[whisperId] = {
+        ...this.countCache[whisperId],
+        likes: (this.countCache[whisperId]?.likes || 0) + 1,
+        timestamp: Date.now(),
+      };
+
+      // Persist to AsyncStorage
+      await this.persistLikeCache(cacheKey, this.likeCache[cacheKey]);
+    } catch (error) {
+      console.error("Error liking whisper:", error);
+      throw new Error("Failed to like whisper");
+    }
+  }
+
+  /**
+   * Direct comment like method (extracted from FirestoreService)
+   */
+  async likeComment(
+    commentId: string,
+    userId: string,
+    userDisplayName?: string,
+    userProfileColor?: string
+  ): Promise<void> {
+    try {
+      await this.firestoreService.likeComment(
+        commentId,
+        userId,
+        userDisplayName,
+        userProfileColor
+      );
+    } catch (error) {
+      console.error("Error liking comment:", error);
+      throw new Error("Failed to like comment");
+    }
+  }
+
+  /**
+   * Subscribe to comments for real-time updates (extracted from FirestoreService)
+   */
+  subscribeToComments(
+    whisperId: string,
+    callback: (comments: Comment[]) => void
+  ): () => void {
+    try {
+      return this.firestoreService.subscribeToComments(whisperId, callback);
+    } catch (error) {
+      console.error("Error subscribing to comments:", error);
+      throw new Error("Failed to subscribe to comments");
+    }
+  }
+
+  /**
+   * Subscribe to whisper likes for real-time updates (extracted from FirestoreService)
+   */
+  subscribeToWhisperLikes(
+    whisperId: string,
+    callback: (likes: Like[]) => void
+  ): () => void {
+    try {
+      return this.firestoreService.subscribeToWhisperLikes(whisperId, callback);
+    } catch (error) {
+      console.error("Error subscribing to whisper likes:", error);
+      throw new Error("Failed to subscribe to whisper likes");
+    }
+  }
+
+  /**
+   * Subscribe to comment likes for real-time updates (extracted from FirestoreService)
+   */
+  subscribeToCommentLikes(
+    commentId: string,
+    callback: (likes: CommentLikeData[]) => void
+  ): () => void {
+    try {
+      return this.firestoreService.subscribeToCommentLikes(commentId, callback);
+    } catch (error) {
+      console.error("Error subscribing to comment likes:", error);
+      throw new Error("Failed to subscribe to comment likes");
+    }
   }
 
   /**
@@ -911,7 +1026,7 @@ export class InteractionService {
     }
 
     try {
-      const result = await this.firestoreService.getWhisperLikesWithPrivacy(
+      const result = await this.privacyService.getWhisperLikesWithPrivacy(
         whisperId,
         user.uid,
         limit,

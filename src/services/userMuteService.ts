@@ -21,7 +21,7 @@ export type {
 } from "../utils/userActionUtils";
 
 export class UserMuteService {
-  private static instance: UserMuteService;
+  private static instance: UserMuteService | null;
   private firestoreService = getFirestoreService();
   private blockListCache = getBlockListCacheService();
 
@@ -132,7 +132,35 @@ export class UserMuteService {
       return getDefaultMuteStats();
     }
   }
+
+  // ===== STATIC METHODS FOR RESET/DESTROY =====
+
+  static resetInstance(): void {
+    UserMuteService.instance = null;
+  }
+
+  static destroyInstance(): void {
+    UserMuteService.instance = null;
+  }
 }
 
-// Singleton export
-export const getUserMuteService = () => UserMuteService.getInstance();
+/**
+ * Factory function to get UserMuteService instance
+ */
+export const getUserMuteService = (): UserMuteService => {
+  return UserMuteService.getInstance();
+};
+
+/**
+ * Reset the UserMuteService singleton instance
+ */
+export const resetUserMuteService = (): void => {
+  UserMuteService.resetInstance();
+};
+
+/**
+ * Destroy the UserMuteService singleton instance
+ */
+export const destroyUserMuteService = (): void => {
+  UserMuteService.destroyInstance();
+};

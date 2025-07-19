@@ -7,7 +7,7 @@ import {
   Animated,
 } from "react-native";
 import { useAuth } from "../providers/AuthProvider";
-import { getFirestoreService } from "../services/firestoreService";
+import { getPrivacyService } from "../services/privacyService";
 import { getAppealService } from "../services/appealService";
 
 interface AppealNotificationProps {
@@ -28,12 +28,12 @@ const AppealNotification: React.FC<AppealNotificationProps> = ({
 
     const checkAppealStatus = async () => {
       try {
-        const firestoreService = getFirestoreService();
+        const privacyService = getPrivacyService();
         const appealService = getAppealService();
 
         // Get violations and appeals in parallel
         const [violations, appeals] = await Promise.all([
-          firestoreService.getUserViolations(user.uid, 30), // Last 30 days
+          privacyService.getUserViolations(user.uid, 30), // Last 30 days
           appealService.getUserAppeals(user.uid),
         ]);
 

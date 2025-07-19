@@ -19,8 +19,8 @@ jest.mock("../services/appealService", () => ({
   })),
 }));
 
-jest.mock("../services/firestoreService", () => ({
-  getFirestoreService: jest.fn(() => ({
+jest.mock("../services/privacyService", () => ({
+  getPrivacyService: jest.fn(() => ({
     getUserViolations: mockGetUserViolations,
   })),
 }));

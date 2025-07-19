@@ -20,7 +20,7 @@ export type {
 } from "../utils/userActionUtils";
 
 export class UserRestrictService {
-  private static instance: UserRestrictService;
+  private static instance: UserRestrictService | null;
   private firestoreService = getFirestoreService();
 
   private constructor() {}
@@ -153,7 +153,35 @@ export class UserRestrictService {
       return getDefaultRestrictionStats();
     }
   }
+
+  // ===== STATIC METHODS FOR RESET/DESTROY =====
+
+  static resetInstance(): void {
+    UserRestrictService.instance = null;
+  }
+
+  static destroyInstance(): void {
+    UserRestrictService.instance = null;
+  }
 }
 
-// Singleton export
-export const getUserRestrictService = () => UserRestrictService.getInstance();
+/**
+ * Factory function to get UserRestrictService instance
+ */
+export const getUserRestrictService = (): UserRestrictService => {
+  return UserRestrictService.getInstance();
+};
+
+/**
+ * Reset the UserRestrictService singleton instance
+ */
+export const resetUserRestrictService = (): void => {
+  UserRestrictService.resetInstance();
+};
+
+/**
+ * Destroy the UserRestrictService singleton instance
+ */
+export const destroyUserRestrictService = (): void => {
+  UserRestrictService.destroyInstance();
+};

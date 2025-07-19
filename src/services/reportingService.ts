@@ -18,6 +18,7 @@ import {
   CommentReportResolution,
 } from "../types";
 import { getFirestoreService } from "./firestoreService";
+import { getPrivacyService } from "./privacyService";
 import { getReputationService } from "./reputationService";
 import { getSuspensionService } from "./suspensionService";
 import { REPORTING_CONSTANTS, TIME_CONSTANTS } from "../constants";
@@ -46,6 +47,7 @@ export interface CreateCommentReportData {
 export class ReportingService {
   private static instance: ReportingService | null;
   private firestoreService = getFirestoreService();
+  private privacyService = getPrivacyService();
   private reputationService = getReputationService();
 
   // Priority thresholds based on reporter reputation
@@ -711,7 +713,7 @@ export class ReportingService {
           createdAt: new Date(),
         };
 
-        await this.firestoreService.saveUserViolation(violation);
+        await this.privacyService.saveUserViolation(violation);
         whisperActionTaken = true;
       }
 
@@ -743,7 +745,7 @@ export class ReportingService {
           createdAt: new Date(),
         };
 
-        await this.firestoreService.saveUserViolation(violation);
+        await this.privacyService.saveUserViolation(violation);
         whisperActionTaken = true;
       }
 
@@ -773,7 +775,7 @@ export class ReportingService {
           createdAt: new Date(),
         };
 
-        await this.firestoreService.saveUserViolation(violation);
+        await this.privacyService.saveUserViolation(violation);
 
         // Apply temporary ban
         await suspensionService.createSuspension({
@@ -809,7 +811,7 @@ export class ReportingService {
   private async checkUserLevelEscalation(userId: string): Promise<void> {
     try {
       // Get deleted whisper count within the user escalation window
-      const deletedCount = await this.firestoreService.getDeletedWhisperCount(
+      const deletedCount = await this.privacyService.getDeletedWhisperCount(
         userId,
         REPORTING_CONSTANTS.AUTO_ESCALATION.USER.ESCALATION_WINDOW_DAYS
       );

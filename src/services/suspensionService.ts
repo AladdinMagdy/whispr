@@ -42,6 +42,42 @@ export class SuspensionService {
   }
 
   /**
+   * Get all suspensions (extracted from FirestoreService)
+   */
+  async getAllSuspensions(): Promise<Suspension[]> {
+    try {
+      return await this.firestoreService.getAllSuspensions();
+    } catch (error) {
+      console.error("Error getting all suspensions:", error);
+      throw new Error("Failed to get all suspensions");
+    }
+  }
+
+  /**
+   * Get active suspensions (extracted from FirestoreService)
+   */
+  async getActiveSuspensions(): Promise<Suspension[]> {
+    try {
+      return await this.firestoreService.getActiveSuspensions();
+    } catch (error) {
+      console.error("Error getting active suspensions:", error);
+      throw new Error("Failed to get active suspensions");
+    }
+  }
+
+  /**
+   * Get user suspensions (extracted from FirestoreService)
+   */
+  async getUserSuspensions(userId: string): Promise<Suspension[]> {
+    try {
+      return await this.firestoreService.getUserSuspensions(userId);
+    } catch (error) {
+      console.error("Error getting user suspensions:", error);
+      throw new Error("Failed to get user suspensions");
+    }
+  }
+
+  /**
    * Create a new suspension
    */
   async createSuspension(data: CreateSuspensionData): Promise<Suspension> {
@@ -94,9 +130,7 @@ export class SuspensionService {
    */
   async getUserActiveSuspensions(userId: string): Promise<Suspension[]> {
     try {
-      const suspensions = await this.firestoreService.getUserSuspensions(
-        userId
-      );
+      const suspensions = await this.getUserSuspensions(userId);
       return suspensions.filter(
         (s) => s.isActive && s.endDate && s.endDate > new Date()
       );
@@ -111,9 +145,7 @@ export class SuspensionService {
    */
   async isUserSuspended(userId: string): Promise<UserSuspensionStatus> {
     try {
-      const suspensions = await this.firestoreService.getUserSuspensions(
-        userId
-      );
+      const suspensions = await this.getUserSuspensions(userId);
       return determineUserSuspensionStatus(suspensions);
     } catch (error) {
       console.error("❌ Error checking user suspension status:", error);
@@ -195,16 +227,15 @@ export class SuspensionService {
    */
   async checkSuspensionExpiration(): Promise<void> {
     try {
-      const activeSuspensions =
-        await this.firestoreService.getActiveSuspensions();
+      const activeSuspensions = await this.getActiveSuspensions();
 
       for (const suspension of activeSuspensions) {
         if (isSuspensionExpired(suspension)) {
-          // Deactivate expired suspension
           const updates = createDeactivationUpdates();
+
           await this.firestoreService.updateSuspension(suspension.id, updates);
 
-          // Restore user reputation if it was a temporary suspension
+          // Restore reputation if needed
           if (shouldRestoreReputationOnExpiry(suspension.type)) {
             await this.restoreUserReputationAfterSuspension(suspension.userId);
           }
@@ -226,31 +257,41 @@ export class SuspensionService {
   ): Promise<void> {
     try {
       const penalty = getReputationPenalty(suspensionType);
-      if (penalty !== 0) {
-        await this.firestoreService.adjustUserReputationScore(
-          userId,
-          penalty,
-          `Suspension: ${suspensionType}`
-        );
-      }
+      const reputation = await this.reputationService.getUserReputation(userId);
+
+      const newScore = Math.max(0, reputation.score + penalty);
+
+      await this.reputationService.updateUserReputation(userId, {
+        score: newScore,
+        updatedAt: new Date(),
+      });
+
+      console.log(
+        `📉 Reputation penalty applied for ${suspensionType}: -${penalty} points`
+      );
     } catch (error) {
       console.error("❌ Error updating reputation for suspension:", error);
     }
   }
 
   /**
-   * Restore user reputation after temporary suspension expires
+   * Restore user reputation after suspension expires
    */
   private async restoreUserReputationAfterSuspension(
     userId: string
   ): Promise<void> {
     try {
       const bonus = getReputationRestorationBonus();
-      await this.firestoreService.adjustUserReputationScore(
-        userId,
-        bonus,
-        "Suspension expired - reputation restored"
-      );
+      const reputation = await this.reputationService.getUserReputation(userId);
+
+      const newScore = Math.min(100, reputation.score + bonus);
+
+      await this.reputationService.updateUserReputation(userId, {
+        score: newScore,
+        updatedAt: new Date(),
+      });
+
+      console.log(`📈 Reputation restored after suspension: +${bonus} points`);
     } catch (error) {
       console.error("❌ Error restoring reputation after suspension:", error);
     }
@@ -261,8 +302,8 @@ export class SuspensionService {
    */
   async getSuspensionStats(): Promise<SuspensionStats> {
     try {
-      const suspensions = await this.firestoreService.getAllSuspensions();
-      return calculateSuspensionStats(suspensions);
+      const allSuspensions = await this.getAllSuspensions();
+      return calculateSuspensionStats(allSuspensions);
     } catch (error) {
       console.error("❌ Error getting suspension stats:", error);
       return {
@@ -275,6 +316,24 @@ export class SuspensionService {
       };
     }
   }
+
+  static resetInstance(): void {
+    SuspensionService.instance = null;
+  }
+
+  static destroyInstance(): void {
+    SuspensionService.instance = null;
+  }
 }
 
-export const getSuspensionService = () => SuspensionService.getInstance();
+export const getSuspensionService = (): SuspensionService => {
+  return SuspensionService.getInstance();
+};
+
+export const resetSuspensionService = (): void => {
+  SuspensionService.resetInstance();
+};
+
+export const destroySuspensionService = (): void => {
+  SuspensionService.destroyInstance();
+};

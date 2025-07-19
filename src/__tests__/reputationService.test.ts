@@ -634,10 +634,18 @@ describe("ReputationService", () => {
         new Error("Stats error")
       );
 
-      // Should throw the error
-      await expect(reputationService.getReputationStats()).rejects.toThrow(
-        "Stats error"
-      );
+      // Should return default stats object on error
+      const stats = await reputationService.getReputationStats();
+
+      expect(stats).toEqual({
+        totalUsers: 0,
+        trustedUsers: 0,
+        verifiedUsers: 0,
+        standardUsers: 0,
+        flaggedUsers: 0,
+        bannedUsers: 0,
+        averageScore: 0,
+      });
     });
   });
 

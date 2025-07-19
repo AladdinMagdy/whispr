@@ -5,11 +5,13 @@ import {
   destroyInteractionService,
 } from "../services/interactionService";
 import { getFirestoreService } from "../services/firestoreService";
+import { getPrivacyService } from "../services/privacyService";
 import { useAuthStore } from "../store/useAuthStore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Mock dependencies
 jest.mock("../services/firestoreService");
+jest.mock("../services/privacyService");
 jest.mock("../store/useAuthStore");
 jest.mock("@react-native-async-storage/async-storage", () => ({
   setItem: jest.fn(),
@@ -33,6 +35,10 @@ const mockFirestoreService = {
   getWhisperLikes: jest.fn(),
   getWhisperLikesWithPrivacy: jest.fn(),
   hasUserLikedComment: jest.fn(),
+};
+
+const mockPrivacyService = {
+  getWhisperLikesWithPrivacy: jest.fn(),
 };
 
 describe("InteractionService", () => {
@@ -65,6 +71,7 @@ describe("InteractionService", () => {
       error: null,
     }));
     (getFirestoreService as jest.Mock).mockReturnValue(mockFirestoreService);
+    (getPrivacyService as jest.Mock).mockReturnValue(mockPrivacyService);
     interactionService = getInteractionService();
   });
 
@@ -850,7 +857,7 @@ describe("InteractionService", () => {
         { id: "2", userId: "user2", userDisplayName: "User 2" },
       ];
 
-      mockFirestoreService.getWhisperLikesWithPrivacy.mockResolvedValue({
+      mockPrivacyService.getWhisperLikesWithPrivacy.mockResolvedValue({
         likes: mockLikes,
         hasMore: false,
         lastDoc: null,
@@ -863,7 +870,7 @@ describe("InteractionService", () => {
       expect(result1.likes).toEqual(mockLikes);
       expect(result1.hasMore).toBe(false);
       expect(
-        mockFirestoreService.getWhisperLikesWithPrivacy
+        mockPrivacyService.getWhisperLikesWithPrivacy
       ).toHaveBeenCalledTimes(1);
 
       // Second call - should use cache
@@ -872,7 +879,7 @@ describe("InteractionService", () => {
       );
       expect(result2.likes).toEqual(mockLikes);
       expect(
-        mockFirestoreService.getWhisperLikesWithPrivacy
+        mockPrivacyService.getWhisperLikesWithPrivacy
       ).toHaveBeenCalledTimes(1); // Still 1
     });
 
@@ -883,7 +890,7 @@ describe("InteractionService", () => {
         { id: "3", userId: "user3", userDisplayName: "User 3" },
       ];
 
-      mockFirestoreService.getWhisperLikesWithPrivacy.mockResolvedValue({
+      mockPrivacyService.getWhisperLikesWithPrivacy.mockResolvedValue({
         likes: mockLikes,
         hasMore: true,
         lastDoc: { id: "next-doc" },
@@ -897,7 +904,7 @@ describe("InteractionService", () => {
       expect(result.likes).toEqual(mockLikes);
       expect(result.hasMore).toBe(true);
       expect(
-        mockFirestoreService.getWhisperLikesWithPrivacy
+        mockPrivacyService.getWhisperLikesWithPrivacy
       ).toHaveBeenCalledWith(whisperId, "user123", 10, lastDoc);
     });
 
@@ -910,7 +917,7 @@ describe("InteractionService", () => {
     });
 
     it("should handle server errors", async () => {
-      mockFirestoreService.getWhisperLikesWithPrivacy.mockRejectedValue(
+      mockPrivacyService.getWhisperLikesWithPrivacy.mockRejectedValue(
         new Error("Server error")
       );
 

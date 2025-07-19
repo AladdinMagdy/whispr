@@ -43,6 +43,18 @@ export class AppealService {
   }
 
   /**
+   * Get all appeals (extracted from FirestoreService)
+   */
+  async getAllAppeals(): Promise<Appeal[]> {
+    try {
+      return await this.firestoreService.getAllAppeals();
+    } catch (error) {
+      console.error("Error getting all appeals:", error);
+      throw new Error("Failed to get all appeals");
+    }
+  }
+
+  /**
    * Create a new appeal
    */
   async createAppeal(data: CreateAppealData): Promise<Appeal> {
@@ -201,16 +213,12 @@ export class AppealService {
     violationId: string,
     action: string
   ): Promise<void> {
-    try {
-      // This would need to be implemented in FirestoreService
-      console.log(`📝 Updated violation ${violationId} resolution: ${action}`);
-    } catch (error) {
-      console.error("❌ Error updating violation resolution:", error);
-    }
+    // This would need to be implemented in FirestoreService
+    console.log(`Updating violation ${violationId} with action: ${action}`);
   }
 
   /**
-   * Check if appeal is expired
+   * Check for expired appeals and mark them as expired
    */
   async checkAppealExpiration(): Promise<void> {
     try {
@@ -223,10 +231,9 @@ export class AppealService {
         const timeLimit = getAppealTimeLimit(reputation.level);
 
         if (isAppealExpired(appeal, timeLimit)) {
-          // Expire the appeal
           const updates = createExpirationUpdates();
           await this.firestoreService.updateAppeal(appeal.id, updates);
-          console.log(`⏰ Appeal ${appeal.id} expired`);
+          console.log(`⏰ Appeal ${appeal.id} marked as expired`);
         }
       }
     } catch (error) {
@@ -239,13 +246,42 @@ export class AppealService {
    */
   async getAppealStats(): Promise<AppealStats> {
     try {
-      const appeals = await this.firestoreService.getAllAppeals();
-      return calculateAppealStats(appeals);
+      const allAppeals = await this.getAllAppeals();
+      return calculateAppealStats(allAppeals);
     } catch (error) {
       console.error("❌ Error getting appeal stats:", error);
       return getDefaultAppealStats();
     }
   }
+
+  // ===== STATIC METHODS FOR RESET/DESTROY =====
+
+  static resetInstance(): void {
+    AppealService.instance = null;
+  }
+
+  static destroyInstance(): void {
+    AppealService.instance = null;
+  }
 }
 
-export const getAppealService = () => AppealService.getInstance();
+/**
+ * Factory function to get AppealService instance
+ */
+export const getAppealService = (): AppealService => {
+  return AppealService.getInstance();
+};
+
+/**
+ * Reset the AppealService singleton instance
+ */
+export const resetAppealService = (): void => {
+  AppealService.resetInstance();
+};
+
+/**
+ * Destroy the AppealService singleton instance
+ */
+export const destroyAppealService = (): void => {
+  AppealService.destroyInstance();
+};

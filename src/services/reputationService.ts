@@ -9,8 +9,10 @@ import {
   ViolationType,
   ViolationRecord,
   ModerationResult,
+  UserViolation,
 } from "../types";
 import { getFirestoreService } from "./firestoreService";
+import { getPrivacyService } from "./privacyService";
 import {
   getReputationLevel,
   calculateReputationImpact,
@@ -47,6 +49,7 @@ export interface ReputationThresholds {
 export class ReputationService {
   private static instance: ReputationService | null;
   private firestoreService = getFirestoreService();
+  private privacyService = getPrivacyService();
 
   private constructor() {}
 
@@ -56,6 +59,159 @@ export class ReputationService {
     }
     return ReputationService.instance;
   }
+
+  // ===== NEW METHODS EXTRACTED FROM FIRESTORESERVICE =====
+
+  /**
+   * Save user reputation to Firestore (extracted from FirestoreService)
+   */
+  async saveUserReputation(reputation: UserReputation): Promise<void> {
+    try {
+      await this.firestoreService.saveUserReputation(reputation);
+    } catch (error) {
+      console.error("Error saving user reputation:", error);
+      throw new Error("Failed to save user reputation");
+    }
+  }
+
+  /**
+   * Update user reputation with partial data (extracted from FirestoreService)
+   */
+  async updateUserReputation(
+    userId: string,
+    updates: Partial<UserReputation>
+  ): Promise<void> {
+    try {
+      await this.firestoreService.updateUserReputation(userId, updates);
+    } catch (error) {
+      console.error("Error updating user reputation:", error);
+      throw new Error("Failed to update user reputation");
+    }
+  }
+
+  /**
+   * Delete user reputation (extracted from FirestoreService)
+   */
+  async deleteUserReputation(userId: string): Promise<void> {
+    try {
+      await this.firestoreService.deleteUserReputation(userId);
+    } catch (error) {
+      console.error("Error deleting user reputation:", error);
+      throw new Error("Failed to delete user reputation");
+    }
+  }
+
+  /**
+   * Get users by reputation level (extracted from FirestoreService)
+   */
+  async getUsersByReputationLevel(
+    level: UserReputation["level"],
+    limitCount = 50
+  ): Promise<UserReputation[]> {
+    try {
+      return await this.firestoreService.getUsersByReputationLevel(
+        level,
+        limitCount
+      );
+    } catch (error) {
+      console.error("Error getting users by reputation level:", error);
+      throw new Error("Failed to get users by reputation level");
+    }
+  }
+
+  /**
+   * Get users with recent violations (extracted from FirestoreService)
+   */
+  async getUsersWithRecentViolations(
+    daysBack = 7,
+    limitCount = 50
+  ): Promise<UserReputation[]> {
+    try {
+      return await this.firestoreService.getUsersWithRecentViolations(
+        daysBack,
+        limitCount
+      );
+    } catch (error) {
+      console.error("Error getting users with recent violations:", error);
+      throw new Error("Failed to get users with recent violations");
+    }
+  }
+
+  /**
+   * Reset user reputation to default (extracted from FirestoreService)
+   */
+  async resetUserReputation(userId: string): Promise<void> {
+    try {
+      await this.firestoreService.resetUserReputation(userId);
+    } catch (error) {
+      console.error("Error resetting user reputation:", error);
+      throw new Error("Failed to reset user reputation");
+    }
+  }
+
+  /**
+   * Adjust user reputation score manually (extracted from FirestoreService)
+   */
+  async adjustUserReputationScore(
+    userId: string,
+    newScore: number,
+    reason: string
+  ): Promise<void> {
+    try {
+      await this.firestoreService.adjustUserReputationScore(
+        userId,
+        newScore,
+        reason
+      );
+    } catch (error) {
+      console.error("Error adjusting user reputation score:", error);
+      throw new Error("Failed to adjust user reputation score");
+    }
+  }
+
+  /**
+   * Save user violation record (extracted from FirestoreService)
+   */
+  async saveUserViolation(violation: UserViolation): Promise<void> {
+    try {
+      await this.privacyService.saveUserViolation(violation);
+    } catch (error) {
+      console.error("Error saving user violation:", error);
+      throw new Error("Failed to save user violation");
+    }
+  }
+
+  /**
+   * Get user violations (extracted from FirestoreService)
+   */
+  async getUserViolations(
+    userId: string,
+    daysBack: number = 90
+  ): Promise<UserViolation[]> {
+    try {
+      return await this.privacyService.getUserViolations(userId, daysBack);
+    } catch (error) {
+      console.error("Error getting user violations:", error);
+      throw new Error("Failed to get user violations");
+    }
+  }
+
+  /**
+   * Get deleted whisper count for user (extracted from FirestoreService)
+   */
+  async getDeletedWhisperCount(
+    userId: string,
+    daysBack: number = 90
+  ): Promise<number> {
+    try {
+      return await this.privacyService.getDeletedWhisperCount(userId, daysBack);
+    } catch (error) {
+      console.error("Error getting deleted whisper count:", error);
+      throw new Error("Failed to get deleted whisper count");
+    }
+  }
+
+  // ===== EXISTING METHODS =====
 
   /**
    * Get or create user reputation
@@ -214,25 +370,24 @@ export class ReputationService {
   }
 
   /**
-   * Process reputation recovery (called periodically)
+   * Process reputation recovery for a user
    */
   async processReputationRecovery(userId: string): Promise<void> {
     try {
       const reputation = await this.getUserReputation(userId);
       const daysSinceLastViolation = getDaysSinceLastViolation(reputation);
-      const recoveryRate = getRecoveryRate(reputation.score);
 
-      // Apply time-based recovery
-      const recoveryPoints = calculateRecoveryPoints(
-        reputation,
-        daysSinceLastViolation
-      );
-      const newScore = calculateNewScoreAfterRecovery(
-        reputation.score,
-        recoveryPoints
-      );
+      // Only process recovery if enough time has passed
+      if (daysSinceLastViolation >= 30) {
+        const recoveryPoints = calculateRecoveryPoints(
+          reputation,
+          daysSinceLastViolation
+        );
+        const newScore = calculateNewScoreAfterRecovery(
+          reputation.score,
+          recoveryPoints
+        );
 
-      if (newScore > reputation.score) {
         // Update reputation with recovery
         const updatedReputation: UserReputation = {
           ...reputation,
@@ -245,10 +400,10 @@ export class ReputationService {
         await this.firestoreService.saveUserReputation(updatedReputation);
 
         console.log(`🔄 Processed reputation recovery for user ${userId}:`, {
-          daysSinceViolation: daysSinceLastViolation,
-          recoveryRate,
+          daysSinceLastViolation,
           recoveryPoints,
           newScore,
+          level: getReputationLevel(newScore),
         });
       }
     } catch (error) {
@@ -257,20 +412,21 @@ export class ReputationService {
   }
 
   /**
-   * Reset reputation (for testing or admin actions)
+   * Reset user reputation to default values
    */
   async resetReputation(userId: string): Promise<void> {
     try {
       const defaultReputation = getDefaultReputation(userId);
       await this.firestoreService.saveUserReputation(defaultReputation);
-      console.log(`🔄 Reset reputation for user ${userId}`);
+
+      console.log(`🔄 Reset reputation for user ${userId} to default`);
     } catch (error) {
       console.error("❌ Error resetting reputation:", error);
     }
   }
 
   /**
-   * Get reputation statistics
+   * Get reputation statistics across all users
    */
   async getReputationStats(): Promise<{
     totalUsers: number;
@@ -285,13 +441,22 @@ export class ReputationService {
       return await this.firestoreService.getReputationStats();
     } catch (error) {
       console.error("❌ Error getting reputation stats:", error);
-      throw error;
+      return {
+        totalUsers: 0,
+        trustedUsers: 0,
+        verifiedUsers: 0,
+        standardUsers: 0,
+        flaggedUsers: 0,
+        bannedUsers: 0,
+        averageScore: 0,
+      };
     }
   }
 
-  // Singleton management
+  // ===== STATIC METHODS FOR RESET/DESTROY =====
+
   static resetInstance(): void {
-    ReputationService.instance = new ReputationService();
+    ReputationService.instance = null;
   }
 
   static destroyInstance(): void {

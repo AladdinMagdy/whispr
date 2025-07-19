@@ -47,9 +47,9 @@ import {
   UserMute,
   UserRestriction,
   UserBlock,
-  UserViolation,
   CommentReport,
 } from "../types";
+import { getPrivacyService } from "./privacyService";
 import { FIRESTORE_COLLECTIONS } from "@/constants";
 import type { ViolationRecord } from "@/types";
 import { getErrorMessage } from "../utils/errorHelpers";
@@ -254,7 +254,8 @@ export class FirestoreService {
 
       // --- Backend filtering for permanently banned users (banType: CONTENT_HIDDEN) ---
       // This ensures content from these users is invisible to all
-      const bannedUserIds = await this.getPermanentlyBannedUserIds();
+      const privacyService = getPrivacyService();
+      const bannedUserIds = await privacyService.getPermanentlyBannedUserIds();
       if (bannedUserIds.length > 0) {
         const originalCount = whispers.length;
         whispers = whispers.filter((w) => !bannedUserIds.includes(w.userId));
@@ -772,7 +773,8 @@ export class FirestoreService {
 
       // --- Backend filtering for permanently banned users (banType: CONTENT_HIDDEN) ---
       // Filter out likes from permanently banned users
-      const bannedUserIds = await this.getPermanentlyBannedUserIds();
+      const privacyService = getPrivacyService();
+      const bannedUserIds = await privacyService.getPermanentlyBannedUserIds();
       if (bannedUserIds.length > 0) {
         const originalCount = likes.length;
         likes = likes.filter((like) => !bannedUserIds.includes(like.userId));
@@ -1002,7 +1004,8 @@ export class FirestoreService {
       });
 
       // --- Backend filtering for permanently banned users (banType: CONTENT_HIDDEN) ---
-      const bannedUserIds = await this.getPermanentlyBannedUserIds();
+      const privacyService = getPrivacyService();
+      const bannedUserIds = await privacyService.getPermanentlyBannedUserIds();
       if (bannedUserIds.length > 0) {
         const originalCount = comments.length;
         comments = comments.filter(
@@ -1363,7 +1366,8 @@ export class FirestoreService {
 
       // --- Backend filtering for permanently banned users (banType: CONTENT_HIDDEN) ---
       // Filter out comment likes from permanently banned users
-      const bannedUserIds = await this.getPermanentlyBannedUserIds();
+      const privacyService = getPrivacyService();
+      const bannedUserIds = await privacyService.getPermanentlyBannedUserIds();
       if (bannedUserIds.length > 0) {
         const originalCount = likes.length;
         likes = likes.filter((like) => !bannedUserIds.includes(like.userId));
@@ -3133,160 +3137,6 @@ export class FirestoreService {
     } catch (error) {
       console.error("❌ Error deleting user block:", error);
       throw new Error(`Failed to delete user block: ${getErrorMessage(error)}`);
-    }
-  }
-
-  /**
-   * Get whisper likes with privacy filtering for blocked users
-   */
-  async getWhisperLikesWithPrivacy(
-    whisperId: string,
-    currentUserId: string,
-    limit: number = 50,
-    lastDoc?: QueryDocumentSnapshot<DocumentData>
-  ): Promise<{
-    likes: Like[];
-    hasMore: boolean;
-    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
-  }> {
-    try {
-      // Get the likes
-      const result = await this.getWhisperLikes(whisperId, limit, lastDoc);
-
-      // Get block lists for privacy filtering
-      const [blockedUsers, usersWhoBlockedMe] = await Promise.all([
-        this.getUserBlocks(currentUserId),
-        this.getUsersWhoBlockedMe(currentUserId),
-      ]);
-
-      const blockedSet = new Set([
-        ...blockedUsers.map((b) => b.blockedUserId),
-        ...usersWhoBlockedMe.map((b) => b.userId),
-      ]);
-
-      // Filter and anonymize blocked users' likes
-      const filteredLikes = result.likes.map((like) => {
-        if (blockedSet.has(like.userId)) {
-          return {
-            ...like,
-            userDisplayName: "Anonymous",
-            userProfileColor: "#9E9E9E", // Gray color for anonymous
-          };
-        }
-        return like;
-      });
-
-      return {
-        likes: filteredLikes,
-        hasMore: result.hasMore,
-        lastDoc: result.lastDoc,
-      };
-    } catch (error) {
-      console.error("Error getting whisper likes with privacy:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get all userIds of users with active permanent bans (banType: CONTENT_HIDDEN)
-   */
-  async getPermanentlyBannedUserIds(): Promise<string[]> {
-    try {
-      const q = query(
-        collection(this.firestore, "suspensions"),
-        where("isActive", "==", true),
-        where("type", "==", "permanent"),
-        where("banType", "==", "content_hidden")
-      );
-      const querySnapshot = await getDocs(q);
-      const userIds = new Set<string>();
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        if (data.userId) userIds.add(data.userId);
-      });
-      return Array.from(userIds);
-    } catch (error) {
-      console.error("❌ Error fetching permanently banned userIds:", error);
-      return [];
-    }
-  }
-
-  // User Violation methods for escalation tracking
-  async saveUserViolation(violation: UserViolation): Promise<void> {
-    try {
-      const violationData: Record<string, unknown> = {
-        id: violation.id,
-        userId: violation.userId,
-        whisperId: violation.whisperId,
-        violationType: violation.violationType,
-        reason: violation.reason,
-        reportCount: violation.reportCount,
-        moderatorId: violation.moderatorId || "system",
-        createdAt: Timestamp.fromDate(violation.createdAt),
-      };
-
-      if (violation.expiresAt) {
-        violationData.expiresAt = Timestamp.fromDate(violation.expiresAt);
-      }
-
-      await setDoc(
-        doc(this.firestore, "userViolations", violation.id),
-        violationData
-      );
-      console.log("✅ User violation saved successfully:", violation.id);
-    } catch (error) {
-      console.error("❌ Error saving user violation:", error);
-      throw new Error(
-        `Failed to save user violation: ${getErrorMessage(error)}`
-      );
-    }
-  }
-
-  async getUserViolations(
-    userId: string,
-    daysBack: number = 90
-  ): Promise<UserViolation[]> {
-    try {
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - daysBack);
-
-      const q = query(
-        collection(this.firestore, "userViolations"),
-        where("userId", "==", userId),
-        where("createdAt", ">=", Timestamp.fromDate(cutoffDate)),
-        orderBy("createdAt", "desc")
-      );
-
-      const querySnapshot = await getDocs(q);
-      const violations: UserViolation[] = [];
-
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        violations.push({
-          ...data,
-          createdAt: data.createdAt?.toDate() || new Date(),
-          expiresAt: data.expiresAt?.toDate(),
-        } as UserViolation);
-      });
-
-      return violations;
-    } catch (error) {
-      console.error("❌ Error getting user violations:", error);
-      return [];
-    }
-  }
-
-  async getDeletedWhisperCount(
-    userId: string,
-    daysBack: number = 90
-  ): Promise<number> {
-    try {
-      const violations = await this.getUserViolations(userId, daysBack);
-      return violations.filter((v) => v.violationType === "whisper_deleted")
-        .length;
-    } catch (error) {
-      console.error("❌ Error getting deleted whisper count:", error);
-      return 0;
     }
   }
 }
