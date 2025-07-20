@@ -4,7 +4,8 @@
  */
 
 import { Suspension, SuspensionType } from "../types";
-import { getFirestoreService } from "./firestoreService";
+import { SuspensionRepository } from "../repositories/SuspensionRepository";
+import { FirebaseSuspensionRepository } from "../repositories/FirebaseSuspensionRepository";
 import { getReputationService } from "./reputationService";
 import {
   CreateSuspensionData,
@@ -29,10 +30,12 @@ import {
 
 export class SuspensionService {
   private static instance: SuspensionService | null;
-  private firestoreService = getFirestoreService();
+  private repository: SuspensionRepository;
   private reputationService = getReputationService();
 
-  private constructor() {}
+  constructor(repository?: SuspensionRepository) {
+    this.repository = repository || new FirebaseSuspensionRepository();
+  }
 
   static getInstance(): SuspensionService {
     if (!SuspensionService.instance) {
@@ -42,11 +45,11 @@ export class SuspensionService {
   }
 
   /**
-   * Get all suspensions (extracted from FirestoreService)
+   * Get all suspensions
    */
   async getAllSuspensions(): Promise<Suspension[]> {
     try {
-      return await this.firestoreService.getAllSuspensions();
+      return await this.repository.getAll();
     } catch (error) {
       console.error("Error getting all suspensions:", error);
       throw new Error("Failed to get all suspensions");
@@ -54,11 +57,11 @@ export class SuspensionService {
   }
 
   /**
-   * Get active suspensions (extracted from FirestoreService)
+   * Get active suspensions
    */
   async getActiveSuspensions(): Promise<Suspension[]> {
     try {
-      return await this.firestoreService.getActiveSuspensions();
+      return await this.repository.getActive();
     } catch (error) {
       console.error("Error getting active suspensions:", error);
       throw new Error("Failed to get active suspensions");
@@ -66,11 +69,11 @@ export class SuspensionService {
   }
 
   /**
-   * Get user suspensions (extracted from FirestoreService)
+   * Get user suspensions
    */
   async getUserSuspensions(userId: string): Promise<Suspension[]> {
     try {
-      return await this.firestoreService.getUserSuspensions(userId);
+      return await this.repository.getByUser(userId);
     } catch (error) {
       console.error("Error getting user suspensions:", error);
       throw new Error("Failed to get user suspensions");
@@ -92,8 +95,8 @@ export class SuspensionService {
         ...suspensionData,
       };
 
-      // Save to Firestore
-      await this.firestoreService.saveSuspension(suspension);
+      // Save to repository
+      await this.repository.save(suspension);
 
       // Update user reputation if this is a suspension (not just a warning)
       if (shouldAffectReputation(data.type)) {
@@ -118,7 +121,7 @@ export class SuspensionService {
    */
   async getSuspension(suspensionId: string): Promise<Suspension | null> {
     try {
-      return await this.firestoreService.getSuspension(suspensionId);
+      return await this.repository.getById(suspensionId);
     } catch (error) {
       console.error("❌ Error getting suspension:", error);
       return null;
@@ -177,7 +180,7 @@ export class SuspensionService {
         data.newDuration
       );
 
-      await this.firestoreService.updateSuspension(data.suspensionId, updates);
+      await this.repository.update(data.suspensionId, updates);
 
       console.log(
         `✅ Suspension ${data.suspensionId} reviewed: ${data.action}`
@@ -233,7 +236,7 @@ export class SuspensionService {
         if (isSuspensionExpired(suspension)) {
           const updates = createDeactivationUpdates();
 
-          await this.firestoreService.updateSuspension(suspension.id, updates);
+          await this.repository.update(suspension.id, updates);
 
           // Restore reputation if needed
           if (shouldRestoreReputationOnExpiry(suspension.type)) {

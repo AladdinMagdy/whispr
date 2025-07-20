@@ -1,5 +1,6 @@
-import { getFirestoreService } from "./firestoreService";
 import { getBlockListCacheService } from "./blockListCacheService";
+import { UserMuteRepository } from "../repositories/UserMuteRepository";
+import { FirebaseUserMuteRepository } from "../repositories/FirebaseUserMuteRepository";
 import {
   UserMute,
   CreateMuteData,
@@ -22,10 +23,12 @@ export type {
 
 export class UserMuteService {
   private static instance: UserMuteService | null;
-  private firestoreService = getFirestoreService();
+  private repository: UserMuteRepository;
   private blockListCache = getBlockListCacheService();
 
-  private constructor() {}
+  constructor(repository?: UserMuteRepository) {
+    this.repository = repository || new FirebaseUserMuteRepository();
+  }
 
   static getInstance(): UserMuteService {
     if (!UserMuteService.instance) {
@@ -54,7 +57,7 @@ export class UserMuteService {
       const mute = createUserMute(data);
 
       // Save to database
-      await this.firestoreService.saveUserMute(mute);
+      await this.repository.save(mute);
       await this.blockListCache.invalidateCache(data.userId);
 
       // Log success
@@ -74,7 +77,7 @@ export class UserMuteService {
       const mute = await this.getMute(userId, mutedUserId);
       checkActionDoesNotExist(mute, "mute");
 
-      await this.firestoreService.deleteUserMute(mute!.id);
+      await this.repository.delete(mute!.id);
       await this.blockListCache.invalidateCache(userId);
 
       logUserActionSuccess("mute", "delete", userId, mutedUserId);
@@ -88,7 +91,7 @@ export class UserMuteService {
    */
   async getMute(userId: string, mutedUserId: string): Promise<UserMute | null> {
     try {
-      return await this.firestoreService.getUserMute(userId, mutedUserId);
+      return await this.repository.getByUserAndMutedUser(userId, mutedUserId);
     } catch (error) {
       console.error("❌ Error getting mute:", error);
       return null;
@@ -100,7 +103,7 @@ export class UserMuteService {
    */
   async getMutedUsers(userId: string): Promise<UserMute[]> {
     try {
-      return await this.firestoreService.getUserMutes(userId);
+      return await this.repository.getByUser(userId);
     } catch (error) {
       console.error("❌ Error getting muted users:", error);
       return [];

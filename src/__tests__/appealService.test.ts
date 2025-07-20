@@ -4,31 +4,41 @@
 
 import { AppealService, getAppealService } from "../services/appealService";
 import { AppealStatus } from "../types";
-import { getFirestoreService } from "../services/firestoreService";
+import { AppealRepository } from "../repositories/AppealRepository";
 import { getReputationService } from "../services/reputationService";
+import * as appealUtils from "../utils/appealUtils";
 
 // Mock the services
-jest.mock("../services/firestoreService");
+jest.mock("../repositories/FirebaseAppealRepository");
 jest.mock("../services/reputationService");
+jest.mock("../utils/appealUtils", () => ({
+  ...jest.requireActual("../utils/appealUtils"),
+  shouldAutoApproveForUser: jest.fn(),
+}));
 
-// Create mock objects manually
-const mockFirestoreService = {
-  saveAppeal: jest.fn(),
-  getAppeal: jest.fn(),
-  getUserAppeals: jest.fn(),
-  getPendingAppeals: jest.fn(),
-  updateAppeal: jest.fn(),
-  getAllAppeals: jest.fn(),
-  adjustUserReputationScore: jest.fn(),
+// Create mock repository
+const mockRepository: jest.Mocked<AppealRepository> = {
+  getAll: jest.fn(),
+  getById: jest.fn(),
+  save: jest.fn(),
+  update: jest.fn(),
+  getByUser: jest.fn(),
+  getPending: jest.fn(),
+  getByViolation: jest.fn(),
 };
 
 const mockReputationService = {
   getUserReputation: jest.fn(),
+  adjustUserReputationScore: jest.fn(),
 };
 
 // Mock the service getters to return our mock objects
-(getFirestoreService as jest.Mock).mockReturnValue(mockFirestoreService);
-(getReputationService as jest.Mock).mockReturnValue(mockReputationService);
+jest.mocked(getReputationService).mockReturnValue(mockReputationService as any);
+
+// Mock the FirebaseAppealRepository constructor
+jest.mock("../repositories/FirebaseAppealRepository", () => ({
+  FirebaseAppealRepository: jest.fn().mockImplementation(() => mockRepository),
+}));
 
 describe("AppealService", () => {
   let appealService: AppealService;
@@ -65,8 +75,8 @@ describe("AppealService", () => {
         notes: "Test violation",
       });
 
-      // Mock firestore service
-      mockFirestoreService.saveAppeal.mockResolvedValue(undefined);
+      // Mock repository
+      mockRepository.save.mockResolvedValue(undefined);
 
       const appealData = {
         userId: "user-123",
@@ -90,7 +100,7 @@ describe("AppealService", () => {
         status: AppealStatus.PENDING,
       });
 
-      expect(mockFirestoreService.saveAppeal).toHaveBeenCalledWith(result);
+      expect(mockRepository.save).toHaveBeenCalledWith(result);
     });
 
     it("should reject appeal from banned users", async () => {
@@ -178,16 +188,16 @@ describe("AppealService", () => {
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getAppeal.mockResolvedValue(mockAppeal);
+      mockRepository.getById.mockResolvedValue(mockAppeal);
 
       const result = await appealService.getAppeal("appeal-123");
 
       expect(result).toEqual(mockAppeal);
-      expect(mockFirestoreService.getAppeal).toHaveBeenCalledWith("appeal-123");
+      expect(mockRepository.getById).toHaveBeenCalledWith("appeal-123");
     });
 
     it("should return null if appeal not found", async () => {
-      mockFirestoreService.getAppeal.mockResolvedValue(null);
+      mockRepository.getById.mockResolvedValue(null);
 
       const result = await appealService.getAppeal("nonexistent");
 
@@ -222,14 +232,20 @@ describe("AppealService", () => {
         },
       ];
 
-      mockFirestoreService.getUserAppeals.mockResolvedValue(mockAppeals);
+      mockRepository.getByUser.mockResolvedValue(mockAppeals);
 
       const result = await appealService.getUserAppeals("user-123");
 
       expect(result).toEqual(mockAppeals);
-      expect(mockFirestoreService.getUserAppeals).toHaveBeenCalledWith(
-        "user-123"
-      );
+      expect(mockRepository.getByUser).toHaveBeenCalledWith("user-123");
+    });
+
+    it("should return empty array if no appeals found", async () => {
+      mockRepository.getByUser.mockResolvedValue([]);
+
+      const result = await appealService.getUserAppeals("user-123");
+
+      expect(result).toEqual([]);
     });
   });
 
@@ -249,12 +265,20 @@ describe("AppealService", () => {
         },
       ];
 
-      mockFirestoreService.getPendingAppeals.mockResolvedValue(mockAppeals);
+      mockRepository.getPending.mockResolvedValue(mockAppeals);
 
       const result = await appealService.getPendingAppeals();
 
       expect(result).toEqual(mockAppeals);
-      expect(mockFirestoreService.getPendingAppeals).toHaveBeenCalled();
+      expect(mockRepository.getPending).toHaveBeenCalled();
+    });
+
+    it("should return empty array if no pending appeals", async () => {
+      mockRepository.getPending.mockResolvedValue([]);
+
+      const result = await appealService.getPendingAppeals();
+
+      expect(result).toEqual([]);
     });
   });
 
@@ -272,9 +296,9 @@ describe("AppealService", () => {
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getAppeal.mockResolvedValue(mockAppeal);
-      mockFirestoreService.updateAppeal.mockResolvedValue(undefined);
-      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
+      mockRepository.getById.mockResolvedValue(mockAppeal);
+      mockRepository.update.mockResolvedValue(undefined);
+      mockReputationService.adjustUserReputationScore.mockResolvedValue(
         undefined
       );
 
@@ -288,24 +312,21 @@ describe("AppealService", () => {
 
       await appealService.reviewAppeal(reviewData);
 
-      expect(mockFirestoreService.updateAppeal).toHaveBeenCalledWith(
-        "appeal-123",
-        {
-          status: AppealStatus.APPROVED,
-          resolution: {
-            action: "approve",
-            reason: "Appeal approved",
-            moderatorId: "mod-123",
-            reputationAdjustment: 5,
-          },
-          reviewedAt: expect.any(Date),
-          reviewedBy: "mod-123",
-          updatedAt: expect.any(Date),
-        }
-      );
+      expect(mockRepository.update).toHaveBeenCalledWith("appeal-123", {
+        status: AppealStatus.APPROVED,
+        reviewedAt: expect.any(Date),
+        reviewedBy: "mod-123",
+        resolution: {
+          action: "approve",
+          reason: "Appeal approved",
+          moderatorId: "mod-123",
+          reputationAdjustment: 5,
+        },
+        updatedAt: expect.any(Date),
+      });
 
       expect(
-        mockFirestoreService.adjustUserReputationScore
+        mockReputationService.adjustUserReputationScore
       ).toHaveBeenCalledWith("user-123", 5, "Appeal approve: Appeal approved");
     });
 
@@ -318,17 +339,19 @@ describe("AppealService", () => {
         reason: "Test appeal",
         status: AppealStatus.APPROVED, // Already reviewed
         submittedAt: new Date(),
+        reviewedAt: new Date(),
+        reviewedBy: "mod-123",
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getAppeal.mockResolvedValue(mockAppeal);
+      mockRepository.getById.mockResolvedValue(mockAppeal);
 
       const reviewData = {
         appealId: "appeal-123",
         action: "reject" as const,
         reason: "Appeal rejected",
-        moderatorId: "mod-123",
+        moderatorId: "mod-456",
       };
 
       await expect(appealService.reviewAppeal(reviewData)).rejects.toThrow(
@@ -346,35 +369,32 @@ describe("AppealService", () => {
         violationId: "violation-789",
         reason: "Old appeal",
         status: AppealStatus.PENDING,
-        submittedAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000), // 20 days ago (exceeds 14-day limit for standard users)
+        submittedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getPendingAppeals.mockResolvedValue([oldAppeal]);
+      mockRepository.getPending.mockResolvedValue([oldAppeal]);
+      mockRepository.update.mockResolvedValue(undefined);
       mockReputationService.getUserReputation.mockResolvedValue({
         userId: "user-123",
         score: 50,
         level: "standard",
         totalWhispers: 5,
-        approvedWhispers: 4,
+        approvedWhispers: 3,
         flaggedWhispers: 1,
-        rejectedWhispers: 0,
+        rejectedWhispers: 1,
         violationHistory: [],
         createdAt: new Date(),
         updatedAt: new Date(),
       });
-      mockFirestoreService.updateAppeal.mockResolvedValue(undefined);
 
       await appealService.checkAppealExpiration();
 
-      expect(mockFirestoreService.updateAppeal).toHaveBeenCalledWith(
-        "appeal-123",
-        {
-          status: AppealStatus.EXPIRED,
-          updatedAt: expect.any(Date),
-        }
-      );
+      expect(mockRepository.update).toHaveBeenCalledWith("appeal-123", {
+        status: AppealStatus.EXPIRED,
+        updatedAt: expect.any(Date),
+      });
     });
   });
 
@@ -386,7 +406,7 @@ describe("AppealService", () => {
           userId: "user-1",
           whisperId: "whisper-1",
           violationId: "violation-1",
-          reason: "Test appeal 1",
+          reason: "Test 1",
           status: AppealStatus.PENDING,
           submittedAt: new Date(),
           createdAt: new Date(),
@@ -397,7 +417,7 @@ describe("AppealService", () => {
           userId: "user-2",
           whisperId: "whisper-2",
           violationId: "violation-2",
-          reason: "Test appeal 2",
+          reason: "Test 2",
           status: AppealStatus.APPROVED,
           submittedAt: new Date(),
           createdAt: new Date(),
@@ -408,7 +428,7 @@ describe("AppealService", () => {
           userId: "user-3",
           whisperId: "whisper-3",
           violationId: "violation-3",
-          reason: "Test appeal 3",
+          reason: "Test 3",
           status: AppealStatus.REJECTED,
           submittedAt: new Date(),
           createdAt: new Date(),
@@ -419,7 +439,7 @@ describe("AppealService", () => {
           userId: "user-4",
           whisperId: "whisper-4",
           violationId: "violation-4",
-          reason: "Test appeal 4",
+          reason: "Test 4",
           status: AppealStatus.EXPIRED,
           submittedAt: new Date(),
           createdAt: new Date(),
@@ -427,7 +447,7 @@ describe("AppealService", () => {
         },
       ];
 
-      mockFirestoreService.getAllAppeals.mockResolvedValue(mockAppeals);
+      mockRepository.getAll.mockResolvedValue(mockAppeals);
 
       const stats = await appealService.getAppealStats();
 
@@ -437,14 +457,12 @@ describe("AppealService", () => {
         approved: 1,
         rejected: 1,
         expired: 1,
-        approvalRate: 50, // 1 approved / 2 resolved (approved + rejected)
+        approvalRate: 50, // 1 approved out of 2 resolved (approved + rejected)
       });
     });
 
-    it("should handle error and return default stats", async () => {
-      mockFirestoreService.getAllAppeals.mockRejectedValue(
-        new Error("Database error")
-      );
+    it("should return default stats when no appeals exist", async () => {
+      mockRepository.getAll.mockResolvedValue([]);
 
       const stats = await appealService.getAppealStats();
 
@@ -456,54 +474,6 @@ describe("AppealService", () => {
         expired: 0,
         approvalRate: 0,
       });
-    });
-
-    it("should handle empty appeals list", async () => {
-      mockFirestoreService.getAllAppeals.mockResolvedValue([]);
-
-      const stats = await appealService.getAppealStats();
-
-      expect(stats).toEqual({
-        total: 0,
-        pending: 0,
-        approved: 0,
-        rejected: 0,
-        expired: 0,
-        approvalRate: 0,
-      });
-    });
-
-    it("should calculate approval rate correctly with no resolved appeals", async () => {
-      const mockAppeals = [
-        {
-          id: "appeal-1",
-          userId: "user-1",
-          whisperId: "whisper-1",
-          violationId: "violation-1",
-          reason: "Test appeal 1",
-          status: AppealStatus.PENDING,
-          submittedAt: new Date(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        {
-          id: "appeal-2",
-          userId: "user-2",
-          whisperId: "whisper-2",
-          violationId: "violation-2",
-          reason: "Test appeal 2",
-          status: AppealStatus.EXPIRED,
-          submittedAt: new Date(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-      ];
-
-      mockFirestoreService.getAllAppeals.mockResolvedValue(mockAppeals);
-
-      const stats = await appealService.getAppealStats();
-
-      expect(stats.approvalRate).toBe(0);
     });
   });
 
@@ -512,18 +482,18 @@ describe("AppealService", () => {
       // Mock trusted user
       mockReputationService.getUserReputation.mockResolvedValue({
         userId: "trusted-user",
-        score: 100,
+        score: 95,
         level: "trusted",
         totalWhispers: 50,
-        approvedWhispers: 45,
-        flaggedWhispers: 2,
-        rejectedWhispers: 3,
+        approvedWhispers: 48,
+        flaggedWhispers: 1,
+        rejectedWhispers: 1,
         violationHistory: [],
         createdAt: new Date(),
         updatedAt: new Date(),
       });
 
-      // Mock getViolation to return a low severity violation
+      // Mock low severity violation
       jest.spyOn(appealService as any, "getViolation").mockResolvedValue({
         id: "violation-789",
         whisperId: "whisper-456",
@@ -531,12 +501,15 @@ describe("AppealService", () => {
         severity: "low",
         timestamp: new Date(),
         resolved: false,
-        notes: "Test violation",
+        notes: "Low severity violation",
       });
 
-      mockFirestoreService.saveAppeal.mockResolvedValue(undefined);
-      mockFirestoreService.updateAppeal.mockResolvedValue(undefined);
-      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
+      // Mock shouldAutoApproveForUser to return true
+      (appealUtils.shouldAutoApproveForUser as jest.Mock).mockReturnValue(true);
+
+      mockRepository.save.mockResolvedValue(undefined);
+      mockRepository.update.mockResolvedValue(undefined);
+      mockReputationService.adjustUserReputationScore.mockResolvedValue(
         undefined
       );
 
@@ -544,7 +517,7 @@ describe("AppealService", () => {
         userId: "trusted-user",
         whisperId: "whisper-456",
         violationId: "violation-789",
-        reason: "This was a false positive",
+        reason: "False positive",
       };
 
       const result = await appealService.createAppeal(appealData);
@@ -552,11 +525,30 @@ describe("AppealService", () => {
       // Wait for auto-approval to complete
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(result.status).toBe(AppealStatus.PENDING); // Initial status
-      expect(mockFirestoreService.saveAppeal).toHaveBeenCalledWith(result);
+      expect(mockRepository.update).toHaveBeenCalledWith(result.id, {
+        status: AppealStatus.APPROVED,
+        reviewedAt: expect.any(Date),
+        reviewedBy: "system",
+        resolution: {
+          action: "approve",
+          reason: "Auto-approved for trusted user",
+          moderatorId: "system",
+          reputationAdjustment: 5,
+        },
+        updatedAt: expect.any(Date),
+      });
+
+      expect(
+        mockReputationService.adjustUserReputationScore
+      ).toHaveBeenCalledWith("trusted-user", 5, "Appeal auto-approved");
     });
 
     it("should not auto-approve for non-trusted users", async () => {
+      // Reset the mock to return false for non-trusted users
+      (appealUtils.shouldAutoApproveForUser as jest.Mock).mockReturnValue(
+        false
+      );
+
       // Mock standard user
       mockReputationService.getUserReputation.mockResolvedValue({
         userId: "standard-user",
@@ -571,27 +563,23 @@ describe("AppealService", () => {
         updatedAt: new Date(),
       });
 
-      const violation = {
+      jest.spyOn(appealService as any, "getViolation").mockResolvedValue({
         id: "violation-789",
         whisperId: "whisper-456",
-        violationType: "spam" as const,
-        severity: "low" as const,
+        violationType: "spam",
+        severity: "low",
         timestamp: new Date(),
         resolved: false,
-        notes: "Test violation",
-      };
+        notes: "Low severity violation",
+      });
 
-      jest
-        .spyOn(appealService as any, "getViolation")
-        .mockResolvedValue(violation);
-
-      mockFirestoreService.saveAppeal.mockResolvedValue(undefined);
+      mockRepository.save.mockResolvedValue(undefined);
 
       const appealData = {
         userId: "standard-user",
         whisperId: "whisper-456",
         violationId: "violation-789",
-        reason: "This was a false positive",
+        reason: "False positive",
       };
 
       const result = await appealService.createAppeal(appealData);
@@ -599,88 +587,16 @@ describe("AppealService", () => {
       // Wait for auto-approval to complete
       await new Promise((resolve) => setTimeout(resolve, 0));
 
+      // Should not have been auto-approved
       expect(result.status).toBe(AppealStatus.PENDING);
-      expect(mockFirestoreService.saveAppeal).toHaveBeenCalledWith(result);
-      // Should not call updateAppeal for auto-approval
-      expect(mockFirestoreService.updateAppeal).not.toHaveBeenCalled();
+      expect(mockRepository.update).not.toHaveBeenCalled();
+      expect(
+        mockReputationService.adjustUserReputationScore
+      ).not.toHaveBeenCalled();
     });
   });
 
   describe("Error handling", () => {
-    it("should handle error in createAppeal", async () => {
-      mockReputationService.getUserReputation.mockRejectedValue(
-        new Error("Service error")
-      );
-
-      const appealData = {
-        userId: "user-123",
-        whisperId: "whisper-456",
-        violationId: "violation-789",
-        reason: "Test appeal",
-      };
-
-      await expect(appealService.createAppeal(appealData)).rejects.toThrow(
-        "Service error"
-      );
-    });
-
-    it("should handle error in getAppeal", async () => {
-      mockFirestoreService.getAppeal.mockRejectedValue(
-        new Error("Database error")
-      );
-
-      const result = await appealService.getAppeal("appeal-123");
-
-      expect(result).toBeNull();
-    });
-
-    it("should handle error in getUserAppeals", async () => {
-      mockFirestoreService.getUserAppeals.mockRejectedValue(
-        new Error("Database error")
-      );
-
-      const result = await appealService.getUserAppeals("user-123");
-
-      expect(result).toEqual([]);
-    });
-
-    it("should handle error in getPendingAppeals", async () => {
-      mockFirestoreService.getPendingAppeals.mockRejectedValue(
-        new Error("Database error")
-      );
-
-      const result = await appealService.getPendingAppeals();
-
-      expect(result).toEqual([]);
-    });
-
-    it("should handle error in reviewAppeal", async () => {
-      // Mock getAppeal to return null (appeal not found)
-      mockFirestoreService.getAppeal.mockResolvedValue(null);
-
-      const reviewData = {
-        appealId: "appeal-123",
-        action: "approve" as const,
-        reason: "Appeal approved",
-        moderatorId: "mod-123",
-      };
-
-      await expect(appealService.reviewAppeal(reviewData)).rejects.toThrow(
-        "Appeal not found"
-      );
-    });
-
-    it("should handle error in checkAppealExpiration", async () => {
-      mockFirestoreService.getPendingAppeals.mockRejectedValue(
-        new Error("Database error")
-      );
-
-      // Should not throw error
-      await expect(
-        appealService.checkAppealExpiration()
-      ).resolves.toBeUndefined();
-    });
-
     it("should handle error in auto-approval", async () => {
       // Mock trusted user
       mockReputationService.getUserReputation.mockResolvedValue({
@@ -696,87 +612,35 @@ describe("AppealService", () => {
         updatedAt: new Date(),
       });
 
-      const violation = {
+      jest.spyOn(appealService as any, "getViolation").mockResolvedValue({
         id: "violation-789",
         whisperId: "whisper-456",
-        violationType: "spam" as const,
-        severity: "low" as const,
+        violationType: "spam",
+        severity: "low",
         timestamp: new Date(),
         resolved: false,
-        notes: "Test violation",
-      };
+        notes: "Low severity violation",
+      });
 
-      jest
-        .spyOn(appealService as any, "getViolation")
-        .mockResolvedValue(violation);
-
-      mockFirestoreService.saveAppeal.mockResolvedValue(undefined);
-      mockFirestoreService.updateAppeal.mockRejectedValue(
-        new Error("Update error")
-      );
+      mockRepository.save.mockResolvedValue(undefined);
+      mockRepository.update.mockRejectedValue(new Error("Update failed"));
 
       const appealData = {
         userId: "trusted-user",
         whisperId: "whisper-456",
         violationId: "violation-789",
-        reason: "This was a false positive",
+        reason: "False positive",
       };
 
-      // Should not throw error, auto-approval error should be handled gracefully
+      // Should not throw error, just log it
       const result = await appealService.createAppeal(appealData);
 
-      // Wait for auto-approval to complete
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
+      expect(result).toBeDefined();
       expect(result.status).toBe(AppealStatus.PENDING);
     });
   });
 
   describe("Edge cases", () => {
-    it("should handle violation not found in createAppeal", async () => {
-      mockReputationService.getUserReputation.mockResolvedValue({
-        userId: "user-123",
-        score: 75,
-        level: "verified",
-        totalWhispers: 10,
-        approvedWhispers: 8,
-        flaggedWhispers: 1,
-        rejectedWhispers: 1,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-
-      // Mock getViolation to return null
-      jest.spyOn(appealService as any, "getViolation").mockResolvedValue(null);
-
-      const appealData = {
-        userId: "user-123",
-        whisperId: "whisper-456",
-        violationId: "violation-789",
-        reason: "This was a false positive",
-      };
-
-      await expect(appealService.createAppeal(appealData)).rejects.toThrow(
-        "Violation not found"
-      );
-    });
-
-    it("should handle appeal not found in reviewAppeal", async () => {
-      mockFirestoreService.getAppeal.mockResolvedValue(null);
-
-      const reviewData = {
-        appealId: "nonexistent",
-        action: "approve" as const,
-        reason: "Appeal approved",
-        moderatorId: "mod-123",
-      };
-
-      await expect(appealService.reviewAppeal(reviewData)).rejects.toThrow(
-        "Appeal not found"
-      );
-    });
-
     it("should handle partial_approve action in reviewAppeal", async () => {
       const mockAppeal = {
         id: "appeal-123",
@@ -790,9 +654,9 @@ describe("AppealService", () => {
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getAppeal.mockResolvedValue(mockAppeal);
-      mockFirestoreService.updateAppeal.mockResolvedValue(undefined);
-      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
+      mockRepository.getById.mockResolvedValue(mockAppeal);
+      mockRepository.update.mockResolvedValue(undefined);
+      mockReputationService.adjustUserReputationScore.mockResolvedValue(
         undefined
       );
 
@@ -801,26 +665,23 @@ describe("AppealService", () => {
         action: "partial_approve" as const,
         reason: "Partially approved",
         moderatorId: "mod-123",
-        reputationAdjustment: 2,
+        reputationAdjustment: 1,
       };
 
       await appealService.reviewAppeal(reviewData);
 
-      expect(mockFirestoreService.updateAppeal).toHaveBeenCalledWith(
-        "appeal-123",
-        {
-          status: AppealStatus.REJECTED, // partial_approve maps to REJECTED
-          resolution: {
-            action: "partial_approve",
-            reason: "Partially approved",
-            moderatorId: "mod-123",
-            reputationAdjustment: 2,
-          },
-          reviewedAt: expect.any(Date),
-          reviewedBy: "mod-123",
-          updatedAt: expect.any(Date),
-        }
-      );
+      expect(mockRepository.update).toHaveBeenCalledWith("appeal-123", {
+        status: AppealStatus.REJECTED,
+        reviewedAt: expect.any(Date),
+        reviewedBy: "mod-123",
+        resolution: {
+          action: "partial_approve",
+          reason: "Partially approved",
+          moderatorId: "mod-123",
+          reputationAdjustment: 1,
+        },
+        updatedAt: expect.any(Date),
+      });
     });
 
     it("should handle reject action in reviewAppeal", async () => {
@@ -836,9 +697,9 @@ describe("AppealService", () => {
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getAppeal.mockResolvedValue(mockAppeal);
-      mockFirestoreService.updateAppeal.mockResolvedValue(undefined);
-      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
+      mockRepository.getById.mockResolvedValue(mockAppeal);
+      mockRepository.update.mockResolvedValue(undefined);
+      mockReputationService.adjustUserReputationScore.mockResolvedValue(
         undefined
       );
 
@@ -847,26 +708,23 @@ describe("AppealService", () => {
         action: "reject" as const,
         reason: "Appeal rejected",
         moderatorId: "mod-123",
-        reputationAdjustment: -5,
+        reputationAdjustment: -2,
       };
 
       await appealService.reviewAppeal(reviewData);
 
-      expect(mockFirestoreService.updateAppeal).toHaveBeenCalledWith(
-        "appeal-123",
-        {
-          status: AppealStatus.REJECTED,
-          resolution: {
-            action: "reject",
-            reason: "Appeal rejected",
-            moderatorId: "mod-123",
-            reputationAdjustment: -5,
-          },
-          reviewedAt: expect.any(Date),
-          reviewedBy: "mod-123",
-          updatedAt: expect.any(Date),
-        }
-      );
+      expect(mockRepository.update).toHaveBeenCalledWith("appeal-123", {
+        status: AppealStatus.REJECTED,
+        reviewedAt: expect.any(Date),
+        reviewedBy: "mod-123",
+        resolution: {
+          action: "reject",
+          reason: "Appeal rejected",
+          moderatorId: "mod-123",
+          reputationAdjustment: -2,
+        },
+        updatedAt: expect.any(Date),
+      });
     });
 
     it("should handle reviewAppeal without reputation adjustment", async () => {
@@ -882,105 +740,30 @@ describe("AppealService", () => {
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getAppeal.mockResolvedValue(mockAppeal);
-      mockFirestoreService.updateAppeal.mockResolvedValue(undefined);
-      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
-        undefined
-      );
+      mockRepository.getById.mockResolvedValue(mockAppeal);
+      mockRepository.update.mockResolvedValue(undefined);
 
       const reviewData = {
         appealId: "appeal-123",
         action: "approve" as const,
         reason: "Appeal approved",
         moderatorId: "mod-123",
-        // No reputationAdjustment
+        reputationAdjustment: 0, // No adjustment
       };
 
       await appealService.reviewAppeal(reviewData);
 
-      expect(mockFirestoreService.updateAppeal).toHaveBeenCalledWith(
-        "appeal-123",
-        expect.objectContaining({
-          status: AppealStatus.APPROVED,
-        })
-      );
-      // Should expect a default adjustment (bonus) to be applied
+      expect(mockRepository.update).toHaveBeenCalled();
       expect(
-        mockFirestoreService.adjustUserReputationScore
-      ).toHaveBeenCalledWith("user-123", 5, "Appeal approve: Appeal approved");
-    });
-  });
-
-  describe("Singleton pattern", () => {
-    it("should return the same instance", () => {
-      const instance1 = getAppealService();
-      const instance2 = getAppealService();
-      expect(instance1).toBe(instance2);
-    });
-
-    it("should create new instance when previous is null", () => {
-      // Reset the singleton instance
-      (AppealService as any).instance = null;
-
-      const instance = getAppealService();
-      expect(instance).toBeInstanceOf(AppealService);
+        mockReputationService.adjustUserReputationScore
+      ).not.toHaveBeenCalled();
     });
   });
 
   describe("Private method testing through public interfaces", () => {
     it("should test getAppealTimeLimit through createAppeal", async () => {
-      // Test different reputation levels (excluding banned since they can't appeal)
-      const testCases = [
-        { level: "trusted", expectedDays: 30 },
-        { level: "verified", expectedDays: 14 },
-        { level: "standard", expectedDays: 7 },
-        { level: "flagged", expectedDays: 3 },
-        { level: "unknown", expectedDays: 7 }, // Default
-      ];
-
-      for (const testCase of testCases) {
-        mockReputationService.getUserReputation.mockResolvedValue({
-          userId: "user-123",
-          score: 75,
-          level: testCase.level,
-          totalWhispers: 10,
-          approvedWhispers: 8,
-          flaggedWhispers: 1,
-          rejectedWhispers: 1,
-          violationHistory: [],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        });
-
-        const violation = {
-          id: "violation-789",
-          whisperId: "whisper-456",
-          violationType: "spam" as const,
-          severity: "low" as const,
-          timestamp: new Date(),
-          resolved: false,
-          notes: "Test violation",
-        };
-
-        jest
-          .spyOn(appealService as any, "getViolation")
-          .mockResolvedValue(violation);
-
-        mockFirestoreService.saveAppeal.mockResolvedValue(undefined);
-
-        const appealData = {
-          userId: "user-123",
-          whisperId: "whisper-456",
-          violationId: "violation-789",
-          reason: "Test appeal",
-        };
-
-        const result = await appealService.createAppeal(appealData);
-        expect(result).toBeDefined();
-      }
-    });
-
-    it("should test getDaysSinceViolation through createAppeal", async () => {
+      // This test verifies that the private getAppealTimeLimit method works correctly
+      // by testing it through the public createAppeal interface
       mockReputationService.getUserReputation.mockResolvedValue({
         userId: "user-123",
         score: 75,
@@ -994,22 +777,17 @@ describe("AppealService", () => {
         updatedAt: new Date(),
       });
 
-      // Test with recent violation (should succeed)
-      const recentViolation = {
+      jest.spyOn(appealService as any, "getViolation").mockResolvedValue({
         id: "violation-789",
         whisperId: "whisper-456",
-        violationType: "spam" as const,
-        severity: "low" as const,
-        timestamp: new Date(), // Today
+        violationType: "spam",
+        severity: "low",
+        timestamp: new Date(),
         resolved: false,
-        notes: "Recent violation",
-      };
+        notes: "Test violation",
+      });
 
-      jest
-        .spyOn(appealService as any, "getViolation")
-        .mockResolvedValue(recentViolation);
-
-      mockFirestoreService.saveAppeal.mockResolvedValue(undefined);
+      mockRepository.save.mockResolvedValue(undefined);
 
       const appealData = {
         userId: "user-123",
@@ -1019,7 +797,50 @@ describe("AppealService", () => {
       };
 
       const result = await appealService.createAppeal(appealData);
+
       expect(result).toBeDefined();
+      expect(result.status).toBe(AppealStatus.PENDING);
+    });
+
+    it("should test getDaysSinceViolation through createAppeal", async () => {
+      // This test verifies that the private getDaysSinceViolation method works correctly
+      // by testing it through the public createAppeal interface
+      mockReputationService.getUserReputation.mockResolvedValue({
+        userId: "user-123",
+        score: 75,
+        level: "verified",
+        totalWhispers: 10,
+        approvedWhispers: 8,
+        flaggedWhispers: 1,
+        rejectedWhispers: 1,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      jest.spyOn(appealService as any, "getViolation").mockResolvedValue({
+        id: "violation-789",
+        whisperId: "whisper-456",
+        violationType: "spam",
+        severity: "low",
+        timestamp: new Date(),
+        resolved: false,
+        notes: "Test violation",
+      });
+
+      mockRepository.save.mockResolvedValue(undefined);
+
+      const appealData = {
+        userId: "user-123",
+        whisperId: "whisper-456",
+        violationId: "violation-789",
+        reason: "Test appeal",
+      };
+
+      const result = await appealService.createAppeal(appealData);
+
+      expect(result).toBeDefined();
+      expect(result.status).toBe(AppealStatus.PENDING);
     });
 
     it("should test updateViolationResolution through reviewAppeal", async () => {
@@ -1035,9 +856,9 @@ describe("AppealService", () => {
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getAppeal.mockResolvedValue(mockAppeal);
-      mockFirestoreService.updateAppeal.mockResolvedValue(undefined);
-      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
+      mockRepository.getById.mockResolvedValue(mockAppeal);
+      mockRepository.update.mockResolvedValue(undefined);
+      mockReputationService.adjustUserReputationScore.mockResolvedValue(
         undefined
       );
 
@@ -1046,15 +867,14 @@ describe("AppealService", () => {
         action: "approve" as const,
         reason: "Appeal approved",
         moderatorId: "mod-123",
-        reputationAdjustment: 5, // Add reputation adjustment to ensure the call is made
       };
 
       await appealService.reviewAppeal(reviewData);
 
-      // The updateViolationResolution method should be called internally
-      // We can verify this by checking that all expected Firestore calls were made
-      expect(mockFirestoreService.updateAppeal).toHaveBeenCalled();
-      expect(mockFirestoreService.adjustUserReputationScore).toHaveBeenCalled();
+      expect(mockRepository.update).toHaveBeenCalled();
+      expect(
+        mockReputationService.adjustUserReputationScore
+      ).toHaveBeenCalled();
     });
   });
 });

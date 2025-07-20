@@ -1,5 +1,6 @@
-import { getFirestoreService } from "./firestoreService";
 import { UserRestriction } from "../types";
+import { UserRestrictRepository } from "../repositories/UserRestrictRepository";
+import { FirebaseUserRestrictRepository } from "../repositories/FirebaseUserRestrictRepository";
 import {
   CreateRestrictionData,
   RestrictionStats,
@@ -21,9 +22,11 @@ export type {
 
 export class UserRestrictService {
   private static instance: UserRestrictService | null;
-  private firestoreService = getFirestoreService();
+  private repository: UserRestrictRepository;
 
-  private constructor() {}
+  constructor(repository?: UserRestrictRepository) {
+    this.repository = repository || new FirebaseUserRestrictRepository();
+  }
 
   static getInstance(): UserRestrictService {
     if (!UserRestrictService.instance) {
@@ -60,7 +63,7 @@ export class UserRestrictService {
       const restriction = createUserRestriction(data);
 
       // Save to database
-      await this.firestoreService.saveUserRestriction(restriction);
+      await this.repository.save(restriction);
 
       // Log success
       logUserActionSuccess(
@@ -87,7 +90,7 @@ export class UserRestrictService {
       const restriction = await this.getRestriction(userId, restrictedUserId);
       checkActionDoesNotExist(restriction, "restrict");
 
-      await this.firestoreService.deleteUserRestriction(restriction!.id);
+      await this.repository.delete(restriction!.id);
 
       logUserActionSuccess("restrict", "delete", userId, restrictedUserId);
     } catch (error) {
@@ -103,7 +106,7 @@ export class UserRestrictService {
     restrictedUserId: string
   ): Promise<UserRestriction | null> {
     try {
-      return await this.firestoreService.getUserRestriction(
+      return await this.repository.getByUserAndRestrictedUser(
         userId,
         restrictedUserId
       );
@@ -118,7 +121,7 @@ export class UserRestrictService {
    */
   async getRestrictedUsers(userId: string): Promise<UserRestriction[]> {
     try {
-      return await this.firestoreService.getUserRestrictions(userId);
+      return await this.repository.getByUser(userId);
     } catch (error) {
       console.error("❌ Error getting restricted users:", error);
       return [];

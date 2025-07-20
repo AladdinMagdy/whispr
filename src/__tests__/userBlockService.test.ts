@@ -1,18 +1,13 @@
 import {
   UserBlockService,
-  getUserBlockService,
   CreateBlockData,
 } from "../services/userBlockService";
-import { getFirestoreService } from "../services/firestoreService";
 import { getBlockListCacheService } from "../services/blockListCacheService";
+import { UserBlockRepository } from "../repositories/UserBlockRepository";
 import { UserBlock } from "../types";
 
-jest.mock("../services/firestoreService");
 jest.mock("../services/blockListCacheService");
 
-const mockFirestoreService = getFirestoreService as jest.MockedFunction<
-  typeof getFirestoreService
->;
 const mockBlockListCacheService =
   getBlockListCacheService as jest.MockedFunction<
     typeof getBlockListCacheService
@@ -20,24 +15,28 @@ const mockBlockListCacheService =
 
 describe("UserBlockService", () => {
   let service: UserBlockService;
-  let mockFirestore: any;
+  let mockRepository: jest.Mocked<UserBlockRepository>;
   let mockBlockListCache: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
     (UserBlockService as any).instance = undefined;
-    mockFirestore = {
-      saveUserBlock: jest.fn(),
-      deleteUserBlock: jest.fn(),
-      getUserBlock: jest.fn(),
-      getUserBlocks: jest.fn(),
+    mockRepository = {
+      getAll: jest.fn(),
+      getById: jest.fn(),
+      save: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      getByUser: jest.fn(),
+      getByBlockedUser: jest.fn(),
+      getByUserAndBlockedUser: jest.fn(),
+      isUserBlocked: jest.fn(),
     };
     mockBlockListCache = {
       invalidateCache: jest.fn(),
     };
-    mockFirestoreService.mockReturnValue(mockFirestore);
     mockBlockListCacheService.mockReturnValue(mockBlockListCache);
-    service = getUserBlockService();
+    service = new UserBlockService(mockRepository);
   });
 
   describe("getInstance", () => {
@@ -56,27 +55,29 @@ describe("UserBlockService", () => {
     };
 
     it("should block a user if not already blocked", async () => {
-      mockFirestore.getUserBlock.mockResolvedValue(null);
-      mockFirestore.saveUserBlock.mockResolvedValue(undefined);
+      mockRepository.getByUserAndBlockedUser.mockResolvedValue(null);
+      mockRepository.save.mockResolvedValue(undefined);
       mockBlockListCache.invalidateCache.mockResolvedValue(undefined);
 
       const result = await service.blockUser(data);
       expect(result.userId).toBe(data.userId);
       expect(result.blockedUserId).toBe(data.blockedUserId);
-      expect(mockFirestore.saveUserBlock).toHaveBeenCalled();
+      expect(mockRepository.save).toHaveBeenCalled();
       expect(mockBlockListCache.invalidateCache).toHaveBeenCalledWith(
         data.userId
       );
     });
 
     it("should throw if user is already blocked", async () => {
-      mockFirestore.getUserBlock.mockResolvedValue({ id: "block-1" });
+      mockRepository.getByUserAndBlockedUser.mockResolvedValue({
+        id: "block-1",
+      } as UserBlock);
       await expect(service.blockUser(data)).rejects.toThrow("already blocked");
     });
 
     it("should handle errors and throw with message", async () => {
-      mockFirestore.getUserBlock.mockResolvedValue(null);
-      mockFirestore.saveUserBlock.mockRejectedValue(new Error("fail"));
+      mockRepository.getByUserAndBlockedUser.mockResolvedValue(null);
+      mockRepository.save.mockRejectedValue(new Error("fail"));
       await expect(service.blockUser(data)).rejects.toThrow(
         "Failed to block: fail"
       );
@@ -87,23 +88,27 @@ describe("UserBlockService", () => {
     const userId = "user1";
     const blockedUserId = "user2";
     it("should unblock a user if block exists", async () => {
-      mockFirestore.getUserBlock.mockResolvedValue({ id: "block-1" });
-      mockFirestore.deleteUserBlock.mockResolvedValue(undefined);
+      mockRepository.getByUserAndBlockedUser.mockResolvedValue({
+        id: "block-1",
+      } as UserBlock);
+      mockRepository.delete.mockResolvedValue(undefined);
       mockBlockListCache.invalidateCache.mockResolvedValue(undefined);
       await expect(
         service.unblockUser(userId, blockedUserId)
       ).resolves.toBeUndefined();
-      expect(mockFirestore.deleteUserBlock).toHaveBeenCalledWith("block-1");
+      expect(mockRepository.delete).toHaveBeenCalledWith("block-1");
       expect(mockBlockListCache.invalidateCache).toHaveBeenCalledWith(userId);
     });
     it("should throw if user is not blocked", async () => {
-      mockFirestore.getUserBlock.mockResolvedValue(null);
+      mockRepository.getByUserAndBlockedUser.mockResolvedValue(null);
       await expect(service.unblockUser(userId, blockedUserId)).rejects.toThrow(
         "not blocked"
       );
     });
     it("should handle errors and throw with message", async () => {
-      mockFirestore.getUserBlock.mockRejectedValue(new Error("fail"));
+      mockRepository.getByUserAndBlockedUser.mockRejectedValue(
+        new Error("fail")
+      );
       await expect(service.unblockUser(userId, blockedUserId)).rejects.toThrow(
         "Failed to unblock: User is not blocked"
       );
@@ -120,11 +125,13 @@ describe("UserBlockService", () => {
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-      mockFirestore.getUserBlock.mockResolvedValue(block);
+      mockRepository.getByUserAndBlockedUser.mockResolvedValue(block);
       await expect(service.getBlock("u1", "u2")).resolves.toEqual(block);
     });
     it("should return null and log error if error thrown", async () => {
-      mockFirestore.getUserBlock.mockRejectedValue(new Error("fail"));
+      mockRepository.getByUserAndBlockedUser.mockRejectedValue(
+        new Error("fail")
+      );
       await expect(service.getBlock("u1", "u2")).resolves.toBeNull();
     });
   });
@@ -141,26 +148,30 @@ describe("UserBlockService", () => {
           updatedAt: new Date(),
         },
       ];
-      mockFirestore.getUserBlocks.mockResolvedValue(blocks);
+      mockRepository.getByUser.mockResolvedValue(blocks);
       await expect(service.getBlockedUsers("u1")).resolves.toEqual(blocks);
     });
     it("should return [] and log error if error thrown", async () => {
-      mockFirestore.getUserBlocks.mockRejectedValue(new Error("fail"));
+      mockRepository.getByUser.mockRejectedValue(new Error("fail"));
       await expect(service.getBlockedUsers("u1")).resolves.toEqual([]);
     });
   });
 
   describe("isUserBlocked", () => {
     it("should return true if block exists", async () => {
-      mockFirestore.getUserBlock.mockResolvedValue({ id: "block-1" });
+      mockRepository.getByUserAndBlockedUser.mockResolvedValue({
+        id: "block-1",
+      } as UserBlock);
       await expect(service.isUserBlocked("u1", "u2")).resolves.toBe(true);
     });
     it("should return false if block does not exist", async () => {
-      mockFirestore.getUserBlock.mockResolvedValue(null);
+      mockRepository.getByUserAndBlockedUser.mockResolvedValue(null);
       await expect(service.isUserBlocked("u1", "u2")).resolves.toBe(false);
     });
     it("should return false and log error if error thrown", async () => {
-      mockFirestore.getUserBlock.mockRejectedValue(new Error("fail"));
+      mockRepository.getByUserAndBlockedUser.mockRejectedValue(
+        new Error("fail")
+      );
       await expect(service.isUserBlocked("u1", "u2")).resolves.toBe(false);
     });
   });
@@ -196,13 +207,13 @@ describe("UserBlockService", () => {
           updatedAt: now,
         },
       ];
-      mockFirestore.getUserBlocks.mockResolvedValue(blocks);
+      mockRepository.getByUser.mockResolvedValue(blocks);
       const stats = await service.getBlockStats("u1");
       expect(stats.totalBlocked).toBe(3);
       expect(stats.recentlyBlocked).toBe(2);
     });
     it("should return 0s and log error if error thrown", async () => {
-      mockFirestore.getUserBlocks.mockRejectedValue(new Error("fail"));
+      mockRepository.getByUser.mockRejectedValue(new Error("fail"));
       const stats = await service.getBlockStats("u1");
       expect(stats).toEqual({ totalBlocked: 0, recentlyBlocked: 0 });
     });

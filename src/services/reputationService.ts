@@ -11,7 +11,8 @@ import {
   ModerationResult,
   UserViolation,
 } from "../types";
-import { getFirestoreService } from "./firestoreService";
+import { ReputationRepository } from "../repositories/ReputationRepository";
+import { FirebaseReputationRepository } from "../repositories/FirebaseReputationRepository";
 import { getPrivacyService } from "./privacyService";
 import {
   getReputationLevel,
@@ -48,10 +49,12 @@ export interface ReputationThresholds {
 
 export class ReputationService {
   private static instance: ReputationService | null;
-  private firestoreService = getFirestoreService();
+  private repository: ReputationRepository;
   private privacyService = getPrivacyService();
 
-  private constructor() {}
+  constructor(repository?: ReputationRepository) {
+    this.repository = repository || new FirebaseReputationRepository();
+  }
 
   static getInstance(): ReputationService {
     if (!ReputationService.instance) {
@@ -63,11 +66,11 @@ export class ReputationService {
   // ===== NEW METHODS EXTRACTED FROM FIRESTORESERVICE =====
 
   /**
-   * Save user reputation to Firestore (extracted from FirestoreService)
+   * Save user reputation to repository
    */
   async saveUserReputation(reputation: UserReputation): Promise<void> {
     try {
-      await this.firestoreService.saveUserReputation(reputation);
+      await this.repository.save(reputation);
     } catch (error) {
       console.error("Error saving user reputation:", error);
       throw new Error("Failed to save user reputation");
@@ -75,14 +78,14 @@ export class ReputationService {
   }
 
   /**
-   * Update user reputation with partial data (extracted from FirestoreService)
+   * Update user reputation with partial data
    */
   async updateUserReputation(
     userId: string,
     updates: Partial<UserReputation>
   ): Promise<void> {
     try {
-      await this.firestoreService.updateUserReputation(userId, updates);
+      await this.repository.update(userId, updates);
     } catch (error) {
       console.error("Error updating user reputation:", error);
       throw new Error("Failed to update user reputation");
@@ -90,11 +93,11 @@ export class ReputationService {
   }
 
   /**
-   * Delete user reputation (extracted from FirestoreService)
+   * Delete user reputation
    */
   async deleteUserReputation(userId: string): Promise<void> {
     try {
-      await this.firestoreService.deleteUserReputation(userId);
+      await this.repository.delete(userId);
     } catch (error) {
       console.error("Error deleting user reputation:", error);
       throw new Error("Failed to delete user reputation");
@@ -102,17 +105,13 @@ export class ReputationService {
   }
 
   /**
-   * Get users by reputation level (extracted from FirestoreService)
+   * Get users by reputation level (extracted from repository)
    */
   async getUsersByReputationLevel(
-    level: UserReputation["level"],
-    limitCount = 50
+    level: UserReputation["level"]
   ): Promise<UserReputation[]> {
     try {
-      return await this.firestoreService.getUsersByReputationLevel(
-        level,
-        limitCount
-      );
+      return await this.repository.getByLevel(level);
     } catch (error) {
       console.error("Error getting users by reputation level:", error);
       throw new Error("Failed to get users by reputation level");
@@ -120,14 +119,14 @@ export class ReputationService {
   }
 
   /**
-   * Get users with recent violations (extracted from FirestoreService)
+   * Get users with recent violations (extracted from repository)
    */
   async getUsersWithRecentViolations(
     daysBack = 7,
     limitCount = 50
   ): Promise<UserReputation[]> {
     try {
-      return await this.firestoreService.getUsersWithRecentViolations(
+      return await this.repository.getWithRecentViolations(
         daysBack,
         limitCount
       );
@@ -138,11 +137,12 @@ export class ReputationService {
   }
 
   /**
-   * Reset user reputation to default (extracted from FirestoreService)
+   * Reset user reputation to default (extracted from repository)
    */
   async resetUserReputation(userId: string): Promise<void> {
     try {
-      await this.firestoreService.resetUserReputation(userId);
+      const defaultReputation = getDefaultReputation(userId);
+      await this.repository.save(defaultReputation);
     } catch (error) {
       console.error("Error resetting user reputation:", error);
       throw new Error("Failed to reset user reputation");
@@ -150,19 +150,26 @@ export class ReputationService {
   }
 
   /**
-   * Adjust user reputation score manually (extracted from FirestoreService)
+   * Adjust user reputation score manually (extracted from repository)
    */
   async adjustUserReputationScore(
     userId: string,
     newScore: number,
-    reason: string
+    reason?: string
   ): Promise<void> {
     try {
-      await this.firestoreService.adjustUserReputationScore(
-        userId,
-        newScore,
-        reason
-      );
+      const reputation = await this.getUserReputation(userId);
+      const updatedReputation = {
+        ...reputation,
+        score: newScore,
+        level: getReputationLevel(newScore),
+        updatedAt: new Date(),
+      };
+      await this.repository.save(updatedReputation);
+
+      if (reason) {
+        console.log(`📊 Adjusted reputation for user ${userId}: ${reason}`);
+      }
     } catch (error) {
       console.error("Error adjusting user reputation score:", error);
       throw new Error("Failed to adjust user reputation score");
@@ -170,11 +177,11 @@ export class ReputationService {
   }
 
   /**
-   * Save user violation record (extracted from FirestoreService)
+   * Save user violation record (extracted from repository)
    */
   async saveUserViolation(violation: UserViolation): Promise<void> {
     try {
-      await this.privacyService.saveUserViolation(violation);
+      await this.repository.saveViolation(violation);
     } catch (error) {
       console.error("Error saving user violation:", error);
       throw new Error("Failed to save user violation");
@@ -182,14 +189,14 @@ export class ReputationService {
   }
 
   /**
-   * Get user violations (extracted from FirestoreService)
+   * Get user violations (extracted from repository)
    */
   async getUserViolations(
     userId: string,
     daysBack: number = 90
   ): Promise<UserViolation[]> {
     try {
-      return await this.privacyService.getUserViolations(userId, daysBack);
+      return await this.repository.getViolations(userId, daysBack);
     } catch (error) {
       console.error("Error getting user violations:", error);
       throw new Error("Failed to get user violations");
@@ -197,14 +204,14 @@ export class ReputationService {
   }
 
   /**
-   * Get deleted whisper count for user (extracted from FirestoreService)
+   * Get deleted whisper count for user (extracted from repository)
    */
   async getDeletedWhisperCount(
     userId: string,
     daysBack: number = 90
   ): Promise<number> {
     try {
-      return await this.privacyService.getDeletedWhisperCount(userId, daysBack);
+      return await this.repository.getDeletedWhisperCount(userId, daysBack);
     } catch (error) {
       console.error("Error getting deleted whisper count:", error);
       throw new Error("Failed to get deleted whisper count");
@@ -218,10 +225,8 @@ export class ReputationService {
    */
   async getUserReputation(userId: string): Promise<UserReputation> {
     try {
-      // Try to get existing reputation from Firestore
-      const existingReputation = await this.firestoreService.getUserReputation(
-        userId
-      );
+      // Try to get existing reputation from repository
+      const existingReputation = await this.repository.getById(userId);
 
       if (existingReputation) {
         return existingReputation;
@@ -229,7 +234,7 @@ export class ReputationService {
 
       // Create default reputation for new users
       const defaultReputation = getDefaultReputation(userId);
-      await this.firestoreService.saveUserReputation(defaultReputation);
+      await this.repository.save(defaultReputation);
 
       return defaultReputation;
     } catch (error) {
@@ -320,8 +325,8 @@ export class ReputationService {
         updatedAt: new Date(),
       };
 
-      // Save to Firestore
-      await this.firestoreService.saveUserReputation(updatedReputation);
+      // Save to repository
+      await this.repository.save(updatedReputation);
 
       console.log(`📝 Recorded violation for user ${userId}:`, {
         type: violationType,
@@ -356,8 +361,8 @@ export class ReputationService {
         updatedAt: new Date(),
       };
 
-      // Save to Firestore
-      await this.firestoreService.saveUserReputation(updatedReputation);
+      // Save to repository
+      await this.repository.save(updatedReputation);
 
       console.log(`✅ Recorded successful whisper for user ${userId}:`, {
         recovery,
@@ -396,8 +401,8 @@ export class ReputationService {
           updatedAt: new Date(),
         };
 
-        // Save to Firestore
-        await this.firestoreService.saveUserReputation(updatedReputation);
+        // Save to repository
+        await this.repository.save(updatedReputation);
 
         console.log(`🔄 Processed reputation recovery for user ${userId}:`, {
           daysSinceLastViolation,
@@ -417,7 +422,7 @@ export class ReputationService {
   async resetReputation(userId: string): Promise<void> {
     try {
       const defaultReputation = getDefaultReputation(userId);
-      await this.firestoreService.saveUserReputation(defaultReputation);
+      await this.repository.save(defaultReputation);
 
       console.log(`🔄 Reset reputation for user ${userId} to default`);
     } catch (error) {
@@ -438,7 +443,7 @@ export class ReputationService {
     averageScore: number;
   }> {
     try {
-      return await this.firestoreService.getReputationStats();
+      return await this.repository.getStats();
     } catch (error) {
       console.error("❌ Error getting reputation stats:", error);
       return {

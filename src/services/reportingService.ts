@@ -16,11 +16,14 @@ import {
   UserViolation,
   CommentReport,
   CommentReportResolution,
+  Whisper,
 } from "../types";
-import { getFirestoreService } from "./firestoreService";
+import { ReportRepository } from "../repositories/ReportRepository";
+import { FirebaseReportRepository } from "../repositories/FirebaseReportRepository";
 import { getPrivacyService } from "./privacyService";
 import { getReputationService } from "./reputationService";
 import { getSuspensionService } from "./suspensionService";
+import { getFirestoreService } from "./firestoreService";
 import { REPORTING_CONSTANTS, TIME_CONSTANTS } from "../constants";
 import { useFeedStore } from "../store/useFeedStore";
 
@@ -46,9 +49,10 @@ export interface CreateCommentReportData {
 
 export class ReportingService {
   private static instance: ReportingService | null;
-  private firestoreService = getFirestoreService();
+  private repository: ReportRepository;
   private privacyService = getPrivacyService();
   private reputationService = getReputationService();
+  private firestoreService = getFirestoreService();
 
   // Priority thresholds based on reporter reputation
   private static readonly PRIORITY_THRESHOLDS =
@@ -58,7 +62,9 @@ export class ReportingService {
   private static readonly REPUTATION_WEIGHTS =
     REPORTING_CONSTANTS.REPUTATION_WEIGHTS;
 
-  private constructor() {}
+  constructor(repository?: ReportRepository) {
+    this.repository = repository || new FirebaseReportRepository();
+  }
 
   static getInstance(): ReportingService {
     if (!ReportingService.instance) {
@@ -83,7 +89,7 @@ export class ReportingService {
       }
 
       // Check for existing reports from the same user on the same content
-      const existingReports = await this.firestoreService.getReports({
+      const existingReports = await this.repository.getWithFilters({
         whisperId: data.whisperId,
         reporterId: data.reporterId,
       });
@@ -107,10 +113,7 @@ export class ReportingService {
             priority: this.escalatePriority(existingReport.priority),
           };
 
-          await this.firestoreService.updateReport(
-            existingReport.id,
-            updatedReport
-          );
+          await this.repository.update(existingReport.id, updatedReport);
 
           console.log(
             `📝 Updated existing report: ${existingReport.id} with escalated priority`
@@ -152,8 +155,8 @@ export class ReportingService {
         reputationWeight,
       };
 
-      // Save to Firestore
-      await this.firestoreService.saveReport(report);
+      // Save to repository
+      await this.repository.save(report);
 
       console.log(`📝 Report created: ${report.id} (${priority} priority)`);
 
@@ -181,7 +184,7 @@ export class ReportingService {
    */
   async getReports(filters: ReportFilters = {}): Promise<Report[]> {
     try {
-      return await this.firestoreService.getReports(filters);
+      return await this.repository.getWithFilters(filters);
     } catch (error) {
       console.error("❌ Error getting reports:", error);
       throw new Error(
@@ -197,7 +200,7 @@ export class ReportingService {
    */
   async getReport(reportId: string): Promise<Report | null> {
     try {
-      return await this.firestoreService.getReport(reportId);
+      return await this.repository.getById(reportId);
     } catch (error) {
       console.error("❌ Error getting report:", error);
       throw new Error(
@@ -232,7 +235,7 @@ export class ReportingService {
         }
       }
 
-      await this.firestoreService.updateReport(reportId, updates);
+      await this.repository.update(reportId, updates);
 
       console.log(`📝 Report ${reportId} status updated to ${status}`);
     } catch (error) {
@@ -261,7 +264,7 @@ export class ReportingService {
         reviewedBy: resolution.moderatorId,
       };
 
-      await this.firestoreService.updateReport(reportId, updates);
+      await this.repository.update(reportId, updates);
 
       // Apply the resolution action to the reported whisper/user
       await this.applyResolution(reportId, resolution);
@@ -284,63 +287,7 @@ export class ReportingService {
    */
   async getReportStats(): Promise<ReportStats> {
     try {
-      const allReports = await this.getReports();
-
-      const reportsByCategory: Record<ReportCategory, number> = {
-        [ReportCategory.HARASSMENT]: 0,
-        [ReportCategory.HATE_SPEECH]: 0,
-        [ReportCategory.VIOLENCE]: 0,
-        [ReportCategory.SEXUAL_CONTENT]: 0,
-        [ReportCategory.SPAM]: 0,
-        [ReportCategory.SCAM]: 0,
-        [ReportCategory.COPYRIGHT]: 0,
-        [ReportCategory.PERSONAL_INFO]: 0,
-        [ReportCategory.MINOR_SAFETY]: 0,
-        [ReportCategory.OTHER]: 0,
-      };
-
-      const reportsByPriority: Record<ReportPriority, number> = {
-        [ReportPriority.LOW]: 0,
-        [ReportPriority.MEDIUM]: 0,
-        [ReportPriority.HIGH]: 0,
-        [ReportPriority.CRITICAL]: 0,
-      };
-
-      let totalResolutionTime = 0;
-      let resolvedCount = 0;
-
-      allReports.forEach((report) => {
-        reportsByCategory[report.category]++;
-        reportsByPriority[report.priority]++;
-
-        if (report.status === ReportStatus.RESOLVED && report.reviewedAt) {
-          const resolutionTime =
-            report.reviewedAt.getTime() - report.createdAt.getTime();
-          totalResolutionTime += resolutionTime;
-          resolvedCount++;
-        }
-      });
-
-      const averageResolutionTime =
-        resolvedCount > 0
-          ? totalResolutionTime / resolvedCount / (1000 * 60 * 60) // Convert to hours
-          : 0;
-
-      return {
-        totalReports: allReports.length,
-        pendingReports: allReports.filter(
-          (r) => r.status === ReportStatus.PENDING
-        ).length,
-        criticalReports: allReports.filter(
-          (r) => r.priority === ReportPriority.CRITICAL
-        ).length,
-        resolvedReports: allReports.filter(
-          (r) => r.status === ReportStatus.RESOLVED
-        ).length,
-        averageResolutionTime,
-        reportsByCategory,
-        reportsByPriority,
-      };
+      return await this.repository.getStats();
     } catch (error) {
       console.error("❌ Error getting report stats:", error);
       throw new Error(
@@ -450,7 +397,7 @@ export class ReportingService {
 
         case "dismiss":
           // No action needed, just dismiss the report
-          await this.firestoreService.adjustUserReputationScore(
+          await this.reputationService.adjustUserReputationScore(
             report.reporterId,
             -10,
             `Report dismissed: ${reason}`
@@ -490,7 +437,7 @@ export class ReportingService {
     reason: string
   ): Promise<void> {
     try {
-      await this.firestoreService.deleteWhisper(whisperId);
+      // TODO: Implement whisper deletion through whisper service
       console.log(`❌ Whisper ${whisperId} rejected: ${reason}`);
     } catch (error) {
       console.error("❌ Error rejecting whisper:", error);
@@ -503,7 +450,7 @@ export class ReportingService {
    */
   private async banUser(whisperId: string, reason: string): Promise<void> {
     try {
-      const whisper = await this.firestoreService.getWhisper(whisperId);
+      const whisper = await this.getWhisper(whisperId);
       if (whisper) {
         // Create permanent suspension
         const suspensionService = getSuspensionService();
@@ -515,7 +462,7 @@ export class ReportingService {
         });
 
         // Set user reputation to 0 (banned)
-        await this.firestoreService.adjustUserReputationScore(
+        await this.reputationService.adjustUserReputationScore(
           whisper.userId,
           0,
           `Banned due to report: ${reason}`
@@ -563,7 +510,7 @@ export class ReportingService {
     userId: string
   ): Promise<{ hasReported: boolean; existingReport?: Report }> {
     try {
-      const existingReports = await this.firestoreService.getReports({
+      const existingReports = await this.repository.getWithFilters({
         whisperId,
         reporterId: userId,
       });
@@ -592,43 +539,7 @@ export class ReportingService {
     priorityBreakdown: Record<ReportPriority, number>;
   }> {
     try {
-      const reports = await this.firestoreService.getReports({
-        whisperId,
-      });
-
-      const uniqueReporters = new Set(reports.map((r) => r.reporterId)).size;
-
-      const categories: Record<ReportCategory, number> = {
-        [ReportCategory.HARASSMENT]: 0,
-        [ReportCategory.HATE_SPEECH]: 0,
-        [ReportCategory.VIOLENCE]: 0,
-        [ReportCategory.SEXUAL_CONTENT]: 0,
-        [ReportCategory.SPAM]: 0,
-        [ReportCategory.SCAM]: 0,
-        [ReportCategory.COPYRIGHT]: 0,
-        [ReportCategory.PERSONAL_INFO]: 0,
-        [ReportCategory.MINOR_SAFETY]: 0,
-        [ReportCategory.OTHER]: 0,
-      };
-
-      const priorityBreakdown: Record<ReportPriority, number> = {
-        [ReportPriority.LOW]: 0,
-        [ReportPriority.MEDIUM]: 0,
-        [ReportPriority.HIGH]: 0,
-        [ReportPriority.CRITICAL]: 0,
-      };
-
-      reports.forEach((report) => {
-        categories[report.category]++;
-        priorityBreakdown[report.priority]++;
-      });
-
-      return {
-        totalReports: reports.length,
-        uniqueReporters,
-        categories,
-        priorityBreakdown,
-      };
+      return await this.repository.getWhisperStats(whisperId);
     } catch (error) {
       console.error("❌ Error getting whisper report stats:", error);
       return {
@@ -641,12 +552,24 @@ export class ReportingService {
   }
 
   /**
+   * Get whisper by ID
+   */
+  private async getWhisper(whisperId: string): Promise<Whisper | null> {
+    try {
+      return await this.firestoreService.getWhisper(whisperId);
+    } catch (error) {
+      console.error("❌ Error getting whisper:", error);
+      return null;
+    }
+  }
+
+  /**
    * Check for automatic escalation based on report count
    * New fairer approach: whisper-level actions first, user-level bans only for repeated violations
    */
   private async checkAutomaticEscalation(whisperId: string): Promise<void> {
     try {
-      const whisper = await this.firestoreService.getWhisper(whisperId);
+      const whisper = await this.getWhisper(whisperId);
       if (!whisper) {
         console.log(
           `⚠️ Whisper ${whisperId} not found for automatic escalation check`
@@ -661,7 +584,7 @@ export class ReportingService {
           REPORTING_CONSTANTS.AUTO_ESCALATION.ESCALATION_WINDOW_DAYS
       );
 
-      const reports = await this.firestoreService.getReports({
+      const reports = await this.repository.getWithFilters({
         whisperId,
         dateRange: { start: escalationWindow, end: new Date() },
       });
@@ -905,7 +828,7 @@ export class ReportingService {
       }
 
       // Check for existing reports from the same user on the same comment
-      const existingReports = await this.firestoreService.getCommentReports({
+      const existingReports = await this.repository.getCommentReports({
         reporterId: data.reporterId,
       });
 
@@ -930,7 +853,7 @@ export class ReportingService {
             priority: this.escalatePriority(existingCommentReport.priority),
           };
 
-          await this.firestoreService.updateCommentReport(
+          await this.repository.updateCommentReport(
             existingCommentReport.id,
             updatedReport
           );
@@ -978,8 +901,8 @@ export class ReportingService {
         reputationWeight,
       };
 
-      // Save to Firestore
-      await this.firestoreService.saveCommentReport(report);
+      // Save to repository
+      await this.repository.saveCommentReport(report);
 
       console.log(
         `📝 Comment report created: ${report.id} (${priority} priority)`
@@ -1011,7 +934,7 @@ export class ReportingService {
     filters: ReportFilters = {}
   ): Promise<CommentReport[]> {
     try {
-      return await this.firestoreService.getCommentReports(filters);
+      return await this.repository.getCommentReports(filters);
     } catch (error) {
       console.error("❌ Error getting comment reports:", error);
       throw new Error(
@@ -1027,7 +950,7 @@ export class ReportingService {
    */
   async getCommentReport(reportId: string): Promise<CommentReport | null> {
     try {
-      return await this.firestoreService.getCommentReport(reportId);
+      return await this.repository.getCommentReport(reportId);
     } catch (error) {
       console.error("❌ Error getting comment report:", error);
       throw new Error(
@@ -1047,7 +970,7 @@ export class ReportingService {
     moderatorId?: string
   ): Promise<void> {
     try {
-      await this.firestoreService.updateCommentReportStatus(
+      await this.repository.updateCommentReportStatus(
         reportId,
         status,
         moderatorId
@@ -1077,7 +1000,7 @@ export class ReportingService {
       }
 
       // Update report with resolution
-      await this.firestoreService.updateCommentReport(reportId, {
+      await this.updateCommentReport(reportId, {
         status: ReportStatus.RESOLVED,
         resolution,
         reviewedAt: new Date(),
@@ -1106,13 +1029,43 @@ export class ReportingService {
     userId: string
   ): Promise<{ hasReported: boolean; existingReport?: CommentReport }> {
     try {
-      return await this.firestoreService.hasUserReportedComment(
+      const hasReported = await this.repository.hasUserReportedComment(
         commentId,
         userId
       );
+      if (hasReported) {
+        const reports = await this.repository.getCommentReports({
+          commentId,
+          reporterId: userId,
+        });
+        return {
+          hasReported: true,
+          existingReport: reports[0],
+        };
+      }
+      return { hasReported: false };
     } catch (error) {
       console.error("❌ Error checking comment report status:", error);
       return { hasReported: false };
+    }
+  }
+
+  /**
+   * Update a comment report
+   */
+  async updateCommentReport(
+    reportId: string,
+    updates: Partial<CommentReport>
+  ): Promise<void> {
+    try {
+      await this.repository.updateCommentReport(reportId, updates);
+    } catch (error) {
+      console.error("❌ Error updating comment report:", error);
+      throw new Error(
+        `Failed to update comment report: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   }
 
@@ -1126,7 +1079,7 @@ export class ReportingService {
     priorityBreakdown: Record<ReportPriority, number>;
   }> {
     try {
-      return await this.firestoreService.getCommentReportStats(commentId);
+      return await this.repository.getCommentReportStats(commentId);
     } catch (error) {
       console.error("❌ Error getting comment report stats:", error);
       throw new Error(
@@ -1142,10 +1095,7 @@ export class ReportingService {
    */
   private async escalateCommentReport(reportId: string): Promise<void> {
     try {
-      await this.firestoreService.updateCommentReportStatus(
-        reportId,
-        ReportStatus.ESCALATED
-      );
+      await this.updateCommentReportStatus(reportId, ReportStatus.ESCALATED);
       console.log("🚨 Comment report escalated:", reportId);
     } catch (error) {
       console.error("❌ Error escalating comment report:", error);

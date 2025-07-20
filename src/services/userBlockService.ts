@@ -1,6 +1,7 @@
-import { getFirestoreService } from "./firestoreService";
 import { getBlockListCacheService } from "./blockListCacheService";
 import { UserBlock } from "../types";
+import { UserBlockRepository } from "../repositories/UserBlockRepository";
+import { FirebaseUserBlockRepository } from "../repositories/FirebaseUserBlockRepository";
 import {
   CreateBlockData,
   BlockStats,
@@ -18,10 +19,12 @@ export type { CreateBlockData, BlockStats } from "../utils/userActionUtils";
 
 export class UserBlockService {
   private static instance: UserBlockService | null;
-  private firestoreService = getFirestoreService();
+  private repository: UserBlockRepository;
   private blockListCache = getBlockListCacheService();
 
-  private constructor() {}
+  constructor(repository?: UserBlockRepository) {
+    this.repository = repository || new FirebaseUserBlockRepository();
+  }
 
   static getInstance(): UserBlockService {
     if (!UserBlockService.instance) {
@@ -31,11 +34,11 @@ export class UserBlockService {
   }
 
   /**
-   * Get users who have blocked the specified user (extracted from FirestoreService)
+   * Get users who have blocked the specified user
    */
   async getUsersWhoBlockedMe(userId: string): Promise<UserBlock[]> {
     try {
-      return await this.firestoreService.getUsersWhoBlockedMe(userId);
+      return await this.repository.getByBlockedUser(userId);
     } catch (error) {
       console.error("Error getting users who blocked me:", error);
       throw new Error("Failed to get users who blocked me");
@@ -65,7 +68,7 @@ export class UserBlockService {
       const block = createUserBlock(data);
 
       // Save to database
-      await this.firestoreService.saveUserBlock(block);
+      await this.repository.save(block);
       await this.blockListCache.invalidateCache(data.userId);
 
       // Log success
@@ -85,7 +88,7 @@ export class UserBlockService {
       const block = await this.getBlock(userId, blockedUserId);
       checkActionDoesNotExist(block, "block");
 
-      await this.firestoreService.deleteUserBlock(block!.id);
+      await this.repository.delete(block!.id);
       await this.blockListCache.invalidateCache(userId);
 
       logUserActionSuccess("block", "delete", userId, blockedUserId);
@@ -102,7 +105,10 @@ export class UserBlockService {
     blockedUserId: string
   ): Promise<UserBlock | null> {
     try {
-      return await this.firestoreService.getUserBlock(userId, blockedUserId);
+      return await this.repository.getByUserAndBlockedUser(
+        userId,
+        blockedUserId
+      );
     } catch (error) {
       console.error("❌ Error getting block:", error);
       return null;
@@ -114,7 +120,7 @@ export class UserBlockService {
    */
   async getBlockedUsers(userId: string): Promise<UserBlock[]> {
     try {
-      return await this.firestoreService.getUserBlocks(userId);
+      return await this.repository.getByUser(userId);
     } catch (error) {
       console.error("❌ Error getting blocked users:", error);
       return [];

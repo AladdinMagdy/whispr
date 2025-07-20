@@ -442,6 +442,7 @@ export interface ReportFilters {
   };
   reporterId?: string;
   whisperId?: string;
+  commentId?: string;
 }
 
 // New types for appeal system

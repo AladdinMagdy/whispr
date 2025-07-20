@@ -1,9 +1,7 @@
-import {
-  getReportingService,
-  ReportingService,
-} from "../services/reportingService";
-import { getFirestoreService } from "../services/firestoreService";
+import { ReportingService } from "../services/reportingService";
 import { getReputationService } from "../services/reputationService";
+import { getSuspensionService } from "../services/suspensionService";
+import { getFirestoreService } from "../services/firestoreService";
 import {
   ReportCategory,
   ReportStatus,
@@ -12,27 +10,58 @@ import {
   Report,
   ReportResolution,
 } from "../types";
+import { ReportRepository } from "../repositories/ReportRepository";
 
-jest.mock("../services/firestoreService");
 jest.mock("../services/reputationService");
-
-const mockFirestoreService = {
-  saveReport: jest.fn(),
-  getReports: jest.fn(),
-  getReport: jest.fn(),
-  updateReport: jest.fn(),
-  getReportStats: jest.fn(),
-  deleteWhisper: jest.fn(),
-  getWhisper: jest.fn(),
-  adjustUserReputationScore: jest.fn(),
-};
+jest.mock("../services/suspensionService");
+jest.mock("../services/firestoreService");
 
 const mockReputationService = {
   getUserReputation: jest.fn(),
+  adjustUserReputationScore: jest.fn(),
 };
 
-(getFirestoreService as jest.Mock).mockReturnValue(mockFirestoreService);
+const mockSuspensionService = {
+  createSuspension: jest.fn(),
+  getUserActiveSuspensions: jest.fn(),
+};
+
+const mockFirestoreService = {
+  getWhisper: jest.fn(),
+  deleteWhisper: jest.fn(),
+  getComment: jest.fn(),
+  deleteComment: jest.fn(),
+};
+
+const mockRepository: jest.Mocked<ReportRepository> = {
+  save: jest.fn(),
+  getById: jest.fn(),
+  getAll: jest.fn(),
+  update: jest.fn(),
+  delete: jest.fn(),
+  getByWhisper: jest.fn(),
+  getByReporter: jest.fn(),
+  getByStatus: jest.fn(),
+  getByCategory: jest.fn(),
+  getByPriority: jest.fn(),
+  getByDateRange: jest.fn(),
+  getWithFilters: jest.fn(),
+  getPending: jest.fn(),
+  getCritical: jest.fn(),
+  getStats: jest.fn(),
+  getWhisperStats: jest.fn(),
+  saveCommentReport: jest.fn(),
+  getCommentReport: jest.fn(),
+  getCommentReports: jest.fn(),
+  updateCommentReport: jest.fn(),
+  updateCommentReportStatus: jest.fn(),
+  hasUserReportedComment: jest.fn(),
+  getCommentReportStats: jest.fn(),
+};
+
 (getReputationService as jest.Mock).mockReturnValue(mockReputationService);
+(getSuspensionService as jest.Mock).mockReturnValue(mockSuspensionService);
+(getFirestoreService as jest.Mock).mockReturnValue(mockFirestoreService);
 
 describe("ReportingService", () => {
   let reportingService: ReportingService;
@@ -40,10 +69,18 @@ describe("ReportingService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     ReportingService.resetInstance();
-    reportingService = getReportingService();
 
-    // Set default mock for getReports to return empty array
-    mockFirestoreService.getReports.mockResolvedValue([]);
+    // Create service with mocked repository
+    reportingService = new ReportingService(mockRepository);
+
+    // Set default mock for getWithFilters to return empty array
+    mockRepository.getWithFilters.mockResolvedValue([]);
+    mockRepository.save.mockResolvedValue();
+    mockRepository.update.mockResolvedValue();
+    mockFirestoreService.getWhisper.mockResolvedValue(null);
+    mockFirestoreService.deleteWhisper.mockResolvedValue(undefined);
+    mockFirestoreService.getComment.mockResolvedValue(null);
+    mockFirestoreService.deleteComment.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -66,7 +103,7 @@ describe("ReportingService", () => {
     mockReputationService.getUserReputation.mockResolvedValue(
       mockUserReputation
     );
-    mockFirestoreService.saveReport.mockResolvedValue(undefined);
+    mockRepository.save.mockResolvedValue();
 
     const result = await reportingService.createReport({
       whisperId: "whisper123",
@@ -89,7 +126,7 @@ describe("ReportingService", () => {
     expect(result.id).toMatch(/^report-\d+-[a-z0-9]+$/);
     expect(result.createdAt).toBeInstanceOf(Date);
     expect(result.updatedAt).toBeInstanceOf(Date);
-    expect(mockFirestoreService.saveReport).toHaveBeenCalledWith(result);
+    expect(mockRepository.save).toHaveBeenCalledWith(result);
   });
 
   it("should prevent banned users from reporting", async () => {
@@ -117,7 +154,7 @@ describe("ReportingService", () => {
         reason: "Spam content",
       })
     ).rejects.toThrow("Banned users cannot submit reports");
-    expect(mockFirestoreService.saveReport).not.toHaveBeenCalled();
+    expect(mockRepository.save).not.toHaveBeenCalled();
   });
 
   it("should escalate critical reports immediately", async () => {
@@ -136,8 +173,8 @@ describe("ReportingService", () => {
     mockReputationService.getUserReputation.mockResolvedValue(
       trustedUserReputation
     );
-    mockFirestoreService.saveReport.mockResolvedValue(undefined);
-    mockFirestoreService.updateReport.mockResolvedValue(undefined);
+    mockRepository.save.mockResolvedValue();
+    mockRepository.update.mockResolvedValue();
 
     const result = await reportingService.createReport({
       whisperId: "whisper123",
@@ -148,7 +185,7 @@ describe("ReportingService", () => {
     });
 
     expect(result.priority).toBe(ReportPriority.CRITICAL);
-    expect(mockFirestoreService.updateReport).toHaveBeenCalledWith(
+    expect(mockRepository.update).toHaveBeenCalledWith(
       result.id,
       expect.objectContaining({ status: ReportStatus.UNDER_REVIEW })
     );
@@ -174,7 +211,7 @@ describe("ReportingService", () => {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
-      mockFirestoreService.saveReport.mockResolvedValue(undefined);
+      mockRepository.save.mockResolvedValue();
       const result = await reportingService.createReport({
         whisperId: "whisper123",
         reporterId: "user123",
@@ -201,20 +238,28 @@ describe("ReportingService", () => {
       updatedAt: new Date(),
       reputationWeight: 1.5,
     };
-    const mockResolution: ReportResolution = {
+
+    mockRepository.getById.mockResolvedValue(mockReport);
+    mockRepository.update.mockResolvedValue();
+
+    const resolution: ReportResolution = {
       action: "warn",
-      reason: "Violation of community guidelines",
+      reason: "First warning",
       moderatorId: "moderator123",
       timestamp: new Date(),
     };
-    mockFirestoreService.getReport.mockResolvedValue(mockReport);
-    mockFirestoreService.updateReport.mockResolvedValue(undefined);
-    await reportingService.resolveReport("report123", mockResolution);
-    expect(mockFirestoreService.updateReport).toHaveBeenCalledWith(
+
+    await reportingService.resolveReport("report123", resolution);
+
+    expect(mockRepository.update).toHaveBeenCalledWith(
       "report123",
       expect.objectContaining({
         status: ReportStatus.RESOLVED,
-        resolution: mockResolution,
+        resolution: expect.objectContaining({
+          action: "warn",
+          reason: "First warning",
+          moderatorId: "moderator123",
+        }),
       })
     );
   });

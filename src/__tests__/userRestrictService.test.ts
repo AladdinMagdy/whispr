@@ -1,32 +1,29 @@
 import {
   UserRestrictService,
-  getUserRestrictService,
   CreateRestrictionData,
 } from "../services/userRestrictService";
-import { getFirestoreService } from "../services/firestoreService";
+import { UserRestrictRepository } from "../repositories/UserRestrictRepository";
 import { UserRestriction } from "../types";
-
-jest.mock("../services/firestoreService");
-
-const mockFirestoreService = getFirestoreService as jest.MockedFunction<
-  typeof getFirestoreService
->;
 
 describe("UserRestrictService", () => {
   let service: UserRestrictService;
-  let mockFirestore: any;
+  let mockRepository: jest.Mocked<UserRestrictRepository>;
 
   beforeEach(() => {
     jest.clearAllMocks();
     (UserRestrictService as any).instance = undefined;
-    mockFirestore = {
-      saveUserRestriction: jest.fn(),
-      deleteUserRestriction: jest.fn(),
-      getUserRestriction: jest.fn(),
-      getUserRestrictions: jest.fn(),
+    mockRepository = {
+      getAll: jest.fn(),
+      getById: jest.fn(),
+      save: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      getByUser: jest.fn(),
+      getByRestrictedUser: jest.fn(),
+      getByUserAndRestrictedUser: jest.fn(),
+      isUserRestricted: jest.fn(),
     };
-    mockFirestoreService.mockReturnValue(mockFirestore);
-    service = getUserRestrictService();
+    service = new UserRestrictService(mockRepository);
   });
 
   describe("getInstance", () => {
@@ -46,26 +43,28 @@ describe("UserRestrictService", () => {
     };
 
     it("should restrict a user if not already restricted", async () => {
-      mockFirestore.getUserRestriction.mockResolvedValue(null);
-      mockFirestore.saveUserRestriction.mockResolvedValue(undefined);
+      mockRepository.getByUserAndRestrictedUser.mockResolvedValue(null);
+      mockRepository.save.mockResolvedValue(undefined);
 
       const result = await service.restrictUser(data);
       expect(result.userId).toBe(data.userId);
       expect(result.restrictedUserId).toBe(data.restrictedUserId);
       expect(result.type).toBe(data.type);
-      expect(mockFirestore.saveUserRestriction).toHaveBeenCalled();
+      expect(mockRepository.save).toHaveBeenCalled();
     });
 
     it("should throw if user is already restricted", async () => {
-      mockFirestore.getUserRestriction.mockResolvedValue({ id: "restrict-1" });
+      mockRepository.getByUserAndRestrictedUser.mockResolvedValue({
+        id: "restrict-1",
+      } as UserRestriction);
       await expect(service.restrictUser(data)).rejects.toThrow(
         "already restricted"
       );
     });
 
     it("should handle errors and throw with message", async () => {
-      mockFirestore.getUserRestriction.mockResolvedValue(null);
-      mockFirestore.saveUserRestriction.mockRejectedValue(new Error("fail"));
+      mockRepository.getByUserAndRestrictedUser.mockResolvedValue(null);
+      mockRepository.save.mockRejectedValue(new Error("fail"));
       await expect(service.restrictUser(data)).rejects.toThrow(
         "Failed to restrict: fail"
       );
@@ -76,8 +75,8 @@ describe("UserRestrictService", () => {
         ...data,
         type: "visibility",
       };
-      mockFirestore.getUserRestriction.mockResolvedValue(null);
-      mockFirestore.saveUserRestriction.mockResolvedValue(undefined);
+      mockRepository.getByUserAndRestrictedUser.mockResolvedValue(null);
+      mockRepository.save.mockResolvedValue(undefined);
 
       const result = await service.restrictUser(visibilityData);
       expect(result.type).toBe("visibility");
@@ -88,23 +87,25 @@ describe("UserRestrictService", () => {
     const userId = "user1";
     const restrictedUserId = "user2";
     it("should unrestrict a user if restriction exists", async () => {
-      mockFirestore.getUserRestriction.mockResolvedValue({ id: "restrict-1" });
-      mockFirestore.deleteUserRestriction.mockResolvedValue(undefined);
+      mockRepository.getByUserAndRestrictedUser.mockResolvedValue({
+        id: "restrict-1",
+      } as UserRestriction);
+      mockRepository.delete.mockResolvedValue(undefined);
       await expect(
         service.unrestrictUser(userId, restrictedUserId)
       ).resolves.toBeUndefined();
-      expect(mockFirestore.deleteUserRestriction).toHaveBeenCalledWith(
-        "restrict-1"
-      );
+      expect(mockRepository.delete).toHaveBeenCalledWith("restrict-1");
     });
     it("should throw if user is not restricted", async () => {
-      mockFirestore.getUserRestriction.mockResolvedValue(null);
+      mockRepository.getByUserAndRestrictedUser.mockResolvedValue(null);
       await expect(
         service.unrestrictUser(userId, restrictedUserId)
       ).rejects.toThrow("not restricted");
     });
     it("should handle errors and throw with message", async () => {
-      mockFirestore.getUserRestriction.mockRejectedValue(new Error("fail"));
+      mockRepository.getByUserAndRestrictedUser.mockRejectedValue(
+        new Error("fail")
+      );
       await expect(
         service.unrestrictUser(userId, restrictedUserId)
       ).rejects.toThrow("Failed to unrestrict: User is not restricted");
@@ -122,13 +123,15 @@ describe("UserRestrictService", () => {
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-      mockFirestore.getUserRestriction.mockResolvedValue(restriction);
+      mockRepository.getByUserAndRestrictedUser.mockResolvedValue(restriction);
       await expect(service.getRestriction("u1", "u2")).resolves.toEqual(
         restriction
       );
     });
     it("should return null and log error if error thrown", async () => {
-      mockFirestore.getUserRestriction.mockRejectedValue(new Error("fail"));
+      mockRepository.getByUserAndRestrictedUser.mockRejectedValue(
+        new Error("fail")
+      );
       await expect(service.getRestriction("u1", "u2")).resolves.toBeNull();
     });
   });
@@ -146,28 +149,32 @@ describe("UserRestrictService", () => {
           updatedAt: new Date(),
         },
       ];
-      mockFirestore.getUserRestrictions.mockResolvedValue(restrictions);
+      mockRepository.getByUser.mockResolvedValue(restrictions);
       await expect(service.getRestrictedUsers("u1")).resolves.toEqual(
         restrictions
       );
     });
     it("should return [] and log error if error thrown", async () => {
-      mockFirestore.getUserRestrictions.mockRejectedValue(new Error("fail"));
+      mockRepository.getByUser.mockRejectedValue(new Error("fail"));
       await expect(service.getRestrictedUsers("u1")).resolves.toEqual([]);
     });
   });
 
   describe("isUserRestricted", () => {
     it("should return true if restriction exists", async () => {
-      mockFirestore.getUserRestriction.mockResolvedValue({ id: "restrict-1" });
+      mockRepository.getByUserAndRestrictedUser.mockResolvedValue({
+        id: "restrict-1",
+      } as UserRestriction);
       await expect(service.isUserRestricted("u1", "u2")).resolves.toBe(true);
     });
     it("should return false if restriction does not exist", async () => {
-      mockFirestore.getUserRestriction.mockResolvedValue(null);
+      mockRepository.getByUserAndRestrictedUser.mockResolvedValue(null);
       await expect(service.isUserRestricted("u1", "u2")).resolves.toBe(false);
     });
     it("should return false and log error if error thrown", async () => {
-      mockFirestore.getUserRestriction.mockRejectedValue(new Error("fail"));
+      mockRepository.getByUserAndRestrictedUser.mockRejectedValue(
+        new Error("fail")
+      );
       await expect(service.isUserRestricted("u1", "u2")).resolves.toBe(false);
     });
   });
@@ -212,7 +219,7 @@ describe("UserRestrictService", () => {
           updatedAt: new Date(),
         },
       ];
-      mockFirestore.getUserRestrictions.mockResolvedValue(restrictions);
+      mockRepository.getByUser.mockResolvedValue(restrictions);
       const stats = await service.getRestrictionStats("u1");
       expect(stats.totalRestricted).toBe(4);
       expect(stats.byType).toEqual({
@@ -223,7 +230,7 @@ describe("UserRestrictService", () => {
     });
 
     it("should return correct stats with empty restrictions", async () => {
-      mockFirestore.getUserRestrictions.mockResolvedValue([]);
+      mockRepository.getByUser.mockResolvedValue([]);
       const stats = await service.getRestrictionStats("u1");
       expect(stats.totalRestricted).toBe(0);
       expect(stats.byType).toEqual({
@@ -234,7 +241,7 @@ describe("UserRestrictService", () => {
     });
 
     it("should return 0s and log error if error thrown", async () => {
-      mockFirestore.getUserRestrictions.mockRejectedValue(new Error("fail"));
+      mockRepository.getByUser.mockRejectedValue(new Error("fail"));
       const stats = await service.getRestrictionStats("u1");
       expect(stats).toEqual({
         totalRestricted: 0,

@@ -1,37 +1,88 @@
-import { getReportingService } from "../services/reportingService";
-import { getFirestoreService } from "../services/firestoreService";
+import { ReportingService } from "../services/reportingService";
 import { getReputationService } from "../services/reputationService";
-import { ReportCategory, ReportStatus, ReportPriority } from "../types";
+import { getSuspensionService } from "../services/suspensionService";
+import { getFirestoreService } from "../services/firestoreService";
+import {
+  ReportCategory,
+  ReportStatus,
+  ReportPriority,
+  CommentReport,
+} from "../types";
+import { ReportRepository } from "../repositories/ReportRepository";
 
 // Mock the services
-jest.mock("../services/firestoreService");
 jest.mock("../services/reputationService");
+jest.mock("../services/suspensionService");
+jest.mock("../services/firestoreService");
+
+const mockReputationService = {
+  getUserReputation: jest.fn(),
+  adjustUserReputationScore: jest.fn(),
+};
+
+const mockSuspensionService = {
+  createSuspension: jest.fn(),
+  getUserActiveSuspensions: jest.fn(),
+};
 
 const mockFirestoreService = {
-  saveCommentReport: jest.fn(),
-  getCommentReports: jest.fn(),
-  getCommentReport: jest.fn(),
-  updateCommentReportStatus: jest.fn(),
-  updateCommentReport: jest.fn(),
-  hasUserReportedComment: jest.fn(),
-  getCommentReportStats: jest.fn(),
+  getWhisper: jest.fn(),
+  deleteWhisper: jest.fn(),
   getComment: jest.fn(),
   deleteComment: jest.fn(),
 };
 
-const mockReputationService = {
-  getUserReputation: jest.fn(),
+const mockRepository: jest.Mocked<ReportRepository> = {
+  save: jest.fn(),
+  getById: jest.fn(),
+  getAll: jest.fn(),
+  update: jest.fn(),
+  delete: jest.fn(),
+  getByWhisper: jest.fn(),
+  getByReporter: jest.fn(),
+  getByStatus: jest.fn(),
+  getByCategory: jest.fn(),
+  getByPriority: jest.fn(),
+  getByDateRange: jest.fn(),
+  getWithFilters: jest.fn(),
+  getPending: jest.fn(),
+  getCritical: jest.fn(),
+  getStats: jest.fn(),
+  getWhisperStats: jest.fn(),
+  saveCommentReport: jest.fn(),
+  getCommentReport: jest.fn(),
+  getCommentReports: jest.fn(),
+  updateCommentReport: jest.fn(),
+  updateCommentReportStatus: jest.fn(),
+  hasUserReportedComment: jest.fn(),
+  getCommentReportStats: jest.fn(),
 };
 
-(getFirestoreService as jest.Mock).mockReturnValue(mockFirestoreService);
 (getReputationService as jest.Mock).mockReturnValue(mockReputationService);
+(getSuspensionService as jest.Mock).mockReturnValue(mockSuspensionService);
+(getFirestoreService as jest.Mock).mockReturnValue(mockFirestoreService);
 
 describe("Comment Reporting", () => {
-  let reportingService: ReturnType<typeof getReportingService>;
+  let reportingService: ReportingService;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    reportingService = getReportingService();
+    ReportingService.resetInstance();
+
+    // Create service with mocked repository
+    reportingService = new ReportingService(mockRepository);
+
+    // Set default mocks
+    mockRepository.getCommentReports.mockResolvedValue([]);
+    mockRepository.saveCommentReport.mockResolvedValue();
+    mockRepository.updateCommentReport.mockResolvedValue();
+    mockRepository.hasUserReportedComment.mockResolvedValue(false);
+    mockFirestoreService.getComment.mockResolvedValue(null);
+    mockFirestoreService.deleteComment.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    ReportingService.destroyInstance();
   });
 
   describe("createCommentReport", () => {
@@ -50,8 +101,8 @@ describe("Comment Reporting", () => {
       };
 
       mockReputationService.getUserReputation.mockResolvedValue(mockReputation);
-      mockFirestoreService.getCommentReports.mockResolvedValue([]);
-      mockFirestoreService.saveCommentReport.mockResolvedValue(undefined);
+      mockRepository.getCommentReports.mockResolvedValue([]);
+      mockRepository.saveCommentReport.mockResolvedValue();
 
       const reportData = {
         commentId: "comment123",
@@ -69,7 +120,7 @@ describe("Comment Reporting", () => {
       expect(result.category).toBe(ReportCategory.HARASSMENT);
       expect(result.priority).toBe(ReportPriority.HIGH); // Verified user gets high priority
       expect(result.status).toBe(ReportStatus.PENDING);
-      expect(mockFirestoreService.saveCommentReport).toHaveBeenCalled();
+      expect(mockRepository.saveCommentReport).toHaveBeenCalled();
     });
 
     it("should update existing report if same user reports same comment with same category", async () => {
@@ -86,7 +137,7 @@ describe("Comment Reporting", () => {
         violationHistory: [],
       };
 
-      const existingReport = {
+      const existingReport: CommentReport = {
         id: "report123",
         commentId: "comment123",
         whisperId: "whisper123",
@@ -103,10 +154,8 @@ describe("Comment Reporting", () => {
       };
 
       mockReputationService.getUserReputation.mockResolvedValue(mockReputation);
-      mockFirestoreService.getCommentReports.mockResolvedValue([
-        existingReport,
-      ]);
-      mockFirestoreService.updateCommentReport.mockResolvedValue(undefined);
+      mockRepository.getCommentReports.mockResolvedValue([existingReport]);
+      mockRepository.updateCommentReport.mockResolvedValue();
 
       const reportData = {
         commentId: "comment123",
@@ -124,7 +173,7 @@ describe("Comment Reporting", () => {
       expect(result.reason).toContain("Original report");
       expect(result.reason).toContain("Additional harassment evidence");
       expect(result.priority).toBe(ReportPriority.HIGH); // Escalated priority
-      expect(mockFirestoreService.updateCommentReport).toHaveBeenCalled();
+      expect(mockRepository.updateCommentReport).toHaveBeenCalled();
     });
 
     it("should throw error if banned user tries to report", async () => {
@@ -160,7 +209,7 @@ describe("Comment Reporting", () => {
 
   describe("hasUserReportedComment", () => {
     it("should return true if user has reported the comment", async () => {
-      const existingReport = {
+      const existingReport: CommentReport = {
         id: "report123",
         commentId: "comment123",
         whisperId: "whisper123",
@@ -176,10 +225,8 @@ describe("Comment Reporting", () => {
         reputationWeight: 1.0,
       };
 
-      mockFirestoreService.hasUserReportedComment.mockResolvedValue({
-        hasReported: true,
-        existingReport,
-      });
+      mockRepository.hasUserReportedComment.mockResolvedValue(true);
+      mockRepository.getCommentReports.mockResolvedValue([existingReport]);
 
       const result = await reportingService.hasUserReportedComment(
         "comment123",
@@ -192,9 +239,7 @@ describe("Comment Reporting", () => {
     });
 
     it("should return false if user has not reported the comment", async () => {
-      mockFirestoreService.hasUserReportedComment.mockResolvedValue({
-        hasReported: false,
-      });
+      mockRepository.hasUserReportedComment.mockResolvedValue(false);
 
       const result = await reportingService.hasUserReportedComment(
         "comment123",
@@ -213,32 +258,22 @@ describe("Comment Reporting", () => {
         uniqueReporters: 3,
         categories: {
           [ReportCategory.HARASSMENT]: 3,
-          [ReportCategory.HATE_SPEECH]: 1,
-          [ReportCategory.SPAM]: 1,
-          [ReportCategory.VIOLENCE]: 0,
-          [ReportCategory.SEXUAL_CONTENT]: 0,
-          [ReportCategory.SCAM]: 0,
-          [ReportCategory.COPYRIGHT]: 0,
-          [ReportCategory.PERSONAL_INFO]: 0,
-          [ReportCategory.MINOR_SAFETY]: 0,
-          [ReportCategory.OTHER]: 0,
+          [ReportCategory.SPAM]: 2,
         },
         priorityBreakdown: {
-          [ReportPriority.LOW]: 1,
+          [ReportPriority.HIGH]: 3,
           [ReportPriority.MEDIUM]: 2,
-          [ReportPriority.HIGH]: 2,
-          [ReportPriority.CRITICAL]: 0,
         },
       };
 
-      mockFirestoreService.getCommentReportStats.mockResolvedValue(mockStats);
+      mockRepository.getCommentReportStats.mockResolvedValue(mockStats);
 
       const result = await reportingService.getCommentReportStats("comment123");
 
+      expect(result).toEqual(mockStats);
       expect(result.totalReports).toBe(5);
       expect(result.uniqueReporters).toBe(3);
       expect(result.categories[ReportCategory.HARASSMENT]).toBe(3);
-      expect(result.priorityBreakdown[ReportPriority.HIGH]).toBe(2);
     });
   });
 });

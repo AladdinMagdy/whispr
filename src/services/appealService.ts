@@ -4,7 +4,8 @@
  */
 
 import { Appeal, ViolationRecord, UserReputation } from "../types";
-import { getFirestoreService } from "./firestoreService";
+import { AppealRepository } from "../repositories/AppealRepository";
+import { FirebaseAppealRepository } from "../repositories/FirebaseAppealRepository";
 import { getReputationService } from "./reputationService";
 import { REPUTATION_CONSTANTS } from "../constants";
 import { getErrorMessage } from "../utils/errorHelpers";
@@ -30,10 +31,12 @@ import {
 
 export class AppealService {
   private static instance: AppealService | null;
-  private firestoreService = getFirestoreService();
+  private repository: AppealRepository;
   private reputationService = getReputationService();
 
-  private constructor() {}
+  private constructor(repository?: AppealRepository) {
+    this.repository = repository || new FirebaseAppealRepository();
+  }
 
   static getInstance(): AppealService {
     if (!AppealService.instance) {
@@ -43,11 +46,11 @@ export class AppealService {
   }
 
   /**
-   * Get all appeals (extracted from FirestoreService)
+   * Get all appeals
    */
   async getAllAppeals(): Promise<Appeal[]> {
     try {
-      return await this.firestoreService.getAllAppeals();
+      return await this.repository.getAll();
     } catch (error) {
       console.error("Error getting all appeals:", error);
       throw new Error("Failed to get all appeals");
@@ -77,8 +80,8 @@ export class AppealService {
         ...appealData,
       };
 
-      // Save to Firestore
-      await this.firestoreService.saveAppeal(appeal);
+      // Save to repository
+      await this.repository.save(appeal);
 
       console.log(`📝 Appeal created: ${appeal.id}`);
 
@@ -99,7 +102,7 @@ export class AppealService {
    */
   async getAppeal(appealId: string): Promise<Appeal | null> {
     try {
-      return await this.firestoreService.getAppeal(appealId);
+      return await this.repository.getById(appealId);
     } catch (error) {
       console.error("❌ Error getting appeal:", error);
       return null;
@@ -111,7 +114,7 @@ export class AppealService {
    */
   async getUserAppeals(userId: string): Promise<Appeal[]> {
     try {
-      return await this.firestoreService.getUserAppeals(userId);
+      return await this.repository.getByUser(userId);
     } catch (error) {
       console.error("❌ Error getting user appeals:", error);
       return [];
@@ -123,7 +126,7 @@ export class AppealService {
    */
   async getPendingAppeals(): Promise<Appeal[]> {
     try {
-      return await this.firestoreService.getPendingAppeals();
+      return await this.repository.getPending();
     } catch (error) {
       console.error("❌ Error getting pending appeals:", error);
       return [];
@@ -147,7 +150,7 @@ export class AppealService {
       // Process review action
       const updates = processReviewAction(data);
 
-      await this.firestoreService.updateAppeal(data.appealId, updates);
+      await this.repository.update(data.appealId, updates);
 
       // Apply reputation adjustment
       const reputationAdjustment = getReputationAdjustment(
@@ -156,7 +159,7 @@ export class AppealService {
       );
 
       if (reputationAdjustment !== 0) {
-        await this.firestoreService.adjustUserReputationScore(
+        await this.reputationService.adjustUserReputationScore(
           appeal.userId,
           reputationAdjustment,
           formatReputationReason(data.action, data.reason)
@@ -183,10 +186,10 @@ export class AppealService {
     try {
       const updates = createAutoApprovalUpdates();
 
-      await this.firestoreService.updateAppeal(appealId, updates);
+      await this.repository.update(appealId, updates);
 
       // Apply reputation adjustment
-      await this.firestoreService.adjustUserReputationScore(
+      await this.reputationService.adjustUserReputationScore(
         reputation.userId,
         REPUTATION_CONSTANTS.APPEAL_APPROVED_BONUS,
         "Appeal auto-approved"
@@ -232,7 +235,7 @@ export class AppealService {
 
         if (isAppealExpired(appeal, timeLimit)) {
           const updates = createExpirationUpdates();
-          await this.firestoreService.updateAppeal(appeal.id, updates);
+          await this.repository.update(appeal.id, updates);
           console.log(`⏰ Appeal ${appeal.id} marked as expired`);
         }
       }
@@ -251,6 +254,42 @@ export class AppealService {
     } catch (error) {
       console.error("❌ Error getting appeal stats:", error);
       return getDefaultAppealStats();
+    }
+  }
+
+  /**
+   * Get all appeals for admin moderation
+   */
+  async getAllAppealsForAdmin(): Promise<Appeal[]> {
+    try {
+      return await this.repository.getAll();
+    } catch (error) {
+      console.error("❌ Error getting all appeals for admin:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Get appeals by violation ID
+   */
+  async getAppealsByViolation(violationId: string): Promise<Appeal[]> {
+    try {
+      return await this.repository.getByViolation(violationId);
+    } catch (error) {
+      console.error("❌ Error getting appeals by violation:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Update an appeal
+   */
+  async updateAppeal(id: string, updates: Partial<Appeal>): Promise<void> {
+    try {
+      await this.repository.update(id, updates);
+    } catch (error) {
+      console.error("❌ Error updating appeal:", error);
+      throw new Error("Failed to update appeal");
     }
   }
 

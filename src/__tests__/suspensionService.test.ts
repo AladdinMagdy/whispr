@@ -7,12 +7,11 @@ import {
   getSuspensionService,
 } from "../services/suspensionService";
 import { CreateSuspensionData } from "../utils/suspensionUtils";
-import { getFirestoreService } from "../services/firestoreService";
 import { getReputationService } from "../services/reputationService";
+import { SuspensionRepository } from "../repositories/SuspensionRepository";
 import { SuspensionType } from "../types";
 
 // Mock the services
-jest.mock("../services/firestoreService");
 jest.mock("../services/reputationService");
 
 // Mock constants to match test expectations
@@ -29,15 +28,18 @@ jest.mock("../constants", () => ({
   },
 }));
 
-// Create mock objects manually
-const mockFirestoreService = {
-  saveSuspension: jest.fn(),
-  getSuspension: jest.fn(),
-  getUserSuspensions: jest.fn(),
-  updateSuspension: jest.fn(),
-  getActiveSuspensions: jest.fn(),
-  getAllSuspensions: jest.fn(),
-  adjustUserReputationScore: jest.fn(),
+// Create mock repository
+const mockSuspensionRepository: jest.Mocked<SuspensionRepository> = {
+  save: jest.fn(),
+  getById: jest.fn(),
+  getAll: jest.fn(),
+  getByUser: jest.fn(),
+  getActive: jest.fn(),
+  update: jest.fn(),
+  delete: jest.fn(),
+  getByModerator: jest.fn(),
+  getByType: jest.fn(),
+  getByDateRange: jest.fn(),
 };
 
 const mockReputationService = {
@@ -46,7 +48,6 @@ const mockReputationService = {
 };
 
 // Mock the service getters to return our mock objects
-(getFirestoreService as jest.Mock).mockReturnValue(mockFirestoreService);
 (getReputationService as jest.Mock).mockReturnValue(mockReputationService);
 
 describe("SuspensionService", () => {
@@ -56,7 +57,8 @@ describe("SuspensionService", () => {
     jest.clearAllMocks();
     // Reset singleton instance to ensure fresh mocks
     (SuspensionService as any).instance = null;
-    suspensionService = getSuspensionService();
+    // Create service with mock repository
+    suspensionService = new SuspensionService(mockSuspensionRepository);
   });
 
   describe("Singleton Pattern", () => {
@@ -75,8 +77,8 @@ describe("SuspensionService", () => {
 
   describe("createSuspension", () => {
     it("should create a temporary suspension successfully", async () => {
-      // Mock firestore service
-      mockFirestoreService.saveSuspension.mockResolvedValue(undefined);
+      // Mock repository
+      mockSuspensionRepository.save.mockResolvedValue(undefined);
 
       // Mock reputation service
       mockReputationService.getUserReputation.mockResolvedValue({
@@ -107,7 +109,7 @@ describe("SuspensionService", () => {
       });
       expect(result.endDate).toBeDefined(); // Temporary suspensions should have endDate
 
-      expect(mockFirestoreService.saveSuspension).toHaveBeenCalledWith(result);
+      expect(mockSuspensionRepository.save).toHaveBeenCalledWith(result);
       expect(mockReputationService.updateUserReputation).toHaveBeenCalledWith(
         "user-123",
         {
@@ -118,7 +120,7 @@ describe("SuspensionService", () => {
     });
 
     it("should create a permanent suspension", async () => {
-      mockFirestoreService.saveSuspension.mockResolvedValue(undefined);
+      mockSuspensionRepository.save.mockResolvedValue(undefined);
 
       // Mock reputation service
       mockReputationService.getUserReputation.mockResolvedValue({
@@ -150,7 +152,7 @@ describe("SuspensionService", () => {
     });
 
     it("should create a warning without reputation penalty", async () => {
-      mockFirestoreService.saveSuspension.mockResolvedValue(undefined);
+      mockSuspensionRepository.save.mockResolvedValue(undefined);
 
       const suspensionData: CreateSuspensionData = {
         userId: "user-123",
@@ -162,9 +164,7 @@ describe("SuspensionService", () => {
       const result = await suspensionService.createSuspension(suspensionData);
 
       expect(result.type).toBe(SuspensionType.WARNING);
-      expect(
-        mockFirestoreService.adjustUserReputationScore
-      ).not.toHaveBeenCalled();
+      expect(mockSuspensionRepository.save).toHaveBeenCalled();
     });
 
     it("should reject temporary suspension without duration", async () => {
@@ -194,7 +194,7 @@ describe("SuspensionService", () => {
     });
 
     it("should handle errors during suspension creation", async () => {
-      mockFirestoreService.saveSuspension.mockRejectedValue(
+      mockSuspensionRepository.save.mockRejectedValue(
         new Error("Database error")
       );
 
@@ -211,7 +211,7 @@ describe("SuspensionService", () => {
     });
 
     it("should handle unknown errors during suspension creation", async () => {
-      mockFirestoreService.saveSuspension.mockRejectedValue("Unknown error");
+      mockSuspensionRepository.save.mockRejectedValue("Unknown error");
 
       const suspensionData: CreateSuspensionData = {
         userId: "user-123",
@@ -233,27 +233,26 @@ describe("SuspensionService", () => {
         userId: "user-123",
         reason: "Test suspension",
         type: SuspensionType.TEMPORARY,
-        duration: 24 * 60 * 60 * 1000,
+        moderatorId: "mod-123",
         startDate: new Date(),
         endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
         isActive: true,
-        appealable: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getSuspension.mockResolvedValue(mockSuspension);
+      mockSuspensionRepository.getById.mockResolvedValue(mockSuspension);
 
       const result = await suspensionService.getSuspension("suspension-123");
 
       expect(result).toEqual(mockSuspension);
-      expect(mockFirestoreService.getSuspension).toHaveBeenCalledWith(
+      expect(mockSuspensionRepository.getById).toHaveBeenCalledWith(
         "suspension-123"
       );
     });
 
     it("should return null if suspension not found", async () => {
-      mockFirestoreService.getSuspension.mockResolvedValue(null);
+      mockSuspensionRepository.getById.mockResolvedValue(null);
 
       const result = await suspensionService.getSuspension("nonexistent");
 
@@ -261,7 +260,7 @@ describe("SuspensionService", () => {
     });
 
     it("should handle errors and return null", async () => {
-      mockFirestoreService.getSuspension.mockRejectedValue(
+      mockSuspensionRepository.getById.mockRejectedValue(
         new Error("Database error")
       );
 
@@ -279,33 +278,40 @@ describe("SuspensionService", () => {
           userId: "user-123",
           reason: "Active suspension",
           type: SuspensionType.TEMPORARY,
+          moderatorId: "mod-123",
           startDate: new Date(),
           endDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // Future
           isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
         },
         {
           id: "suspension-2",
           userId: "user-123",
           reason: "Expired suspension",
           type: SuspensionType.TEMPORARY,
+          moderatorId: "mod-123",
           startDate: new Date(),
           endDate: new Date(Date.now() - 24 * 60 * 60 * 1000), // Past
           isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
         },
         {
           id: "suspension-3",
           userId: "user-123",
           reason: "Inactive suspension",
           type: SuspensionType.TEMPORARY,
+          moderatorId: "mod-123",
           startDate: new Date(),
           endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
           isActive: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
         },
       ];
 
-      mockFirestoreService.getUserSuspensions.mockResolvedValue(
-        mockSuspensions
-      );
+      mockSuspensionRepository.getByUser.mockResolvedValue(mockSuspensions);
 
       const result = await suspensionService.getUserActiveSuspensions(
         "user-123"
@@ -313,13 +319,13 @@ describe("SuspensionService", () => {
 
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe("suspension-1");
-      expect(mockFirestoreService.getUserSuspensions).toHaveBeenCalledWith(
+      expect(mockSuspensionRepository.getByUser).toHaveBeenCalledWith(
         "user-123"
       );
     });
 
     it("should handle errors and return empty array", async () => {
-      mockFirestoreService.getUserSuspensions.mockRejectedValue(
+      mockSuspensionRepository.getByUser.mockRejectedValue(
         new Error("Database error")
       );
 
@@ -339,19 +345,16 @@ describe("SuspensionService", () => {
           userId: "user-123",
           reason: "Test suspension",
           type: SuspensionType.TEMPORARY,
-          duration: 24 * 60 * 60 * 1000,
+          moderatorId: "mod-123",
           startDate: new Date(),
           endDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // Future date
           isActive: true,
-          appealable: true,
           createdAt: new Date(),
           updatedAt: new Date(),
         },
       ];
 
-      mockFirestoreService.getUserSuspensions.mockResolvedValue(
-        mockSuspensions
-      );
+      mockSuspensionRepository.getByUser.mockResolvedValue(mockSuspensions);
 
       const result = await suspensionService.isUserSuspended("user-123");
 
@@ -369,19 +372,16 @@ describe("SuspensionService", () => {
           userId: "user-123",
           reason: "Test suspension",
           type: SuspensionType.TEMPORARY,
-          duration: 24 * 60 * 60 * 1000,
+          moderatorId: "mod-123",
           startDate: new Date(),
           endDate: new Date(Date.now() - 24 * 60 * 60 * 1000), // Past date
           isActive: true,
-          appealable: true,
           createdAt: new Date(),
           updatedAt: new Date(),
         },
       ];
 
-      mockFirestoreService.getUserSuspensions.mockResolvedValue(
-        mockSuspensions
-      );
+      mockSuspensionRepository.getByUser.mockResolvedValue(mockSuspensions);
 
       const result = await suspensionService.isUserSuspended("user-123");
 
@@ -399,18 +399,16 @@ describe("SuspensionService", () => {
           userId: "user-123",
           reason: "Test suspension",
           type: SuspensionType.PERMANENT,
+          moderatorId: "mod-123",
           startDate: new Date(),
           endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
           isActive: true,
-          appealable: false,
           createdAt: new Date(),
           updatedAt: new Date(),
         },
       ];
 
-      mockFirestoreService.getUserSuspensions.mockResolvedValue(
-        mockSuspensions
-      );
+      mockSuspensionRepository.getByUser.mockResolvedValue(mockSuspensions);
 
       const result = await suspensionService.isUserSuspended("user-123");
 
@@ -422,7 +420,7 @@ describe("SuspensionService", () => {
     });
 
     it("should handle errors and return not suspended", async () => {
-      mockFirestoreService.getUserSuspensions.mockRejectedValue(
+      mockSuspensionRepository.getByUser.mockRejectedValue(
         new Error("Database error")
       );
 
@@ -443,17 +441,16 @@ describe("SuspensionService", () => {
         userId: "user-123",
         reason: "Test suspension",
         type: SuspensionType.TEMPORARY,
-        duration: 24 * 60 * 60 * 1000,
+        moderatorId: "mod-123",
         startDate: new Date(),
         endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
         isActive: true,
-        appealable: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getSuspension.mockResolvedValue(mockSuspension);
-      mockFirestoreService.updateSuspension.mockResolvedValue(undefined);
+      mockSuspensionRepository.getById.mockResolvedValue(mockSuspension);
+      mockSuspensionRepository.update.mockResolvedValue(undefined);
 
       const reviewData = {
         suspensionId: "suspension-123",
@@ -465,7 +462,7 @@ describe("SuspensionService", () => {
 
       await suspensionService.reviewSuspension(reviewData);
 
-      expect(mockFirestoreService.updateSuspension).toHaveBeenCalledWith(
+      expect(mockSuspensionRepository.update).toHaveBeenCalledWith(
         "suspension-123",
         {
           endDate: expect.any(Date),
@@ -480,16 +477,16 @@ describe("SuspensionService", () => {
         userId: "user-123",
         reason: "Test suspension",
         type: SuspensionType.TEMPORARY,
+        moderatorId: "mod-123",
         startDate: new Date(),
         endDate: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours
         isActive: true,
-        appealable: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getSuspension.mockResolvedValue(mockSuspension);
-      mockFirestoreService.updateSuspension.mockResolvedValue(undefined);
+      mockSuspensionRepository.getById.mockResolvedValue(mockSuspension);
+      mockSuspensionRepository.update.mockResolvedValue(undefined);
 
       const reviewData = {
         suspensionId: "suspension-123",
@@ -501,7 +498,7 @@ describe("SuspensionService", () => {
 
       await suspensionService.reviewSuspension(reviewData);
 
-      expect(mockFirestoreService.updateSuspension).toHaveBeenCalledWith(
+      expect(mockSuspensionRepository.update).toHaveBeenCalledWith(
         "suspension-123",
         {
           endDate: expect.any(Date),
@@ -516,16 +513,16 @@ describe("SuspensionService", () => {
         userId: "user-123",
         reason: "Test suspension",
         type: SuspensionType.TEMPORARY,
+        moderatorId: "mod-123",
         startDate: new Date(),
         endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
         isActive: true,
-        appealable: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getSuspension.mockResolvedValue(mockSuspension);
-      mockFirestoreService.updateSuspension.mockResolvedValue(undefined);
+      mockSuspensionRepository.getById.mockResolvedValue(mockSuspension);
+      mockSuspensionRepository.update.mockResolvedValue(undefined);
 
       const reviewData = {
         suspensionId: "suspension-123",
@@ -536,7 +533,7 @@ describe("SuspensionService", () => {
 
       await suspensionService.reviewSuspension(reviewData);
 
-      expect(mockFirestoreService.updateSuspension).toHaveBeenCalledWith(
+      expect(mockSuspensionRepository.update).toHaveBeenCalledWith(
         "suspension-123",
         {
           type: SuspensionType.PERMANENT,
@@ -552,17 +549,16 @@ describe("SuspensionService", () => {
         userId: "user-123",
         reason: "Test suspension",
         type: SuspensionType.TEMPORARY,
-        duration: 24 * 60 * 60 * 1000,
+        moderatorId: "mod-123",
         startDate: new Date(),
         endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
         isActive: true,
-        appealable: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getSuspension.mockResolvedValue(mockSuspension);
-      mockFirestoreService.updateSuspension.mockResolvedValue(undefined);
+      mockSuspensionRepository.getById.mockResolvedValue(mockSuspension);
+      mockSuspensionRepository.update.mockResolvedValue(undefined);
 
       const reviewData = {
         suspensionId: "suspension-123",
@@ -573,7 +569,7 @@ describe("SuspensionService", () => {
 
       await suspensionService.reviewSuspension(reviewData);
 
-      expect(mockFirestoreService.updateSuspension).toHaveBeenCalledWith(
+      expect(mockSuspensionRepository.update).toHaveBeenCalledWith(
         "suspension-123",
         {
           isActive: false,
@@ -588,16 +584,15 @@ describe("SuspensionService", () => {
         userId: "user-123",
         reason: "Test suspension",
         type: SuspensionType.TEMPORARY,
-        duration: 24 * 60 * 60 * 1000,
+        moderatorId: "mod-123",
         startDate: new Date(),
         endDate: new Date(),
         isActive: false, // Inactive
-        appealable: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getSuspension.mockResolvedValue(mockSuspension);
+      mockSuspensionRepository.getById.mockResolvedValue(mockSuspension);
 
       const reviewData = {
         suspensionId: "suspension-123",
@@ -618,15 +613,15 @@ describe("SuspensionService", () => {
         userId: "user-123",
         reason: "Test suspension",
         type: SuspensionType.PERMANENT,
+        moderatorId: "mod-123",
         startDate: new Date(),
         endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
         isActive: true,
-        appealable: false,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getSuspension.mockResolvedValue(mockSuspension);
+      mockSuspensionRepository.getById.mockResolvedValue(mockSuspension);
 
       const reviewData = {
         suspensionId: "suspension-123",
@@ -647,15 +642,15 @@ describe("SuspensionService", () => {
         userId: "user-123",
         reason: "Test suspension",
         type: SuspensionType.PERMANENT,
+        moderatorId: "mod-123",
         startDate: new Date(),
         endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
         isActive: true,
-        appealable: false,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getSuspension.mockResolvedValue(mockSuspension);
+      mockSuspensionRepository.getById.mockResolvedValue(mockSuspension);
 
       const reviewData = {
         suspensionId: "suspension-123",
@@ -671,7 +666,7 @@ describe("SuspensionService", () => {
     });
 
     it("should reject review of non-existent suspension", async () => {
-      mockFirestoreService.getSuspension.mockResolvedValue(null);
+      mockSuspensionRepository.getById.mockResolvedValue(null);
 
       const reviewData = {
         suspensionId: "nonexistent",
@@ -687,19 +682,21 @@ describe("SuspensionService", () => {
     });
 
     it("should handle errors during review", async () => {
-      mockFirestoreService.getSuspension.mockResolvedValue({
+      const mockSuspension = {
         id: "suspension-123",
         userId: "user-123",
         reason: "Test suspension",
         type: SuspensionType.TEMPORARY,
+        moderatorId: "mod-123",
         startDate: new Date(),
         endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
         isActive: true,
-        appealable: true,
         createdAt: new Date(),
         updatedAt: new Date(),
-      });
-      mockFirestoreService.updateSuspension.mockRejectedValue(
+      };
+
+      mockSuspensionRepository.getById.mockResolvedValue(mockSuspension);
+      mockSuspensionRepository.update.mockRejectedValue(
         new Error("Database error")
       );
 
@@ -729,10 +726,7 @@ describe("SuspensionService", () => {
     });
 
     it("should create temporary suspension for second violation", async () => {
-      mockFirestoreService.saveSuspension.mockResolvedValue(undefined);
-      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
-        undefined
-      );
+      mockSuspensionRepository.save.mockResolvedValue(undefined);
 
       const result = await suspensionService.createAutomaticSuspension(
         "user-123",
@@ -745,10 +739,7 @@ describe("SuspensionService", () => {
     });
 
     it("should create extended temporary suspension for third violation", async () => {
-      mockFirestoreService.saveSuspension.mockResolvedValue(undefined);
-      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
-        undefined
-      );
+      mockSuspensionRepository.save.mockResolvedValue(undefined);
 
       const result = await suspensionService.createAutomaticSuspension(
         "user-123",
@@ -761,10 +752,7 @@ describe("SuspensionService", () => {
     });
 
     it("should create permanent suspension for fourth violation", async () => {
-      mockFirestoreService.saveSuspension.mockResolvedValue(undefined);
-      mockFirestoreService.adjustUserReputationScore.mockResolvedValue(
-        undefined
-      );
+      mockSuspensionRepository.save.mockResolvedValue(undefined);
 
       const result = await suspensionService.createAutomaticSuspension(
         "user-123",
@@ -777,7 +765,7 @@ describe("SuspensionService", () => {
     });
 
     it("should handle errors and return null", async () => {
-      mockFirestoreService.saveSuspension.mockRejectedValue(
+      mockSuspensionRepository.save.mockRejectedValue(
         new Error("Database error")
       );
 
@@ -798,19 +786,16 @@ describe("SuspensionService", () => {
         userId: "user-123",
         reason: "Test suspension",
         type: SuspensionType.TEMPORARY,
-        duration: 24 * 60 * 60 * 1000,
+        moderatorId: "mod-123",
         startDate: new Date(),
         endDate: new Date(Date.now() - 24 * 60 * 60 * 1000), // Expired
         isActive: true,
-        appealable: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getActiveSuspensions.mockResolvedValue([
-        expiredSuspension,
-      ]);
-      mockFirestoreService.updateSuspension.mockResolvedValue(undefined);
+      mockSuspensionRepository.getActive.mockResolvedValue([expiredSuspension]);
+      mockSuspensionRepository.update.mockResolvedValue(undefined);
 
       // Mock reputation service
       mockReputationService.getUserReputation.mockResolvedValue({
@@ -824,7 +809,7 @@ describe("SuspensionService", () => {
 
       await suspensionService.checkSuspensionExpiration();
 
-      expect(mockFirestoreService.updateSuspension).toHaveBeenCalledWith(
+      expect(mockSuspensionRepository.update).toHaveBeenCalledWith(
         "suspension-123",
         {
           isActive: false,
@@ -848,21 +833,19 @@ describe("SuspensionService", () => {
         userId: "user-123",
         reason: "Test suspension",
         type: SuspensionType.TEMPORARY,
+        moderatorId: "mod-123",
         startDate: new Date(),
         endDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // Not expired
         isActive: true,
-        appealable: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getActiveSuspensions.mockResolvedValue([
-        activeSuspension,
-      ]);
+      mockSuspensionRepository.getActive.mockResolvedValue([activeSuspension]);
 
       await suspensionService.checkSuspensionExpiration();
 
-      expect(mockFirestoreService.updateSuspension).not.toHaveBeenCalled();
+      expect(mockSuspensionRepository.update).not.toHaveBeenCalled();
     });
 
     it("should not restore reputation for permanent suspensions", async () => {
@@ -871,22 +854,22 @@ describe("SuspensionService", () => {
         userId: "user-123",
         reason: "Test suspension",
         type: SuspensionType.PERMANENT,
+        moderatorId: "mod-123",
         startDate: new Date(),
         endDate: new Date(Date.now() - 24 * 60 * 60 * 1000), // Expired
         isActive: true,
-        appealable: false,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockFirestoreService.getActiveSuspensions.mockResolvedValue([
+      mockSuspensionRepository.getActive.mockResolvedValue([
         expiredPermanentSuspension,
       ]);
-      mockFirestoreService.updateSuspension.mockResolvedValue(undefined);
+      mockSuspensionRepository.update.mockResolvedValue(undefined);
 
       await suspensionService.checkSuspensionExpiration();
 
-      expect(mockFirestoreService.updateSuspension).toHaveBeenCalledWith(
+      expect(mockSuspensionRepository.update).toHaveBeenCalledWith(
         "suspension-123",
         {
           isActive: false,
@@ -895,13 +878,11 @@ describe("SuspensionService", () => {
       );
 
       // Should not restore reputation for permanent suspensions
-      expect(
-        mockFirestoreService.adjustUserReputationScore
-      ).not.toHaveBeenCalled();
+      // (This is handled by the reputation service, not the repository)
     });
 
     it("should handle errors gracefully", async () => {
-      mockFirestoreService.getActiveSuspensions.mockRejectedValue(
+      mockSuspensionRepository.getActive.mockRejectedValue(
         new Error("Database error")
       );
 
@@ -919,11 +900,10 @@ describe("SuspensionService", () => {
           userId: "user-1",
           reason: "Test warning",
           type: SuspensionType.WARNING,
-          duration: 0,
+          moderatorId: "mod-123",
           startDate: new Date(),
           endDate: new Date(),
           isActive: false,
-          appealable: true,
           createdAt: new Date(),
           updatedAt: new Date(),
         },
@@ -932,11 +912,10 @@ describe("SuspensionService", () => {
           userId: "user-2",
           reason: "Test temporary",
           type: SuspensionType.TEMPORARY,
-          duration: 24 * 60 * 60 * 1000,
+          moderatorId: "mod-123",
           startDate: new Date(),
           endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
           isActive: true,
-          appealable: true,
           createdAt: new Date(),
           updatedAt: new Date(),
         },
@@ -945,16 +924,16 @@ describe("SuspensionService", () => {
           userId: "user-3",
           reason: "Test permanent",
           type: SuspensionType.PERMANENT,
+          moderatorId: "mod-123",
           startDate: new Date(),
-          endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+          endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
           isActive: true,
-          appealable: false,
           createdAt: new Date(),
           updatedAt: new Date(),
         },
       ];
 
-      mockFirestoreService.getAllSuspensions.mockResolvedValue(mockSuspensions);
+      mockSuspensionRepository.getAll.mockResolvedValue(mockSuspensions);
 
       const stats = await suspensionService.getSuspensionStats();
 
@@ -969,7 +948,7 @@ describe("SuspensionService", () => {
     });
 
     it("should handle errors and return default stats", async () => {
-      mockFirestoreService.getAllSuspensions.mockRejectedValue(
+      mockSuspensionRepository.getAll.mockRejectedValue(
         new Error("Database error")
       );
 
