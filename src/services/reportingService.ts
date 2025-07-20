@@ -733,80 +733,25 @@ export class ReportingService {
    */
   private async checkUserLevelEscalation(userId: string): Promise<void> {
     try {
-      // Get deleted whisper count within the user escalation window
-      const deletedCount = await this.privacyService.getDeletedWhisperCount(
-        userId,
-        REPORTING_CONSTANTS.AUTO_ESCALATION.USER.ESCALATION_WINDOW_DAYS
-      );
+      // Get user reputation to check current level
+      const reputation = await this.reputationService.getUserReputation(userId);
 
-      console.log(
-        `📊 User-level escalation check for user ${userId}: ${deletedCount} deleted whispers`
-      );
-
-      // Check if user is already suspended
-      const suspensionService = getSuspensionService();
-      const activeSuspensions =
-        await suspensionService.getUserActiveSuspensions(userId);
-
-      if (activeSuspensions.length > 0) {
-        console.log(
-          `⚠️ User ${userId} already has active suspension: ${activeSuspensions[0].type}`
-        );
-        return;
-      }
-
-      // Apply user-level bans based on deleted whisper count
-      if (
-        deletedCount >= REPORTING_CONSTANTS.AUTO_ESCALATION.USER.PERMANENT_BAN
-      ) {
-        console.log(
-          `🚫 Auto-applying permanent ban to user ${userId} after ${deletedCount} deleted whispers`
-        );
-
-        await suspensionService.createSuspension({
+      // Check if user should be escalated based on reputation level
+      if (reputation.level === "flagged" && reputation.score < 30) {
+        // Create automatic suspension for flagged users with low scores
+        const suspensionService = getSuspensionService();
+        await suspensionService.createAutomaticSuspension(
           userId,
-          reason: `Automatic permanent ban: ${deletedCount} deleted whispers within ${REPORTING_CONSTANTS.AUTO_ESCALATION.USER.ESCALATION_WINDOW_DAYS} days`,
-          type: SuspensionType.PERMANENT,
-          moderatorId: "system",
-        });
-
-        // Set user reputation to 0 (banned)
-        await this.firestoreService.adjustUserReputationScore(
-          userId,
-          0,
-          `Automatic permanent ban: ${deletedCount} deleted whispers`
+          3, // violation count
+          "Automatic escalation due to low reputation score"
         );
-      } else if (
-        deletedCount >= REPORTING_CONSTANTS.AUTO_ESCALATION.USER.EXTENDED_BAN
-      ) {
+
         console.log(
-          `🚫 Auto-applying extended ban to user ${userId} after ${deletedCount} deleted whispers`
+          `🚨 User ${userId} automatically escalated due to low reputation`
         );
-
-        await suspensionService.createSuspension({
-          userId,
-          reason: `Automatic extended ban: ${deletedCount} deleted whispers within ${REPORTING_CONSTANTS.AUTO_ESCALATION.USER.ESCALATION_WINDOW_DAYS} days`,
-          type: SuspensionType.TEMPORARY,
-          moderatorId: "system",
-          duration: TIME_CONSTANTS.EXTENDED_SUSPENSION_DURATION, // 7 days
-        });
-      } else if (
-        deletedCount >= REPORTING_CONSTANTS.AUTO_ESCALATION.USER.TEMPORARY_BAN
-      ) {
-        console.log(
-          `🚫 Auto-applying temporary ban to user ${userId} after ${deletedCount} deleted whispers`
-        );
-
-        await suspensionService.createSuspension({
-          userId,
-          reason: `Automatic temporary ban: ${deletedCount} deleted whispers within ${REPORTING_CONSTANTS.AUTO_ESCALATION.USER.ESCALATION_WINDOW_DAYS} days`,
-          type: SuspensionType.TEMPORARY,
-          moderatorId: "system",
-          duration: TIME_CONSTANTS.TEMPORARY_SUSPENSION_DURATION, // 24 hours
-        });
       }
     } catch (error) {
-      console.error("❌ Error in user-level escalation check:", error);
+      console.error("❌ Error checking user level escalation:", error);
     }
   }
 

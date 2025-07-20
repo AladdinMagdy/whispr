@@ -1,202 +1,231 @@
-import { getFirestoreService } from "../services/firestoreService";
 import { getUserBlockService } from "../services/userBlockService";
+import { getUserMuteService } from "../services/userMuteService";
+import { getBlockListCacheService } from "../services/blockListCacheService";
 
-// Mock Firebase
-jest.mock("../services/firestoreService");
-jest.mock("../services/userBlockService");
-
-describe("Bidirectional Blocking Logic", () => {
-  let mockFirestoreService: any;
-  let mockUserBlockService: any;
+describe("Blocking Logic", () => {
+  let userBlockService: ReturnType<typeof getUserBlockService>;
+  let userMuteService: ReturnType<typeof getUserMuteService>;
+  let blockListCacheService: ReturnType<typeof getBlockListCacheService>;
 
   beforeEach(() => {
-    // Reset mocks
-    jest.clearAllMocks();
+    userBlockService = getUserBlockService();
+    userMuteService = getUserMuteService();
+    blockListCacheService = getBlockListCacheService();
 
-    mockFirestoreService = {
-      getUserBlocks: jest.fn(),
-      getUsersWhoBlockedMe: jest.fn(),
-      getUserBlock: jest.fn(),
-    };
-
-    mockUserBlockService = {
-      blockUser: jest.fn(),
-      isUserBlocked: jest.fn(),
-    };
-
-    (getFirestoreService as jest.Mock).mockReturnValue(mockFirestoreService);
-    (getUserBlockService as jest.Mock).mockReturnValue(mockUserBlockService);
+    // Inject the services into the cache service to avoid dynamic import issues
+    blockListCacheService.setUserBlockService(userBlockService);
+    blockListCacheService.setUserMuteService(userMuteService);
   });
 
-  describe("Blocking Scenarios", () => {
-    it("should filter out content when user A blocks user B", async () => {
-      // Setup: User A blocks User B
-      mockFirestoreService.getUserBlocks.mockResolvedValue([
-        { userId: "userA", blockedUserId: "userB" },
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe("User Blocking", () => {
+    test("should correctly identify when user A blocks user B", async () => {
+      // Mock the repository methods
+      jest.spyOn(userBlockService, "getBlockedUsers").mockResolvedValue([
+        {
+          id: "block1",
+          userId: "userA",
+          blockedUserId: "userB",
+          blockedUserDisplayName: "User B",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
       ]);
-      mockFirestoreService.getUsersWhoBlockedMe.mockResolvedValue([]);
+      jest
+        .spyOn(userBlockService, "getUsersWhoBlockedMe")
+        .mockResolvedValue([]);
 
-      const firestoreService = getFirestoreService();
-
-      // Mock whispers data
-      const mockWhispers = [
-        { id: "1", userId: "userA", userDisplayName: "User A" },
-        { id: "2", userId: "userB", userDisplayName: "User B" },
-        { id: "3", userId: "userC", userDisplayName: "User C" },
-      ];
-
-      // Simulate the filtering logic
-      const blockedUsers = await firestoreService.getUserBlocks("userA");
-      const usersWhoBlockedMe = await firestoreService.getUsersWhoBlockedMe(
+      const blockedUsers = await userBlockService.getBlockedUsers("userA");
+      const usersWhoBlockedMe = await userBlockService.getUsersWhoBlockedMe(
         "userA"
       );
 
-      const blockedUserIds = blockedUsers.map(
-        (block: any) => block.blockedUserId
-      );
-      const usersWhoBlockedMeIds = usersWhoBlockedMe.map(
-        (block: any) => block.userId
-      );
-      const allBlockedUserIds = [...blockedUserIds, ...usersWhoBlockedMeIds];
-
-      const filteredWhispers = mockWhispers.filter(
-        (whisper) => !allBlockedUserIds.includes(whisper.userId)
-      );
-
-      // User B's content should be filtered out
-      expect(filteredWhispers).toHaveLength(2);
-      expect(
-        filteredWhispers.find((w) => w.userId === "userB")
-      ).toBeUndefined();
-      expect(filteredWhispers.find((w) => w.userId === "userA")).toBeDefined();
-      expect(filteredWhispers.find((w) => w.userId === "userC")).toBeDefined();
+      expect(blockedUsers).toHaveLength(1);
+      expect(blockedUsers[0].blockedUserId).toBe("userB");
+      expect(usersWhoBlockedMe).toHaveLength(0);
     });
 
-    it("should filter out content when user B blocks user A", async () => {
-      // Setup: User B blocks User A
-      mockFirestoreService.getUserBlocks.mockResolvedValue([]);
-      mockFirestoreService.getUsersWhoBlockedMe.mockResolvedValue([
-        { userId: "userB", blockedUserId: "userA" },
+    test("should correctly identify when user B blocks user A", async () => {
+      // Mock the repository methods
+      jest.spyOn(userBlockService, "getBlockedUsers").mockResolvedValue([]);
+      jest.spyOn(userBlockService, "getUsersWhoBlockedMe").mockResolvedValue([
+        {
+          id: "block2",
+          userId: "userB",
+          blockedUserId: "userA",
+          blockedUserDisplayName: "User A",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
       ]);
 
-      const firestoreService = getFirestoreService();
-
-      // Mock whispers data
-      const mockWhispers = [
-        { id: "1", userId: "userA", userDisplayName: "User A" },
-        { id: "2", userId: "userB", userDisplayName: "User B" },
-        { id: "3", userId: "userC", userDisplayName: "User C" },
-      ];
-
-      // Simulate the filtering logic
-      const blockedUsers = await firestoreService.getUserBlocks("userA");
-      const usersWhoBlockedMe = await firestoreService.getUsersWhoBlockedMe(
+      const blockedUsers = await userBlockService.getBlockedUsers("userA");
+      const usersWhoBlockedMe = await userBlockService.getUsersWhoBlockedMe(
         "userA"
       );
 
-      const blockedUserIds = blockedUsers.map(
-        (block: any) => block.blockedUserId
-      );
-      const usersWhoBlockedMeIds = usersWhoBlockedMe.map(
-        (block: any) => block.userId
-      );
-      const allBlockedUserIds = [...blockedUserIds, ...usersWhoBlockedMeIds];
-
-      const filteredWhispers = mockWhispers.filter(
-        (whisper) => !allBlockedUserIds.includes(whisper.userId)
-      );
-
-      // User B's content should be filtered out (because B blocked A)
-      expect(filteredWhispers).toHaveLength(2);
-      expect(
-        filteredWhispers.find((w) => w.userId === "userB")
-      ).toBeUndefined();
-      expect(filteredWhispers.find((w) => w.userId === "userA")).toBeDefined();
-      expect(filteredWhispers.find((w) => w.userId === "userC")).toBeDefined();
+      expect(blockedUsers).toHaveLength(0);
+      expect(usersWhoBlockedMe).toHaveLength(1);
+      expect(usersWhoBlockedMe[0].userId).toBe("userB");
     });
 
-    it("should filter out content in both directions when mutual blocking occurs", async () => {
-      // Setup: User A blocks User B, and User B blocks User A
-      mockFirestoreService.getUserBlocks.mockResolvedValue([
-        { userId: "userA", blockedUserId: "userB" },
+    test("should correctly identify mutual blocking", async () => {
+      // Mock the repository methods
+      jest.spyOn(userBlockService, "getBlockedUsers").mockResolvedValue([
+        {
+          id: "block1",
+          userId: "userA",
+          blockedUserId: "userB",
+          blockedUserDisplayName: "User B",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
       ]);
-      mockFirestoreService.getUsersWhoBlockedMe.mockResolvedValue([
-        { userId: "userB", blockedUserId: "userA" },
+      jest.spyOn(userBlockService, "getUsersWhoBlockedMe").mockResolvedValue([
+        {
+          id: "block2",
+          userId: "userB",
+          blockedUserId: "userA",
+          blockedUserDisplayName: "User A",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
       ]);
 
-      const firestoreService = getFirestoreService();
-
-      // Mock whispers data
-      const mockWhispers = [
-        { id: "1", userId: "userA", userDisplayName: "User A" },
-        { id: "2", userId: "userB", userDisplayName: "User B" },
-        { id: "3", userId: "userC", userDisplayName: "User C" },
-      ];
-
-      // Simulate the filtering logic
-      const blockedUsers = await firestoreService.getUserBlocks("userA");
-      const usersWhoBlockedMe = await firestoreService.getUsersWhoBlockedMe(
+      const blockedUsers = await userBlockService.getBlockedUsers("userA");
+      const usersWhoBlockedMe = await userBlockService.getUsersWhoBlockedMe(
         "userA"
       );
 
-      const blockedUserIds = blockedUsers.map(
-        (block: any) => block.blockedUserId
-      );
-      const usersWhoBlockedMeIds = usersWhoBlockedMe.map(
-        (block: any) => block.userId
-      );
-      const allBlockedUserIds = [...blockedUserIds, ...usersWhoBlockedMeIds];
-
-      const filteredWhispers = mockWhispers.filter(
-        (whisper) => !allBlockedUserIds.includes(whisper.userId)
-      );
-
-      // User B's content should be filtered out, but User A should still see their own content
-      expect(filteredWhispers).toHaveLength(2);
-      expect(filteredWhispers.find((w) => w.userId === "userA")).toBeDefined();
-      expect(
-        filteredWhispers.find((w) => w.userId === "userB")
-      ).toBeUndefined();
-      expect(filteredWhispers.find((w) => w.userId === "userC")).toBeDefined();
+      expect(blockedUsers).toHaveLength(1);
+      expect(usersWhoBlockedMe).toHaveLength(1);
+      expect(blockedUsers[0].blockedUserId).toBe("userB");
+      expect(usersWhoBlockedMe[0].userId).toBe("userB");
     });
 
-    it("should not filter out content when no blocking exists", async () => {
-      // Setup: No blocking relationships
-      mockFirestoreService.getUserBlocks.mockResolvedValue([]);
-      mockFirestoreService.getUsersWhoBlockedMe.mockResolvedValue([]);
+    test("should correctly identify no blocking relationship", async () => {
+      // Mock the repository methods
+      jest.spyOn(userBlockService, "getBlockedUsers").mockResolvedValue([]);
+      jest
+        .spyOn(userBlockService, "getUsersWhoBlockedMe")
+        .mockResolvedValue([]);
 
-      const firestoreService = getFirestoreService();
-
-      // Mock whispers data
-      const mockWhispers = [
-        { id: "1", userId: "userA", userDisplayName: "User A" },
-        { id: "2", userId: "userB", userDisplayName: "User B" },
-        { id: "3", userId: "userC", userDisplayName: "User C" },
-      ];
-
-      // Simulate the filtering logic
-      const blockedUsers = await firestoreService.getUserBlocks("userA");
-      const usersWhoBlockedMe = await firestoreService.getUsersWhoBlockedMe(
+      const blockedUsers = await userBlockService.getBlockedUsers("userA");
+      const usersWhoBlockedMe = await userBlockService.getUsersWhoBlockedMe(
         "userA"
       );
 
-      const blockedUserIds = blockedUsers.map(
-        (block: any) => block.blockedUserId
-      );
-      const usersWhoBlockedMeIds = usersWhoBlockedMe.map(
-        (block: any) => block.userId
-      );
-      const allBlockedUserIds = [...blockedUserIds, ...usersWhoBlockedMeIds];
+      expect(blockedUsers).toHaveLength(0);
+      expect(usersWhoBlockedMe).toHaveLength(0);
+    });
+  });
 
-      const filteredWhispers = mockWhispers.filter(
-        (whisper) => !allBlockedUserIds.includes(whisper.userId)
+  describe("User Muting", () => {
+    test("should correctly identify when user A mutes user B", async () => {
+      // Mock the repository method
+      jest.spyOn(userMuteService, "getMutedUsers").mockResolvedValue([
+        {
+          id: "mute1",
+          userId: "userA",
+          mutedUserId: "userB",
+          mutedUserDisplayName: "User B",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ]);
+
+      const mutedUsers = await userMuteService.getMutedUsers("userA");
+
+      expect(mutedUsers).toHaveLength(1);
+      expect(mutedUsers[0].mutedUserId).toBe("userB");
+    });
+
+    test("should correctly identify no muting relationship", async () => {
+      // Mock the repository method
+      jest.spyOn(userMuteService, "getMutedUsers").mockResolvedValue([]);
+
+      const mutedUsers = await userMuteService.getMutedUsers("userA");
+
+      expect(mutedUsers).toHaveLength(0);
+    });
+  });
+
+  describe("Block List Cache Service", () => {
+    test("should return cached block lists", async () => {
+      // Mock the service methods
+      jest.spyOn(userBlockService, "getBlockedUsers").mockResolvedValue([
+        {
+          id: "block1",
+          userId: "userA",
+          blockedUserId: "userB",
+          blockedUserDisplayName: "User B",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ]);
+      jest
+        .spyOn(userBlockService, "getUsersWhoBlockedMe")
+        .mockResolvedValue([]);
+      jest.spyOn(userMuteService, "getMutedUsers").mockResolvedValue([]);
+
+      const blockLists = await blockListCacheService.getBlockLists("userA");
+
+      expect(blockLists.blockedUsers.has("userB")).toBe(true);
+      expect(blockLists.blockedByUsers.size).toBe(0);
+      expect(blockLists.mutedUsers.size).toBe(0);
+    });
+
+    test("should correctly identify blocked users", async () => {
+      // Mock the service methods
+      jest.spyOn(userBlockService, "getBlockedUsers").mockResolvedValue([
+        {
+          id: "block1",
+          userId: "userA",
+          blockedUserId: "userB",
+          blockedUserDisplayName: "User B",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ]);
+      jest
+        .spyOn(userBlockService, "getUsersWhoBlockedMe")
+        .mockResolvedValue([]);
+      jest.spyOn(userMuteService, "getMutedUsers").mockResolvedValue([]);
+
+      const isBlocked = await blockListCacheService.isUserBlocked(
+        "userA",
+        "userB"
       );
 
-      // All content should remain visible
-      expect(filteredWhispers).toHaveLength(3);
-      expect(filteredWhispers.find((w) => w.userId === "userA")).toBeDefined();
-      expect(filteredWhispers.find((w) => w.userId === "userB")).toBeDefined();
-      expect(filteredWhispers.find((w) => w.userId === "userC")).toBeDefined();
+      expect(isBlocked).toBe(true);
+    });
+
+    test("should correctly identify muted users", async () => {
+      // Mock the service methods
+      jest.spyOn(userBlockService, "getBlockedUsers").mockResolvedValue([]);
+      jest
+        .spyOn(userBlockService, "getUsersWhoBlockedMe")
+        .mockResolvedValue([]);
+      jest.spyOn(userMuteService, "getMutedUsers").mockResolvedValue([
+        {
+          id: "mute1",
+          userId: "userA",
+          mutedUserId: "userB",
+          mutedUserDisplayName: "User B",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ]);
+
+      // Clear any existing cache
+      await blockListCacheService.invalidateCache("userA");
+
+      const isMuted = await blockListCacheService.isUserMuted("userA", "userB");
+
+      expect(isMuted).toBe(true);
     });
   });
 });

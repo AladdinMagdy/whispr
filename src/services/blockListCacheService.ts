@@ -1,5 +1,4 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getFirestoreService } from "./firestoreService";
 
 interface BlockListCache {
   blockedUsers: Set<string>;
@@ -9,11 +8,21 @@ interface BlockListCache {
   userId: string;
 }
 
+interface UserBlockService {
+  getBlockedUsers(userId: string): Promise<Array<{ blockedUserId: string }>>;
+  getUsersWhoBlockedMe(userId: string): Promise<Array<{ userId: string }>>;
+}
+
+interface UserMuteService {
+  getMutedUsers(userId: string): Promise<Array<{ mutedUserId: string }>>;
+}
+
 export class BlockListCacheService {
   private static instance: BlockListCacheService;
   private cache: Map<string, BlockListCache> = new Map();
   private cacheExpiryMs = 5 * 60 * 1000; // 5 minutes
-  private firestoreService = getFirestoreService();
+  private userBlockService?: UserBlockService;
+  private userMuteService?: UserMuteService;
 
   private constructor() {}
 
@@ -22,6 +31,29 @@ export class BlockListCacheService {
       BlockListCacheService.instance = new BlockListCacheService();
     }
     return BlockListCacheService.instance;
+  }
+
+  // Dependency injection methods for testing
+  setUserBlockService(service: UserBlockService): void {
+    this.userBlockService = service;
+  }
+
+  setUserMuteService(service: UserMuteService): void {
+    this.userMuteService = service;
+  }
+
+  private async getServices() {
+    if (!this.userBlockService || !this.userMuteService) {
+      // For production, these will be injected by the app initialization
+      // For testing, they should be set via setUserBlockService/setUserMuteService
+      throw new Error(
+        "Services not initialized. Use setUserBlockService and setUserMuteService first."
+      );
+    }
+    return {
+      userBlockService: this.userBlockService,
+      userMuteService: this.userMuteService,
+    };
   }
 
   async getBlockLists(userId: string): Promise<{
@@ -49,11 +81,13 @@ export class BlockListCacheService {
         mutedUsers: storageCache.mutedUsers,
       };
     }
-    // Fetch from Firestore
+    // Fetch from repositories using lazy initialization
+    const { userBlockService, userMuteService } = await this.getServices();
+
     const [blocked, blockedBy, muted] = await Promise.all([
-      this.firestoreService.getUserBlocks(userId),
-      this.firestoreService.getUsersWhoBlockedMe(userId),
-      this.firestoreService.getUserMutes(userId),
+      userBlockService.getBlockedUsers(userId),
+      userBlockService.getUsersWhoBlockedMe(userId),
+      userMuteService.getMutedUsers(userId),
     ]);
     const blockLists = {
       blockedUsers: new Set<string>(

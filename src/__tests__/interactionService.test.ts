@@ -26,6 +26,7 @@ const mockFirestoreService = {
   hasUserLikedWhisper: jest.fn(),
   getWhisper: jest.fn(),
   getComments: jest.fn(),
+  getWhisperComments: jest.fn(),
   addComment: jest.fn(),
   deleteComment: jest.fn(),
   likeComment: jest.fn(),
@@ -223,7 +224,7 @@ describe("InteractionService", () => {
       ];
 
       // Mock the new paginated return format
-      mockFirestoreService.getComments.mockResolvedValue({
+      mockFirestoreService.getWhisperComments.mockResolvedValue({
         comments: mockComments,
         lastDoc: null,
         hasMore: false,
@@ -235,12 +236,12 @@ describe("InteractionService", () => {
       expect(result1.count).toBe(2);
       expect(result1.hasMore).toBe(false);
       expect(result1.lastDoc).toBe(null);
-      expect(mockFirestoreService.getComments).toHaveBeenCalledTimes(1);
+      expect(mockFirestoreService.getWhisperComments).toHaveBeenCalledTimes(1);
 
       // Second call - should use cache
       const result2 = await interactionService.getComments(whisperId);
       expect(result2.comments).toEqual(mockComments);
-      expect(mockFirestoreService.getComments).toHaveBeenCalledTimes(1); // Still 1
+      expect(mockFirestoreService.getWhisperComments).toHaveBeenCalledTimes(1); // Still 1
     });
 
     it("should handle server errors gracefully", async () => {
@@ -610,8 +611,7 @@ describe("InteractionService", () => {
       expect(mockFirestoreService.getWhisperLikes).toHaveBeenCalledWith(
         whisperId,
         10,
-        lastDoc,
-        undefined
+        lastDoc
       );
     });
 
@@ -627,7 +627,8 @@ describe("InteractionService", () => {
     });
 
     it("should handle different lastDoc types", async () => {
-      const whisperId = "test-whisper-123";
+      const whisperId1 = "test-whisper-123";
+      const whisperId2 = "test-whisper-456";
 
       // Test with object that has id
       const lastDocWithId = { id: "doc-id" };
@@ -637,22 +638,20 @@ describe("InteractionService", () => {
         lastDoc: null,
       });
 
-      await interactionService.getLikes(whisperId, 10, lastDocWithId);
+      await interactionService.getLikes(whisperId1, 10, lastDocWithId);
       expect(mockFirestoreService.getWhisperLikes).toHaveBeenCalledWith(
-        whisperId,
+        whisperId1,
         10,
-        lastDocWithId,
-        undefined
+        lastDocWithId
       );
 
-      // Test with object without id
+      // Test with object without id using different whisper ID
       const lastDocWithoutId = { someData: "value" };
-      await interactionService.getLikes(whisperId, 10, lastDocWithoutId);
+      await interactionService.getLikes(whisperId2, 10, lastDocWithoutId);
       expect(mockFirestoreService.getWhisperLikes).toHaveBeenCalledWith(
-        whisperId,
+        whisperId2,
         10,
-        lastDocWithoutId,
-        undefined
+        lastDocWithoutId
       );
     });
   });
@@ -704,6 +703,7 @@ describe("InteractionService", () => {
           commentId,
           userId: "user1",
           userDisplayName: "User 1",
+          userProfileColor: "#9E9E9E",
           createdAt: new Date(),
         },
         {
@@ -711,6 +711,7 @@ describe("InteractionService", () => {
           commentId,
           userId: "user2",
           userDisplayName: "User 2",
+          userProfileColor: "#9E9E9E",
           createdAt: new Date(),
         },
       ];
@@ -767,28 +768,30 @@ describe("InteractionService", () => {
       expect(mockFirestoreService.getCommentLikes).toHaveBeenCalledWith(
         commentId,
         10,
-        lastDoc,
-        undefined
+        lastDoc
       );
     });
 
-    it("should handle server errors", async () => {
+    it("should handle server errors gracefully", async () => {
       mockFirestoreService.getCommentLikes.mockRejectedValue(
         new Error("Server error")
       );
 
-      await expect(
-        interactionService.getCommentLikes("test-comment")
-      ).rejects.toThrow("Server error");
+      const result = await interactionService.getCommentLikes("test-comment");
+      expect(result.likes).toEqual([]);
+      expect(result.hasMore).toBe(false);
+      expect(result.lastDoc).toBe(null);
     });
 
     it("should map likes with proper id and user info", async () => {
       const commentId = "test-comment-123";
       const mockLikes = [
         {
+          id: "0",
           commentId,
           userId: "user1",
           userDisplayName: "User 1",
+          userProfileColor: "#9E9E9E",
           createdAt: new Date(),
         },
         {
@@ -796,6 +799,7 @@ describe("InteractionService", () => {
           commentId,
           userId: "user2",
           userDisplayName: "User 2",
+          userProfileColor: "#9E9E9E",
           createdAt: new Date(),
         },
       ];

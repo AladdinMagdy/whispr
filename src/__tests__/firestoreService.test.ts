@@ -9,7 +9,9 @@ import {
 } from "../services/firestoreService";
 import {
   addDoc,
+  getDoc,
   getDocs,
+  setDoc,
   updateDoc,
   deleteDoc,
   onSnapshot,
@@ -22,6 +24,7 @@ jest.mock("firebase/firestore", () => ({
   addDoc: jest.fn(),
   getDoc: jest.fn(),
   getDocs: jest.fn(),
+  setDoc: jest.fn(),
   updateDoc: jest.fn(),
   deleteDoc: jest.fn(),
   query: jest.fn(() => "mock-query"),
@@ -81,7 +84,9 @@ jest.mock("../services/privacyService", () => ({
 describe("FirestoreService", () => {
   let firestoreService: FirestoreService;
   let mockAddDoc: jest.MockedFunction<typeof addDoc>;
+  let mockGetDoc: jest.MockedFunction<typeof getDoc>;
   let mockGetDocs: jest.MockedFunction<typeof getDocs>;
+  let mockSetDoc: jest.MockedFunction<typeof setDoc>;
   let mockUpdateDoc: jest.MockedFunction<typeof updateDoc>;
   let mockDeleteDoc: jest.MockedFunction<typeof deleteDoc>;
   let mockOnSnapshot: jest.MockedFunction<typeof onSnapshot>;
@@ -93,17 +98,12 @@ describe("FirestoreService", () => {
 
     // Get mocked functions
     mockAddDoc = addDoc as jest.MockedFunction<typeof addDoc>;
+    mockGetDoc = getDoc as jest.MockedFunction<typeof getDoc>;
     mockGetDocs = getDocs as jest.MockedFunction<typeof getDocs>;
+    mockSetDoc = setDoc as jest.MockedFunction<typeof setDoc>;
     mockUpdateDoc = updateDoc as jest.MockedFunction<typeof updateDoc>;
     mockDeleteDoc = deleteDoc as jest.MockedFunction<typeof deleteDoc>;
     mockOnSnapshot = onSnapshot as jest.MockedFunction<typeof onSnapshot>;
-
-    // Mock prototype methods so all instances use the mock
-    FirestoreService.prototype.getUserBlocks = jest.fn().mockResolvedValue([]);
-    FirestoreService.prototype.getUsersWhoBlockedMe = jest
-      .fn()
-      .mockResolvedValue([]);
-    FirestoreService.prototype.getUserMutes = jest.fn().mockResolvedValue([]);
   });
 
   describe("Singleton Pattern", () => {
@@ -347,22 +347,23 @@ describe("FirestoreService", () => {
   describe("Like Operations", () => {
     test("should like whisper successfully", async () => {
       // Simulate user has not liked yet
-      mockGetDocs.mockResolvedValue({ empty: true } as any);
+      mockGetDoc.mockResolvedValue({ exists: () => false } as any);
+      mockSetDoc.mockResolvedValue(undefined);
       mockUpdateDoc.mockResolvedValue(undefined);
-      mockAddDoc.mockResolvedValue({} as any);
       await firestoreService.likeWhisper(
         "test-whisper-id",
         "test-user-id",
         "Test User",
         "#007AFF"
       );
+      expect(mockSetDoc).toHaveBeenCalled();
       expect(mockUpdateDoc).toHaveBeenCalledWith("mock-doc", {
         likes: "mock-increment",
       });
     });
 
     test("should handle like whisper error", async () => {
-      mockGetDocs.mockRejectedValue(new Error("Like error"));
+      mockGetDoc.mockRejectedValue(new Error("Like error"));
       await expect(
         firestoreService.likeWhisper(
           "test-whisper-id",
@@ -370,7 +371,7 @@ describe("FirestoreService", () => {
           "Test User",
           "#007AFF"
         )
-      ).rejects.toThrow("Failed to like/unlike whisper: Like error");
+      ).rejects.toThrow("Failed to like whisper: Like error");
     });
   });
 
