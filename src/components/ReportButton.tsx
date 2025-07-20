@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { ReportCategory, Report } from "../types";
-import { getReportingService } from "../services/reportingService";
+import { getWhisperReportService } from "../services/whisperReportService";
 import { useAuth } from "../providers/AuthProvider";
 import { useFeedStore } from "../store/useFeedStore";
 import { Ionicons } from "@expo/vector-icons";
@@ -43,7 +43,7 @@ const ReportButton: React.FC<ReportButtonProps> = ({
   const [isActionLoading, setIsActionLoading] = useState(false);
 
   const { user } = useAuth();
-  const reportingService = getReportingService();
+  const whisperReportService = getWhisperReportService();
   const { markWhisperAsReported } = useFeedStore();
   const muteService = getUserMuteService();
   const restrictService = getUserRestrictService();
@@ -56,12 +56,13 @@ const ReportButton: React.FC<ReportButtonProps> = ({
 
       setIsCheckingReport(true);
       try {
-        const result = await reportingService.hasUserReportedContent(
+        const hasReported = await whisperReportService.hasUserReported(
           whisper.id,
           user.uid
         );
-        setHasReported(result.hasReported);
-        setExistingReport(result.existingReport || null);
+        setHasReported(hasReported);
+        // Note: WhisperReportService doesn't return existing report, so we set it to null
+        setExistingReport(null);
       } catch (error) {
         console.error("Error checking existing report:", error);
       } finally {
@@ -70,7 +71,7 @@ const ReportButton: React.FC<ReportButtonProps> = ({
     };
 
     checkExistingReport();
-  }, [whisper.id, user, reportingService]);
+  }, [whisper.id, user, whisperReportService]);
 
   const reportCategories = [
     {
@@ -152,7 +153,7 @@ const ReportButton: React.FC<ReportButtonProps> = ({
     setIsSubmitting(true);
 
     try {
-      const report = await reportingService.createReport({
+      const report = await whisperReportService.createReport({
         whisperId: whisper.id,
         reporterId: user.uid,
         reporterDisplayName: user.displayName || "Anonymous",

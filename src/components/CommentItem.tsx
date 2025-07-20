@@ -14,7 +14,7 @@ import {
 import { Comment, Whisper, ReportCategory } from "../types";
 import OptimizedAvatar from "./OptimizedAvatar";
 import { useCommentLikes } from "../hooks/useCommentLikes";
-import { getReportingService } from "../services/reportingService";
+import { getCommentReportService } from "../services/commentReportService";
 import { useAuth } from "../providers/AuthProvider";
 
 interface CommentItemProps {
@@ -36,7 +36,7 @@ const CommentItem: React.FC<CommentItemProps> = React.memo(
     onReportSubmitted,
   }) => {
     const { user } = useAuth();
-    const reportingService = getReportingService();
+    const commentReportService = getCommentReportService();
 
     const {
       isLiked,
@@ -75,7 +75,7 @@ const CommentItem: React.FC<CommentItemProps> = React.memo(
         if (!user) return;
 
         try {
-          await reportingService.createCommentReport({
+          await commentReportService.createReport({
             commentId: comment.id,
             whisperId: comment.whisperId,
             reporterId: user.uid,
@@ -96,7 +96,13 @@ const CommentItem: React.FC<CommentItemProps> = React.memo(
           Alert.alert("Error", "Failed to submit report. Please try again.");
         }
       },
-      [comment.id, comment.whisperId, user, reportingService, onReportSubmitted]
+      [
+        comment.id,
+        comment.whisperId,
+        user,
+        commentReportService,
+        onReportSubmitted,
+      ]
     );
 
     const handleReport = useCallback(async () => {

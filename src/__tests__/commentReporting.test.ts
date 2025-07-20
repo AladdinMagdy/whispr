@@ -1,4 +1,4 @@
-import { ReportingService } from "../services/reportingService";
+import { CommentReportService } from "../services/commentReportService";
 import { getReputationService } from "../services/reputationService";
 import { getSuspensionService } from "../services/suspensionService";
 import { getFirestoreService } from "../services/firestoreService";
@@ -63,14 +63,14 @@ const mockRepository: jest.Mocked<ReportRepository> = {
 (getFirestoreService as jest.Mock).mockReturnValue(mockFirestoreService);
 
 describe("Comment Reporting", () => {
-  let reportingService: ReportingService;
+  let commentReportService: CommentReportService;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    ReportingService.resetInstance();
+    CommentReportService.resetInstance();
 
     // Create service with mocked repository
-    reportingService = new ReportingService(mockRepository);
+    commentReportService = new CommentReportService(mockRepository);
 
     // Set default mocks
     mockRepository.getCommentReports.mockResolvedValue([]);
@@ -82,7 +82,7 @@ describe("Comment Reporting", () => {
   });
 
   afterEach(() => {
-    ReportingService.destroyInstance();
+    CommentReportService.destroyInstance();
   });
 
   describe("createCommentReport", () => {
@@ -101,7 +101,7 @@ describe("Comment Reporting", () => {
       };
 
       mockReputationService.getUserReputation.mockResolvedValue(mockReputation);
-      mockRepository.getCommentReports.mockResolvedValue([]);
+      mockRepository.getWithFilters.mockResolvedValue([]);
       mockRepository.saveCommentReport.mockResolvedValue();
 
       const reportData = {
@@ -113,7 +113,7 @@ describe("Comment Reporting", () => {
         reason: "This comment is harassing",
       };
 
-      const result = await reportingService.createCommentReport(reportData);
+      const result = await commentReportService.createReport(reportData);
 
       expect(result).toBeDefined();
       expect(result.commentId).toBe("comment123");
@@ -154,7 +154,7 @@ describe("Comment Reporting", () => {
       };
 
       mockReputationService.getUserReputation.mockResolvedValue(mockReputation);
-      mockRepository.getCommentReports.mockResolvedValue([existingReport]);
+      mockRepository.getWithFilters.mockResolvedValue([existingReport as any]);
       mockRepository.updateCommentReport.mockResolvedValue();
 
       const reportData = {
@@ -166,7 +166,7 @@ describe("Comment Reporting", () => {
         reason: "Additional harassment evidence",
       };
 
-      const result = await reportingService.createCommentReport(reportData);
+      const result = await commentReportService.createReport(reportData);
 
       expect(result).toBeDefined();
       expect(result.id).toBe("report123");
@@ -202,7 +202,7 @@ describe("Comment Reporting", () => {
       };
 
       await expect(
-        reportingService.createCommentReport(reportData)
+        commentReportService.createReport(reportData)
       ).rejects.toThrow("Banned users cannot submit reports");
     });
   });
@@ -225,55 +225,48 @@ describe("Comment Reporting", () => {
         reputationWeight: 1.0,
       };
 
-      mockRepository.hasUserReportedComment.mockResolvedValue(true);
-      mockRepository.getCommentReports.mockResolvedValue([existingReport]);
+      mockRepository.getWithFilters.mockResolvedValue([existingReport as any]);
 
-      const result = await reportingService.hasUserReportedComment(
+      const result = await commentReportService.hasUserReported(
         "comment123",
         "user123"
       );
 
-      expect(result.hasReported).toBe(true);
-      expect(result.existingReport).toBeDefined();
-      expect(result.existingReport?.id).toBe("report123");
+      expect(result).toBe(true);
     });
 
     it("should return false if user has not reported the comment", async () => {
-      mockRepository.hasUserReportedComment.mockResolvedValue(false);
+      mockRepository.getWithFilters.mockResolvedValue([]);
 
-      const result = await reportingService.hasUserReportedComment(
+      const result = await commentReportService.hasUserReported(
         "comment123",
         "user123"
       );
 
-      expect(result.hasReported).toBe(false);
-      expect(result.existingReport).toBeUndefined();
+      expect(result).toBe(false);
     });
   });
 
   describe("getCommentReportStats", () => {
     it("should return comment report statistics", async () => {
-      const mockStats = {
-        totalReports: 5,
-        uniqueReporters: 3,
-        categories: {
-          [ReportCategory.HARASSMENT]: 3,
-          [ReportCategory.SPAM]: 2,
-        },
-        priorityBreakdown: {
-          [ReportPriority.HIGH]: 3,
-          [ReportPriority.MEDIUM]: 2,
-        },
-      };
+      mockRepository.getWithFilters.mockResolvedValue([]);
 
-      mockRepository.getCommentReportStats.mockResolvedValue(mockStats);
+      const result = await commentReportService.getCommentStats("comment123");
 
-      const result = await reportingService.getCommentReportStats("comment123");
-
-      expect(result).toEqual(mockStats);
-      expect(result.totalReports).toBe(5);
-      expect(result.uniqueReporters).toBe(3);
-      expect(result.categories[ReportCategory.HARASSMENT]).toBe(3);
+      expect(result.totalReports).toBe(0);
+      expect(result.uniqueReporters).toBe(0);
+      expect(result.categories).toEqual({
+        [ReportCategory.HARASSMENT]: 0,
+        [ReportCategory.HATE_SPEECH]: 0,
+        [ReportCategory.VIOLENCE]: 0,
+        [ReportCategory.SEXUAL_CONTENT]: 0,
+        [ReportCategory.SPAM]: 0,
+        [ReportCategory.SCAM]: 0,
+        [ReportCategory.COPYRIGHT]: 0,
+        [ReportCategory.PERSONAL_INFO]: 0,
+        [ReportCategory.MINOR_SAFETY]: 0,
+        [ReportCategory.OTHER]: 0,
+      });
     });
   });
 });
