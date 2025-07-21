@@ -13,6 +13,11 @@ import {
   ReportCategory,
   ReportPriority,
 } from "../types";
+import {
+  getReportResolutionService,
+  resetReportResolutionService,
+  destroyReportResolutionService,
+} from "../services/reportResolutionService";
 
 // Mock dependencies
 const mockRepository: jest.Mocked<ReportRepository> = {
@@ -99,6 +104,79 @@ describe("ReportResolutionService", () => {
       const instance2 = ReportResolutionService.getInstance();
       expect(instance1).not.toBe(instance2);
     });
+
+    it("should create new instance when none exists", () => {
+      (ReportResolutionService as any).instance = undefined;
+      const instance = ReportResolutionService.getInstance();
+      expect(instance).toBeInstanceOf(ReportResolutionService);
+    });
+
+    it("should return existing instance when one exists", () => {
+      const existingInstance = new ReportResolutionService();
+      (ReportResolutionService as any).instance = existingInstance;
+      const instance = ReportResolutionService.getInstance();
+      expect(instance).toBe(existingInstance);
+    });
+
+    it("should destroy instance correctly", () => {
+      const instance1 = ReportResolutionService.getInstance();
+      ReportResolutionService.destroyInstance();
+      const instance2 = ReportResolutionService.getInstance();
+      expect(instance1).not.toBe(instance2);
+    });
+
+    it("should handle null instance gracefully", () => {
+      (ReportResolutionService as any).instance = null;
+      const instance = ReportResolutionService.getInstance();
+      expect(instance).toBeInstanceOf(ReportResolutionService);
+    });
+
+    it("should handle resetInstance when instance is null", () => {
+      (ReportResolutionService as any).instance = null;
+      expect(() => ReportResolutionService.resetInstance()).not.toThrow();
+    });
+
+    it("should handle destroyInstance when instance is null", () => {
+      (ReportResolutionService as any).instance = null;
+      expect(() => ReportResolutionService.destroyInstance()).not.toThrow();
+    });
+  });
+
+  describe("Factory Functions", () => {
+    beforeEach(() => {
+      ReportResolutionService.resetInstance();
+    });
+
+    it("should return singleton instance via getReportResolutionService", () => {
+      const instance1 = getReportResolutionService();
+      const instance2 = getReportResolutionService();
+      expect(instance1).toBe(instance2);
+      expect(instance1).toBeInstanceOf(ReportResolutionService);
+    });
+
+    it("should reset instance via resetReportResolutionService", () => {
+      const instance1 = getReportResolutionService();
+      resetReportResolutionService();
+      const instance2 = getReportResolutionService();
+      expect(instance1).not.toBe(instance2);
+    });
+
+    it("should destroy instance via destroyReportResolutionService", () => {
+      const instance1 = getReportResolutionService();
+      destroyReportResolutionService();
+      const instance2 = getReportResolutionService();
+      expect(instance1).not.toBe(instance2);
+    });
+
+    it("should handle resetReportResolutionService when instance is null", () => {
+      (ReportResolutionService as any).instance = null;
+      expect(() => resetReportResolutionService()).not.toThrow();
+    });
+
+    it("should handle destroyReportResolutionService when instance is null", () => {
+      (ReportResolutionService as any).instance = null;
+      expect(() => destroyReportResolutionService()).not.toThrow();
+    });
   });
 
   describe("resolveWhisperReport", () => {
@@ -124,23 +202,25 @@ describe("ReportResolutionService", () => {
       timestamp: new Date(),
     };
 
+    const mockWhisper = {
+      id: "whisper-123",
+      userId: "user-123",
+      userDisplayName: "Test User",
+      userProfileColor: "#007AFF",
+      audioUrl: "test-url",
+      duration: 10,
+      whisperPercentage: 80,
+      averageLevel: 0.5,
+      confidence: 0.9,
+      likes: 5,
+      replies: 2,
+      createdAt: new Date(),
+    };
+
     it("should resolve whisper report successfully", async () => {
       mockRepository.getById.mockResolvedValue(mockReport);
       mockRepository.update.mockResolvedValue();
-      mockFirestoreService.getWhisper.mockResolvedValue({
-        id: "whisper-123",
-        userId: "user-123",
-        userDisplayName: "Test User",
-        userProfileColor: "#007AFF",
-        audioUrl: "test-url",
-        duration: 10,
-        whisperPercentage: 80,
-        averageLevel: 0.5,
-        confidence: 0.9,
-        likes: 5,
-        replies: 2,
-        createdAt: new Date(),
-      });
+      mockFirestoreService.getWhisper.mockResolvedValue(mockWhisper);
       mockSuspensionService.createSuspension.mockResolvedValue({} as any);
 
       const result = await reportResolutionService.resolveWhisperReport(
@@ -180,6 +260,208 @@ describe("ReportResolutionService", () => {
           mockResolution
         )
       ).rejects.toThrow("Failed to resolve whisper report: Database error");
+    });
+
+    it("should handle whisper not found", async () => {
+      mockRepository.getById.mockResolvedValue(mockReport);
+      mockFirestoreService.getWhisper.mockResolvedValue(null);
+
+      const result = await reportResolutionService.resolveWhisperReport(
+        "report-123",
+        mockResolution
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe("warn");
+    });
+
+    it("should handle flag action", async () => {
+      const flagResolution: ReportResolution = {
+        action: "flag",
+        reason: "Content flagged",
+        moderatorId: "mod-123",
+        timestamp: new Date(),
+      };
+
+      mockRepository.getById.mockResolvedValue(mockReport);
+      mockRepository.update.mockResolvedValue();
+
+      const result = await reportResolutionService.resolveWhisperReport(
+        "report-123",
+        flagResolution
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe("flag");
+    });
+
+    it("should handle ban action", async () => {
+      const banResolution: ReportResolution = {
+        action: "ban",
+        reason: "User banned",
+        moderatorId: "mod-123",
+        timestamp: new Date(),
+      };
+
+      mockRepository.getById.mockResolvedValue(mockReport);
+      mockRepository.update.mockResolvedValue();
+      mockFirestoreService.getWhisper.mockResolvedValue(mockWhisper);
+      mockSuspensionService.createSuspension.mockResolvedValue({} as any);
+      mockFirestoreService.deleteWhisper.mockResolvedValue(undefined);
+
+      const result = await reportResolutionService.resolveWhisperReport(
+        "report-123",
+        banResolution
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe("ban");
+      expect(mockSuspensionService.createSuspension).toHaveBeenCalledWith({
+        userId: "user-123",
+        reason: "User banned",
+        type: expect.any(String),
+        duration: 7 * 24 * 60 * 60 * 1000, // 7 days
+        moderatorId: "system",
+      });
+      expect(mockFirestoreService.deleteWhisper).toHaveBeenCalledWith(
+        "whisper-123"
+      );
+    });
+
+    it("should handle unknown action gracefully", async () => {
+      const unknownResolution: ReportResolution = {
+        action: "unknown" as any,
+        reason: "Unknown action",
+        moderatorId: "mod-123",
+        timestamp: new Date(),
+      };
+
+      mockRepository.getById.mockResolvedValue(mockReport);
+      mockRepository.update.mockResolvedValue();
+
+      const result = await reportResolutionService.resolveWhisperReport(
+        "report-123",
+        unknownResolution
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe("unknown");
+    });
+
+    it("should handle firestore service errors", async () => {
+      mockRepository.getById.mockResolvedValue(mockReport);
+      mockFirestoreService.getWhisper.mockRejectedValue(
+        new Error("Firestore error")
+      );
+
+      await expect(
+        reportResolutionService.resolveWhisperReport(
+          "report-123",
+          mockResolution
+        )
+      ).rejects.toThrow("Failed to resolve whisper report: Firestore error");
+    });
+
+    it("should handle suspension service errors", async () => {
+      mockRepository.getById.mockResolvedValue(mockReport);
+      mockRepository.update.mockResolvedValue();
+      mockFirestoreService.getWhisper.mockResolvedValue({
+        id: "whisper-123",
+        userId: "user-123",
+        userDisplayName: "Test User",
+        userProfileColor: "#007AFF",
+        audioUrl: "test-url",
+        duration: 10,
+        whisperPercentage: 80,
+        averageLevel: 0.5,
+        confidence: 0.9,
+        likes: 5,
+        replies: 2,
+        createdAt: new Date(),
+      });
+      mockSuspensionService.createSuspension.mockRejectedValue(
+        new Error("Suspension error")
+      );
+
+      await expect(
+        reportResolutionService.resolveWhisperReport(
+          "report-123",
+          mockResolution
+        )
+      ).rejects.toThrow("Failed to resolve whisper report: Suspension error");
+    });
+
+    it("should handle reputation service errors", async () => {
+      const rejectResolution: ReportResolution = {
+        action: "reject",
+        reason: "Content rejected",
+        moderatorId: "mod-123",
+        timestamp: new Date(),
+      };
+
+      mockRepository.getById.mockResolvedValue(mockReport);
+      mockRepository.update.mockResolvedValue();
+      mockFirestoreService.getWhisper.mockResolvedValue({
+        id: "whisper-123",
+        userId: "user-123",
+        userDisplayName: "Test User",
+        userProfileColor: "#007AFF",
+        audioUrl: "test-url",
+        duration: 10,
+        whisperPercentage: 80,
+        averageLevel: 0.5,
+        confidence: 0.9,
+        likes: 5,
+        replies: 2,
+        createdAt: new Date(),
+      });
+      mockFirestoreService.deleteWhisper.mockResolvedValue(undefined);
+      mockReputationService.adjustUserReputationScore.mockRejectedValue(
+        new Error("Reputation error")
+      );
+
+      await expect(
+        reportResolutionService.resolveWhisperReport(
+          "report-123",
+          rejectResolution
+        )
+      ).rejects.toThrow("Failed to resolve whisper report: Reputation error");
+    });
+
+    it("should handle firestore delete errors", async () => {
+      const rejectResolution: ReportResolution = {
+        action: "reject",
+        reason: "Content rejected",
+        moderatorId: "mod-123",
+        timestamp: new Date(),
+      };
+
+      mockRepository.getById.mockResolvedValue(mockReport);
+      mockRepository.update.mockResolvedValue();
+      mockFirestoreService.getWhisper.mockResolvedValue({
+        id: "whisper-123",
+        userId: "user-123",
+        userDisplayName: "Test User",
+        userProfileColor: "#007AFF",
+        audioUrl: "test-url",
+        duration: 10,
+        whisperPercentage: 80,
+        averageLevel: 0.5,
+        confidence: 0.9,
+        likes: 5,
+        replies: 2,
+        createdAt: new Date(),
+      });
+      mockFirestoreService.deleteWhisper.mockRejectedValue(
+        new Error("Delete error")
+      );
+
+      await expect(
+        reportResolutionService.resolveWhisperReport(
+          "report-123",
+          rejectResolution
+        )
+      ).rejects.toThrow("Failed to resolve whisper report: Delete error");
     });
   });
 
@@ -242,6 +524,81 @@ describe("ReportResolutionService", () => {
       ).rejects.toThrow(
         "Failed to resolve comment report: Comment report not found"
       );
+    });
+
+    it("should handle repository update errors", async () => {
+      mockRepository.getCommentReport.mockResolvedValue(mockCommentReport);
+      mockRepository.updateCommentReport.mockRejectedValue(
+        new Error("Update error")
+      );
+
+      await expect(
+        reportResolutionService.resolveCommentReport(
+          "comment-report-123",
+          mockCommentResolution
+        )
+      ).rejects.toThrow("Failed to resolve comment report: Update error");
+    });
+
+    it("should handle comment delete action", async () => {
+      const deleteResolution: CommentReportResolution = {
+        action: "delete",
+        reason: "Comment deleted",
+        moderatorId: "mod-123",
+        timestamp: new Date(),
+      };
+
+      mockRepository.getCommentReport.mockResolvedValue(mockCommentReport);
+      mockRepository.updateCommentReport.mockResolvedValue();
+      mockFirestoreService.getComment.mockResolvedValue({
+        id: "comment-123",
+        userId: "user-123",
+        content: "Test comment",
+        createdAt: new Date(),
+      });
+      mockFirestoreService.deleteComment.mockResolvedValue(undefined);
+      mockReputationService.adjustUserReputationScore.mockResolvedValue(
+        undefined
+      );
+
+      const result = await reportResolutionService.resolveCommentReport(
+        "comment-report-123",
+        deleteResolution
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockFirestoreService.deleteComment).toHaveBeenCalledWith(
+        "comment-123",
+        "system"
+      );
+    });
+
+    it("should handle comment delete errors", async () => {
+      const deleteResolution: CommentReportResolution = {
+        action: "delete",
+        reason: "Comment deleted",
+        moderatorId: "mod-123",
+        timestamp: new Date(),
+      };
+
+      mockRepository.getCommentReport.mockResolvedValue(mockCommentReport);
+      mockRepository.updateCommentReport.mockResolvedValue();
+      mockFirestoreService.getComment.mockResolvedValue({
+        id: "comment-123",
+        userId: "user-123",
+        content: "Test comment",
+        createdAt: new Date(),
+      });
+      mockFirestoreService.deleteComment.mockRejectedValue(
+        new Error("Delete error")
+      );
+
+      await expect(
+        reportResolutionService.resolveCommentReport(
+          "comment-report-123",
+          deleteResolution
+        )
+      ).rejects.toThrow("Failed to resolve comment report: Delete error");
     });
   });
 
@@ -339,6 +696,32 @@ describe("ReportResolutionService", () => {
         reportResolutionService.getResolutionStats()
       ).rejects.toThrow("Failed to get resolution stats: Database error");
     });
+
+    it("should handle reports without resolution data", async () => {
+      const incompleteReports: Report[] = [
+        {
+          id: "report-1",
+          whisperId: "whisper-1",
+          reporterId: "reporter-1",
+          reporterDisplayName: "Reporter 1",
+          reporterReputation: 80,
+          category: ReportCategory.HARASSMENT,
+          priority: ReportPriority.HIGH,
+          status: ReportStatus.PENDING,
+          reason: "Test report 1",
+          createdAt: new Date("2024-01-01T10:00:00Z"),
+          updatedAt: new Date("2024-01-01T11:00:00Z"),
+          reputationWeight: 1.2,
+        },
+      ];
+
+      mockRepository.getAll.mockResolvedValue(incompleteReports);
+
+      const stats = await reportResolutionService.getResolutionStats();
+
+      expect(stats.totalResolutions).toBe(0);
+      expect(stats.averageResolutionTime).toBe(0);
+    });
   });
 
   describe("getUserResolutionHistory", () => {
@@ -415,6 +798,36 @@ describe("ReportResolutionService", () => {
       ).rejects.toThrow(
         "Failed to get user resolution history: Database error"
       );
+    });
+
+    it("should handle user with only pending reports", async () => {
+      const pendingReports: Report[] = [
+        {
+          id: "report-1",
+          whisperId: "whisper-1",
+          reporterId: "user-123",
+          reporterDisplayName: "Test User",
+          reporterReputation: 80,
+          category: ReportCategory.HARASSMENT,
+          priority: ReportPriority.HIGH,
+          status: ReportStatus.PENDING,
+          reason: "Test report 1",
+          createdAt: new Date("2024-01-01T10:00:00Z"),
+          updatedAt: new Date("2024-01-01T11:00:00Z"),
+          reputationWeight: 1.2,
+        },
+      ];
+
+      mockRepository.getAll.mockResolvedValue(pendingReports);
+
+      const history = await reportResolutionService.getUserResolutionHistory(
+        "user-123"
+      );
+
+      expect(history.reportsSubmitted).toHaveLength(1);
+      expect(history.reportsResolved).toHaveLength(0);
+      expect(history.averageResolutionTime).toBe(0);
+      expect(history.mostCommonAction).toBe("none");
     });
   });
 
@@ -535,6 +948,47 @@ describe("ReportResolutionService", () => {
         "Whisper rejected: Content rejected"
       );
     });
+
+    it("should apply dismiss resolution correctly", async () => {
+      const resolution: ReportResolution = {
+        action: "dismiss",
+        reason: "Report dismissed",
+        moderatorId: "mod-123",
+        timestamp: new Date(),
+      };
+
+      const mockReport: Report = {
+        id: "report-123",
+        whisperId: "whisper-123",
+        reporterId: "reporter-123",
+        reporterDisplayName: "Test Reporter",
+        reporterReputation: 75,
+        category: ReportCategory.HARASSMENT,
+        priority: ReportPriority.HIGH,
+        status: ReportStatus.PENDING,
+        reason: "Test report",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        reputationWeight: 1.2,
+      };
+
+      mockRepository.getById.mockResolvedValue(mockReport);
+      mockRepository.update.mockResolvedValue();
+
+      // Access private method through public method
+      await reportResolutionService.resolveWhisperReport(
+        "report-123",
+        resolution
+      );
+
+      expect(mockRepository.update).toHaveBeenCalledWith("report-123", {
+        status: ReportStatus.RESOLVED,
+        resolution: resolution,
+        updatedAt: expect.any(Date),
+        reviewedAt: expect.any(Date),
+        reviewedBy: "mod-123",
+      });
+    });
   });
 
   describe("Error Handling", () => {
@@ -577,6 +1031,37 @@ describe("ReportResolutionService", () => {
           timestamp: new Date(),
         })
       ).rejects.toThrow("Failed to resolve whisper report: Unknown error");
+    });
+
+    it("should handle non-Error objects", async () => {
+      mockRepository.getById.mockRejectedValue({ message: "Custom error" });
+
+      await expect(
+        reportResolutionService.resolveWhisperReport("report-123", {
+          action: "warn",
+          reason: "Test",
+          moderatorId: "mod-123",
+          timestamp: new Date(),
+        })
+      ).rejects.toThrow("Failed to resolve whisper report: Unknown error");
+    });
+  });
+
+  describe("Repository Integration", () => {
+    it("should use default repository when none provided", () => {
+      const serviceWithDefault = new ReportResolutionService();
+      expect(serviceWithDefault).toBeInstanceOf(ReportResolutionService);
+    });
+
+    it("should use provided repository", () => {
+      const customRepository = {} as ReportRepository;
+      const serviceWithCustom = new ReportResolutionService(customRepository);
+      expect(serviceWithCustom).toBeInstanceOf(ReportResolutionService);
+    });
+
+    it("should handle null repository gracefully", () => {
+      const serviceWithNull = new ReportResolutionService(null as any);
+      expect(serviceWithNull).toBeInstanceOf(ReportResolutionService);
     });
   });
 });

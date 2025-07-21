@@ -4,6 +4,11 @@
 
 import { ReportPriorityService } from "../services/reportPriorityService";
 import { UserReputation, ReportCategory, ReportPriority } from "../types";
+import {
+  getReportPriorityService,
+  resetReportPriorityService,
+  destroyReportPriorityService,
+} from "../services/reportPriorityService";
 
 describe("ReportPriorityService", () => {
   let service: ReportPriorityService;
@@ -346,6 +351,374 @@ describe("ReportPriorityService", () => {
       const invalidReputation = null as any;
       const weight = service.calculateReputationWeight(invalidReputation);
       expect(weight).toBe(1.0); // Default fallback
+    });
+
+    it("should handle errors in calculatePriority with invalid reputation level", () => {
+      const reputation: UserReputation = {
+        userId: "user1",
+        score: 50,
+        level: "invalid_level" as any,
+        totalWhispers: 50,
+        approvedWhispers: 40,
+        flaggedWhispers: 5,
+        rejectedWhispers: 5,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const priority = service.calculatePriority(
+        reputation,
+        ReportCategory.OTHER
+      );
+      expect(priority).toBe(ReportPriority.MEDIUM); // Default fallback
+    });
+  });
+
+  describe("calculatePriority - Edge Cases", () => {
+    it("should handle high reputation score (90+) boosting priority", () => {
+      const reputation: UserReputation = {
+        userId: "user1",
+        score: 95,
+        level: "standard",
+        totalWhispers: 100,
+        approvedWhispers: 95,
+        flaggedWhispers: 2,
+        rejectedWhispers: 3,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const priority = service.calculatePriority(
+        reputation,
+        ReportCategory.OTHER
+      );
+      // Standard (MEDIUM) + high score boost = HIGH
+      expect(priority).toBe(ReportPriority.HIGH);
+    });
+
+    it("should handle very low reputation score (20-) reducing priority", () => {
+      const reputation: UserReputation = {
+        userId: "user1",
+        score: 15,
+        level: "standard",
+        totalWhispers: 50,
+        approvedWhispers: 30,
+        flaggedWhispers: 15,
+        rejectedWhispers: 5,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const priority = service.calculatePriority(
+        reputation,
+        ReportCategory.OTHER
+      );
+      // Standard (MEDIUM) + low score reduction = LOW
+      expect(priority).toBe(ReportPriority.LOW);
+    });
+
+    it("should handle medium reputation score (21-89) not changing priority", () => {
+      const reputation: UserReputation = {
+        userId: "user1",
+        score: 50,
+        level: "standard",
+        totalWhispers: 50,
+        approvedWhispers: 40,
+        flaggedWhispers: 5,
+        rejectedWhispers: 5,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const priority = service.calculatePriority(
+        reputation,
+        ReportCategory.OTHER
+      );
+      // Standard (MEDIUM) + medium score = MEDIUM (no change)
+      expect(priority).toBe(ReportPriority.MEDIUM);
+    });
+
+    it("should handle category multipliers correctly", () => {
+      const reputation: UserReputation = {
+        userId: "user1",
+        score: 50,
+        level: "standard",
+        totalWhispers: 50,
+        approvedWhispers: 40,
+        flaggedWhispers: 5,
+        rejectedWhispers: 5,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      // Test different categories with multipliers
+      const violencePriority = service.calculatePriority(
+        reputation,
+        ReportCategory.VIOLENCE
+      );
+      expect(violencePriority).toBe(ReportPriority.CRITICAL); // MEDIUM * 2.0 = CRITICAL
+
+      const harassmentPriority = service.calculatePriority(
+        reputation,
+        ReportCategory.HARASSMENT
+      );
+      expect(harassmentPriority).toBe(ReportPriority.HIGH); // MEDIUM * 1.5 = HIGH
+
+      const spamPriority = service.calculatePriority(
+        reputation,
+        ReportCategory.SPAM
+      );
+      expect(spamPriority).toBe(ReportPriority.MEDIUM); // MEDIUM * 1.2 = MEDIUM (rounded)
+    });
+
+    it("should handle banned users with low priority", () => {
+      const reputation: UserReputation = {
+        userId: "user1",
+        score: 10,
+        level: "banned",
+        totalWhispers: 50,
+        approvedWhispers: 20,
+        flaggedWhispers: 20,
+        rejectedWhispers: 10,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const priority = service.calculatePriority(
+        reputation,
+        ReportCategory.OTHER
+      );
+      expect(priority).toBe(ReportPriority.LOW); // Banned users get LOW priority
+    });
+
+    it("should handle verified users with medium priority", () => {
+      const reputation: UserReputation = {
+        userId: "user1",
+        score: 80,
+        level: "verified",
+        totalWhispers: 80,
+        approvedWhispers: 75,
+        flaggedWhispers: 3,
+        rejectedWhispers: 2,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const priority = service.calculatePriority(
+        reputation,
+        ReportCategory.OTHER
+      );
+      expect(priority).toBe(ReportPriority.MEDIUM); // Verified users get MEDIUM priority
+    });
+  });
+
+  describe("escalatePriority - Edge Cases", () => {
+    it("should handle unknown priority level gracefully", () => {
+      const escalated = service.escalatePriority("unknown" as any);
+      expect(escalated).toBe(ReportPriority.MEDIUM); // Default fallback
+    });
+  });
+
+  describe("deescalatePriority - Edge Cases", () => {
+    it("should handle deescalation from critical to high", () => {
+      // Test through calculatePriority with low reputation score
+      const reputation: UserReputation = {
+        userId: "user1",
+        score: 15,
+        level: "trusted", // HIGH base priority
+        totalWhispers: 100,
+        approvedWhispers: 95,
+        flaggedWhispers: 2,
+        rejectedWhispers: 3,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const priority = service.calculatePriority(
+        reputation,
+        ReportCategory.OTHER
+      );
+      // Trusted (HIGH) + low score reduction = MEDIUM
+      expect(priority).toBe(ReportPriority.MEDIUM);
+    });
+
+    it("should handle deescalation from high to medium", () => {
+      const reputation: UserReputation = {
+        userId: "user1",
+        score: 15,
+        level: "verified", // MEDIUM base priority, but with high score boost then low score reduction
+        totalWhispers: 80,
+        approvedWhispers: 75,
+        flaggedWhispers: 3,
+        rejectedWhispers: 2,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const priority = service.calculatePriority(
+        reputation,
+        ReportCategory.OTHER
+      );
+      // Verified (MEDIUM) + low score reduction = LOW
+      expect(priority).toBe(ReportPriority.LOW);
+    });
+  });
+
+  describe("getPriorityDescription - Edge Cases", () => {
+    it("should handle unknown priority level", () => {
+      const description = service.getPriorityDescription("unknown" as any);
+      expect(description).toBe("Unknown priority level");
+    });
+  });
+
+  describe("Factory Functions", () => {
+    it("should return singleton instance via getReportPriorityService", () => {
+      const instance1 = getReportPriorityService();
+      const instance2 = getReportPriorityService();
+      expect(instance1).toBe(instance2);
+    });
+
+    it("should reset instance via resetReportPriorityService", () => {
+      const instance1 = getReportPriorityService();
+      resetReportPriorityService();
+      const instance2 = getReportPriorityService();
+      expect(instance1).not.toBe(instance2);
+    });
+
+    it("should destroy instance via destroyReportPriorityService", () => {
+      const instance1 = getReportPriorityService();
+      destroyReportPriorityService();
+      const instance2 = getReportPriorityService();
+      expect(instance1).not.toBe(instance2);
+    });
+
+    it("should handle resetReportPriorityService when instance is null", () => {
+      ReportPriorityService.destroyInstance();
+      expect(() => resetReportPriorityService()).not.toThrow();
+    });
+
+    it("should handle destroyReportPriorityService when instance is null", () => {
+      ReportPriorityService.destroyInstance();
+      expect(() => destroyReportPriorityService()).not.toThrow();
+    });
+  });
+
+  describe("Singleton Pattern - Edge Cases", () => {
+    it("should create new instance when none exists", () => {
+      ReportPriorityService.destroyInstance();
+      const instance = ReportPriorityService.getInstance();
+      expect(instance).toBeInstanceOf(ReportPriorityService);
+    });
+
+    it("should return existing instance when one exists", () => {
+      const instance1 = ReportPriorityService.getInstance();
+      const instance2 = ReportPriorityService.getInstance();
+      expect(instance1).toBe(instance2);
+    });
+
+    it("should handle resetInstance when instance is null", () => {
+      ReportPriorityService.destroyInstance();
+      expect(() => ReportPriorityService.resetInstance()).not.toThrow();
+    });
+
+    it("should handle destroyInstance when instance is null", () => {
+      ReportPriorityService.destroyInstance();
+      expect(() => ReportPriorityService.destroyInstance()).not.toThrow();
+    });
+  });
+
+  describe("Category Multipliers - All Categories", () => {
+    it("should handle all category multipliers correctly", () => {
+      const reputation: UserReputation = {
+        userId: "user1",
+        score: 50,
+        level: "standard",
+        totalWhispers: 50,
+        approvedWhispers: 40,
+        flaggedWhispers: 5,
+        rejectedWhispers: 5,
+        violationHistory: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      // Test all categories
+      const categories = [
+        ReportCategory.HARASSMENT,
+        ReportCategory.HATE_SPEECH,
+        ReportCategory.VIOLENCE,
+        ReportCategory.SEXUAL_CONTENT,
+        ReportCategory.SPAM,
+        ReportCategory.SCAM,
+        ReportCategory.COPYRIGHT,
+        ReportCategory.PERSONAL_INFO,
+        ReportCategory.MINOR_SAFETY,
+        ReportCategory.OTHER,
+      ];
+
+      categories.forEach((category) => {
+        const priority = service.calculatePriority(reputation, category);
+        expect(priority).toBeDefined();
+        expect([
+          ReportPriority.LOW,
+          ReportPriority.MEDIUM,
+          ReportPriority.HIGH,
+          ReportPriority.CRITICAL,
+        ]).toContain(priority);
+      });
+    });
+  });
+
+  describe("Reputation Levels - All Levels", () => {
+    it("should handle all reputation levels correctly", () => {
+      const categories = [
+        ReportCategory.OTHER,
+        ReportCategory.SPAM,
+        ReportCategory.HARASSMENT,
+      ];
+
+      const levels = [
+        "trusted",
+        "verified",
+        "standard",
+        "flagged",
+        "banned",
+      ] as const;
+
+      levels.forEach((level) => {
+        const reputation: UserReputation = {
+          userId: "user1",
+          score: 50,
+          level,
+          totalWhispers: 50,
+          approvedWhispers: 40,
+          flaggedWhispers: 5,
+          rejectedWhispers: 5,
+          violationHistory: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
+        categories.forEach((category) => {
+          const priority = service.calculatePriority(reputation, category);
+          expect(priority).toBeDefined();
+          expect([
+            ReportPriority.LOW,
+            ReportPriority.MEDIUM,
+            ReportPriority.HIGH,
+            ReportPriority.CRITICAL,
+          ]).toContain(priority);
+        });
+      });
     });
   });
 });

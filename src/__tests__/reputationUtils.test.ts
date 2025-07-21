@@ -602,6 +602,7 @@ describe("Reputation Utils", () => {
     test("should return false for banned users", () => {
       const reputation = createUserReputation({
         level: "banned",
+        score: 0, // Banned users have score 0
         lastViolation: new Date(),
       });
       expect(needsRecoveryProcessing(reputation)).toBe(false);

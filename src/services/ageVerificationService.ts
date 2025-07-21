@@ -39,7 +39,10 @@ export class AgeVerificationService {
     } = options;
 
     // Validate user input (but don't throw for underage - let the verification process handle that)
-    if (!userInput.dateOfBirth && !userInput.age) {
+    if (
+      !userInput.dateOfBirth &&
+      (userInput.age === undefined || userInput.age === null)
+    ) {
       throw new Error("Either date of birth or age must be provided");
     }
 

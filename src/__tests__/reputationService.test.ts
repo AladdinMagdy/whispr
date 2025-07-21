@@ -1,44 +1,149 @@
 import { ReputationService } from "../services/reputationService";
 import { ReputationRepository } from "../repositories/ReputationRepository";
 import {
+  UserReputation,
   ViolationType,
+  ModerationResult,
   ModerationStatus,
   ContentRank,
-  Violation,
+  UserViolation,
 } from "../types";
 
-// Mock the repository
-const mockRepository: jest.Mocked<ReputationRepository> = {
-  save: jest.fn(),
-  getById: jest.fn(),
-  getAll: jest.fn(),
-  update: jest.fn(),
-  delete: jest.fn(),
-  getByLevel: jest.fn(),
-  getByScoreRange: jest.fn(),
-  getWithRecentViolations: jest.fn(),
-  getByViolationCount: jest.fn(),
-  getStats: jest.fn(),
-  saveViolation: jest.fn(),
-  getViolations: jest.fn(),
-  getDeletedWhisperCount: jest.fn(),
-};
-
-// Mock the privacy service
+// Mock all dependencies before importing the service
 jest.mock("../services/privacyService", () => ({
-  getPrivacyService: jest.fn(() => ({
-    saveUserViolation: jest.fn(),
-    getUserViolations: jest.fn(),
-    getDeletedWhisperCount: jest.fn(),
-  })),
+  getPrivacyService: jest.fn(),
+}));
+
+jest.mock("../utils/reputationUtils", () => ({
+  getReputationLevel: jest.fn(),
+  calculateReputationImpact: jest.fn(),
+  calculateViolationImpact: jest.fn(),
+  isAppealable: jest.fn(),
+  getAppealTimeLimit: jest.fn(),
+  getPenaltyMultiplier: jest.fn(),
+  getAutoAppealThreshold: jest.fn(),
+  getRecoveryRate: jest.fn(),
+  getDaysSinceLastViolation: jest.fn(),
+  getDefaultReputation: jest.fn(),
+  calculateNewScoreAfterViolation: jest.fn(),
+  calculateNewScoreAfterRecovery: jest.fn(),
+  calculateRecoveryPoints: jest.fn(),
 }));
 
 describe("ReputationService", () => {
   let reputationService: ReputationService;
+  let mockRepository: jest.Mocked<ReputationRepository>;
+  let mockPrivacyService: any;
+
+  // Mock utility functions
+  const {
+    getReputationLevel,
+    calculateReputationImpact,
+    calculateViolationImpact,
+    isAppealable,
+    getAppealTimeLimit,
+    getPenaltyMultiplier,
+    getAutoAppealThreshold,
+    getRecoveryRate,
+    getDaysSinceLastViolation,
+    getDefaultReputation,
+    calculateNewScoreAfterViolation,
+    calculateNewScoreAfterRecovery,
+    calculateRecoveryPoints,
+  } = jest.requireMock("../utils/reputationUtils");
+
+  const { getPrivacyService } = jest.requireMock("../services/privacyService");
+
+  const mockUserReputation: UserReputation = {
+    userId: "user123",
+    score: 85,
+    level: "verified",
+    totalWhispers: 50,
+    approvedWhispers: 45,
+    flaggedWhispers: 3,
+    rejectedWhispers: 2,
+    lastViolation: new Date("2024-01-01"),
+    violationHistory: [],
+    createdAt: new Date("2024-01-01"),
+    updatedAt: new Date("2024-01-01"),
+  };
+
+  const mockDefaultReputation: UserReputation = {
+    userId: "newuser",
+    score: 100,
+    level: "trusted",
+    totalWhispers: 0,
+    approvedWhispers: 0,
+    flaggedWhispers: 0,
+    rejectedWhispers: 0,
+    violationHistory: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  const mockModerationResult: ModerationResult = {
+    status: ModerationStatus.APPROVED,
+    contentRank: ContentRank.G,
+    isMinorSafe: true,
+    violations: [],
+    confidence: 0.9,
+    moderationTime: 100,
+    apiResults: {},
+    reputationImpact: 0,
+    appealable: false,
+  };
+
+  const mockUserViolation: UserViolation = {
+    id: "violation123",
+    userId: "user123",
+    whisperId: "whisper123",
+    violationType: "whisper_deleted",
+    reason: "Test violation",
+    createdAt: new Date(),
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
-    ReputationService.resetInstance();
+
+    // Setup mock repository
+    mockRepository = {
+      save: jest.fn(),
+      getById: jest.fn(),
+      getAll: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      getByLevel: jest.fn(),
+      getByScoreRange: jest.fn(),
+      getWithRecentViolations: jest.fn(),
+      getByViolationCount: jest.fn(),
+      getStats: jest.fn(),
+      saveViolation: jest.fn(),
+      getViolations: jest.fn(),
+      getDeletedWhisperCount: jest.fn(),
+    };
+
+    // Setup mock privacy service
+    mockPrivacyService = {
+      // Add any privacy service methods that might be called
+    };
+    getPrivacyService.mockReturnValue(mockPrivacyService);
+
+    // Setup default mock implementations
+    getDefaultReputation.mockReturnValue(mockDefaultReputation);
+    getReputationLevel.mockReturnValue("verified");
+    calculateReputationImpact.mockReturnValue(5);
+    calculateViolationImpact.mockReturnValue(10);
+    isAppealable.mockReturnValue(true);
+    getAppealTimeLimit.mockReturnValue(14);
+    getPenaltyMultiplier.mockReturnValue(1.0);
+    getAutoAppealThreshold.mockReturnValue(0.5);
+    getRecoveryRate.mockReturnValue(1.5);
+    getDaysSinceLastViolation.mockReturnValue(30);
+    calculateNewScoreAfterViolation.mockReturnValue(75);
+    calculateNewScoreAfterRecovery.mockReturnValue(80);
+    calculateRecoveryPoints.mockReturnValue(5);
+
+    // Create service instance with mock repository
     reputationService = new ReputationService(mockRepository);
   });
 
@@ -47,670 +152,556 @@ describe("ReputationService", () => {
   });
 
   describe("Singleton Pattern", () => {
-    it("should return the same instance", () => {
+    it("should return the same instance when getInstance is called multiple times", () => {
       const instance1 = ReputationService.getInstance();
       const instance2 = ReputationService.getInstance();
       expect(instance1).toBe(instance2);
     });
 
-    it("should reset instance correctly", () => {
+    it("should reset instance when resetInstance is called", () => {
       const instance1 = ReputationService.getInstance();
       ReputationService.resetInstance();
       const instance2 = ReputationService.getInstance();
       expect(instance1).not.toBe(instance2);
     });
 
-    it("should destroy instance correctly", () => {
+    it("should destroy instance when destroyInstance is called", () => {
       const instance1 = ReputationService.getInstance();
       ReputationService.destroyInstance();
       const instance2 = ReputationService.getInstance();
       expect(instance1).not.toBe(instance2);
     });
-
-    it("should handle resetInstance when no instance exists", () => {
-      expect(() => ReputationService.resetInstance()).not.toThrow();
-    });
-
-    it("should handle destroyInstance when no instance exists", () => {
-      expect(() => ReputationService.destroyInstance()).not.toThrow();
-    });
   });
 
   describe("Factory Functions", () => {
-    it("should export factory functions correctly", () => {
-      // Test that factory functions exist and are callable
-      expect(() => ReputationService.getInstance()).not.toThrow();
-      expect(() => ReputationService.resetInstance()).not.toThrow();
-      expect(() => ReputationService.destroyInstance()).not.toThrow();
+    it("should return service instance via getReputationService", () => {
+      const service = ReputationService.getInstance();
+      expect(service).toBeInstanceOf(ReputationService);
     });
 
-    it("should call static methods through factory functions", () => {
-      expect(() => ReputationService.resetInstance()).not.toThrow();
-      expect(() => ReputationService.destroyInstance()).not.toThrow();
+    it("should reset service via resetReputationService", () => {
+      const instance1 = ReputationService.getInstance();
+      ReputationService.resetInstance();
+      const instance2 = ReputationService.getInstance();
+      expect(instance1).not.toBe(instance2);
+    });
+
+    it("should destroy service via destroyReputationService", () => {
+      const instance1 = ReputationService.getInstance();
+      ReputationService.destroyInstance();
+      const instance2 = ReputationService.getInstance();
+      expect(instance1).not.toBe(instance2);
     });
   });
 
-  describe("Reputation Levels", () => {
-    it("should correctly identify trusted users (90-100)", () => {
-      const trustedReputation = {
-        userId: "trusted-user",
-        score: 95,
-        level: "trusted" as const,
-        totalWhispers: 100,
-        approvedWhispers: 98,
-        flaggedWhispers: 1,
-        rejectedWhispers: 1,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+  describe("saveUserReputation", () => {
+    it("should save user reputation successfully", async () => {
+      mockRepository.save.mockResolvedValue();
 
-      expect(trustedReputation.level).toBe("trusted");
-      expect(trustedReputation.score).toBeGreaterThanOrEqual(90);
-      expect(trustedReputation.score).toBeLessThanOrEqual(100);
+      await reputationService.saveUserReputation(mockUserReputation);
+
+      expect(mockRepository.save).toHaveBeenCalledWith(mockUserReputation);
     });
 
-    it("should correctly identify verified users (75-89)", () => {
-      const verifiedReputation = {
-        userId: "verified-user",
-        score: 80,
-        level: "verified" as const,
-        totalWhispers: 50,
-        approvedWhispers: 45,
-        flaggedWhispers: 3,
-        rejectedWhispers: 2,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+    it("should handle repository save errors", async () => {
+      mockRepository.save.mockRejectedValue(new Error("Database error"));
 
-      expect(verifiedReputation.level).toBe("verified");
-      expect(verifiedReputation.score).toBeGreaterThanOrEqual(75);
-      expect(verifiedReputation.score).toBeLessThan(90);
+      await expect(
+        reputationService.saveUserReputation(mockUserReputation)
+      ).rejects.toThrow("Failed to save user reputation");
+    });
+  });
+
+  describe("updateUserReputation", () => {
+    it("should update user reputation successfully", async () => {
+      const updates = { score: 90, level: "trusted" as const };
+      mockRepository.update.mockResolvedValue();
+
+      await reputationService.updateUserReputation("user123", updates);
+
+      expect(mockRepository.update).toHaveBeenCalledWith("user123", updates);
     });
 
-    it("should correctly identify standard users (50-74)", () => {
-      const standardReputation = {
-        userId: "standard-user",
-        score: 60,
-        level: "standard" as const,
-        totalWhispers: 20,
-        approvedWhispers: 18,
-        flaggedWhispers: 2,
-        rejectedWhispers: 0,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+    it("should handle repository update errors", async () => {
+      mockRepository.update.mockRejectedValue(new Error("Database error"));
 
-      expect(standardReputation.level).toBe("standard");
-      expect(standardReputation.score).toBeGreaterThanOrEqual(50);
-      expect(standardReputation.score).toBeLessThan(75);
+      await expect(
+        reputationService.updateUserReputation("user123", { score: 90 })
+      ).rejects.toThrow("Failed to update user reputation");
+    });
+  });
+
+  describe("deleteUserReputation", () => {
+    it("should delete user reputation successfully", async () => {
+      mockRepository.delete.mockResolvedValue();
+
+      await reputationService.deleteUserReputation("user123");
+
+      expect(mockRepository.delete).toHaveBeenCalledWith("user123");
     });
 
-    it("should correctly identify flagged users (25-49)", () => {
-      const flaggedReputation = {
-        userId: "flagged-user",
-        score: 30,
-        level: "flagged" as const,
-        totalWhispers: 10,
-        approvedWhispers: 5,
-        flaggedWhispers: 4,
-        rejectedWhispers: 1,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+    it("should handle repository delete errors", async () => {
+      mockRepository.delete.mockRejectedValue(new Error("Database error"));
 
-      expect(flaggedReputation.level).toBe("flagged");
-      expect(flaggedReputation.score).toBeGreaterThanOrEqual(25);
-      expect(flaggedReputation.score).toBeLessThan(50);
+      await expect(
+        reputationService.deleteUserReputation("user123")
+      ).rejects.toThrow("Failed to delete user reputation");
+    });
+  });
+
+  describe("getUsersByReputationLevel", () => {
+    it("should get users by reputation level successfully", async () => {
+      const mockUsers = [mockUserReputation];
+      mockRepository.getByLevel.mockResolvedValue(mockUsers);
+
+      const result = await reputationService.getUsersByReputationLevel(
+        "verified"
+      );
+
+      expect(mockRepository.getByLevel).toHaveBeenCalledWith("verified");
+      expect(result).toEqual(mockUsers);
     });
 
-    it("should correctly identify banned users (0-24)", () => {
-      const bannedReputation = {
-        userId: "banned-user",
-        score: 10,
-        level: "banned" as const,
-        totalWhispers: 5,
-        approvedWhispers: 0,
-        flaggedWhispers: 5,
-        rejectedWhispers: 0,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+    it("should handle repository getByLevel errors", async () => {
+      mockRepository.getByLevel.mockRejectedValue(new Error("Database error"));
 
-      expect(bannedReputation.level).toBe("banned");
-      expect(bannedReputation.score).toBeGreaterThanOrEqual(0);
-      expect(bannedReputation.score).toBeLessThan(25);
+      await expect(
+        reputationService.getUsersByReputationLevel("verified")
+      ).rejects.toThrow("Failed to get users by reputation level");
+    });
+  });
+
+  describe("getUsersWithRecentViolations", () => {
+    it("should get users with recent violations successfully", async () => {
+      const mockUsers = [mockUserReputation];
+      mockRepository.getWithRecentViolations.mockResolvedValue(mockUsers);
+
+      const result = await reputationService.getUsersWithRecentViolations(
+        7,
+        50
+      );
+
+      expect(mockRepository.getWithRecentViolations).toHaveBeenCalledWith(
+        7,
+        50
+      );
+      expect(result).toEqual(mockUsers);
     });
 
-    it("should handle edge cases", () => {
-      const edgeCases = [
-        { score: 0, expectedLevel: "banned" as const },
-        { score: 24, expectedLevel: "banned" as const },
-        { score: 25, expectedLevel: "flagged" as const },
-        { score: 49, expectedLevel: "flagged" as const },
-        { score: 50, expectedLevel: "standard" as const },
-        { score: 74, expectedLevel: "standard" as const },
-        { score: 75, expectedLevel: "verified" as const },
-        { score: 89, expectedLevel: "verified" as const },
-        { score: 90, expectedLevel: "trusted" as const },
-        { score: 100, expectedLevel: "trusted" as const },
-      ];
+    it("should handle repository getWithRecentViolations errors", async () => {
+      mockRepository.getWithRecentViolations.mockRejectedValue(
+        new Error("Database error")
+      );
 
-      edgeCases.forEach(({ score, expectedLevel }) => {
-        const reputation = {
-          userId: `user-${score}`,
-          score,
-          level: expectedLevel,
-          totalWhispers: 0,
-          approvedWhispers: 0,
-          flaggedWhispers: 0,
-          rejectedWhispers: 0,
-          violationHistory: [],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-        expect(reputation.level).toBe(expectedLevel);
+      await expect(
+        reputationService.getUsersWithRecentViolations(7, 50)
+      ).rejects.toThrow("Failed to get users with recent violations");
+    });
+  });
+
+  describe("resetUserReputation", () => {
+    it("should reset user reputation successfully", async () => {
+      mockRepository.save.mockResolvedValue();
+
+      await reputationService.resetUserReputation("user123");
+
+      expect(getDefaultReputation).toHaveBeenCalledWith("user123");
+      expect(mockRepository.save).toHaveBeenCalledWith(mockDefaultReputation);
+    });
+
+    it("should handle repository save errors during reset", async () => {
+      mockRepository.save.mockRejectedValue(new Error("Database error"));
+
+      await expect(
+        reputationService.resetUserReputation("user123")
+      ).rejects.toThrow("Failed to reset user reputation");
+    });
+  });
+
+  describe("adjustUserReputationScore", () => {
+    it("should adjust user reputation score successfully", async () => {
+      mockRepository.getById.mockResolvedValue(mockUserReputation);
+      mockRepository.save.mockResolvedValue();
+
+      await reputationService.adjustUserReputationScore(
+        "user123",
+        90,
+        "Manual adjustment"
+      );
+
+      expect(mockRepository.getById).toHaveBeenCalledWith("user123");
+      expect(getReputationLevel).toHaveBeenCalledWith(90);
+      expect(mockRepository.save).toHaveBeenCalledWith({
+        ...mockUserReputation,
+        score: 90,
+        level: "verified",
+        updatedAt: expect.any(Date),
       });
     });
+
+    it("should handle repository save errors", async () => {
+      mockRepository.getById.mockResolvedValue(mockUserReputation);
+      mockRepository.save.mockRejectedValue(new Error("Database error"));
+
+      await expect(
+        reputationService.adjustUserReputationScore("user123", 90)
+      ).rejects.toThrow("Failed to adjust user reputation score");
+    });
+
+    it("should handle repository save errors", async () => {
+      mockRepository.getById.mockResolvedValue(mockUserReputation);
+      mockRepository.save.mockRejectedValue(new Error("Database error"));
+
+      await expect(
+        reputationService.adjustUserReputationScore("user123", 90)
+      ).rejects.toThrow("Failed to adjust user reputation score");
+    });
   });
 
-  describe("Default Reputation", () => {
-    it("should provide default reputation for new users", async () => {
+  describe("saveUserViolation", () => {
+    it("should save user violation successfully", async () => {
+      mockRepository.saveViolation.mockResolvedValue();
+
+      await reputationService.saveUserViolation(mockUserViolation);
+
+      expect(mockRepository.saveViolation).toHaveBeenCalledWith(
+        mockUserViolation
+      );
+    });
+
+    it("should handle repository saveViolation errors", async () => {
+      mockRepository.saveViolation.mockRejectedValue(
+        new Error("Database error")
+      );
+
+      await expect(
+        reputationService.saveUserViolation(mockUserViolation)
+      ).rejects.toThrow("Failed to save user violation");
+    });
+  });
+
+  describe("getUserViolations", () => {
+    it("should get user violations successfully", async () => {
+      const mockViolations = [mockUserViolation];
+      mockRepository.getViolations.mockResolvedValue(mockViolations);
+
+      const result = await reputationService.getUserViolations("user123", 90);
+
+      expect(mockRepository.getViolations).toHaveBeenCalledWith("user123", 90);
+      expect(result).toEqual(mockViolations);
+    });
+
+    it("should handle repository getViolations errors", async () => {
+      mockRepository.getViolations.mockRejectedValue(
+        new Error("Database error")
+      );
+
+      await expect(
+        reputationService.getUserViolations("user123", 90)
+      ).rejects.toThrow("Failed to get user violations");
+    });
+  });
+
+  describe("getDeletedWhisperCount", () => {
+    it("should get deleted whisper count successfully", async () => {
+      mockRepository.getDeletedWhisperCount.mockResolvedValue(5);
+
+      const result = await reputationService.getDeletedWhisperCount(
+        "user123",
+        90
+      );
+
+      expect(mockRepository.getDeletedWhisperCount).toHaveBeenCalledWith(
+        "user123",
+        90
+      );
+      expect(result).toBe(5);
+    });
+
+    it("should handle repository getDeletedWhisperCount errors", async () => {
+      mockRepository.getDeletedWhisperCount.mockRejectedValue(
+        new Error("Database error")
+      );
+
+      await expect(
+        reputationService.getDeletedWhisperCount("user123", 90)
+      ).rejects.toThrow("Failed to get deleted whisper count");
+    });
+  });
+
+  describe("getUserReputation", () => {
+    it("should return existing user reputation", async () => {
+      mockRepository.getById.mockResolvedValue(mockUserReputation);
+
+      const result = await reputationService.getUserReputation("user123");
+
+      expect(mockRepository.getById).toHaveBeenCalledWith("user123");
+      expect(result).toEqual(mockUserReputation);
+    });
+
+    it("should create and return default reputation for new user", async () => {
       mockRepository.getById.mockResolvedValue(null);
       mockRepository.save.mockResolvedValue();
 
-      const reputation = await reputationService.getUserReputation("new-user");
+      const result = await reputationService.getUserReputation("newuser");
 
-      expect(reputation).toBeDefined();
-      expect(reputation.userId).toBe("new-user");
-      expect(reputation.score).toBe(50);
-      expect(reputation.level).toBe("standard");
-      expect(reputation.totalWhispers).toBe(0);
-      expect(reputation.approvedWhispers).toBe(0);
-      expect(reputation.flaggedWhispers).toBe(0);
-      expect(reputation.rejectedWhispers).toBe(0);
-      expect(reputation.violationHistory).toEqual([]);
+      expect(mockRepository.getById).toHaveBeenCalledWith("newuser");
+      expect(getDefaultReputation).toHaveBeenCalledWith("newuser");
+      expect(mockRepository.save).toHaveBeenCalledWith(mockDefaultReputation);
+      expect(result).toEqual(mockDefaultReputation);
     });
 
-    it("should handle errors gracefully in getUserReputation", async () => {
-      // Mock repository to throw error
+    it("should return default reputation on error", async () => {
       mockRepository.getById.mockRejectedValue(new Error("Database error"));
-      mockRepository.save.mockRejectedValue(new Error("Save error"));
 
-      // Should return default reputation even when errors occur
-      const reputation = await reputationService.getUserReputation(
-        "error-user"
-      );
-      expect(reputation).toBeDefined();
-      expect(reputation.userId).toBe("error-user");
-      expect(reputation.score).toBe(50);
-      expect(reputation.level).toBe("standard");
+      const result = await reputationService.getUserReputation("user123");
+
+      expect(result).toEqual(mockDefaultReputation);
     });
   });
 
-  describe("Reputation-Based Actions", () => {
-    it("should apply reputation actions to moderation results", async () => {
-      const moderationResult = {
-        status: ModerationStatus.PENDING,
-        contentRank: ContentRank.PG,
-        isMinorSafe: true,
-        violations: [
-          {
-            type: ViolationType.SPAM,
-            severity: "low",
-            confidence: 0.8,
-            description: "Spam detected",
-            suggestedAction: "warn",
-          } as Violation,
-        ],
-        confidence: 1,
-        moderationTime: 0.5,
-        apiResults: {},
-        reputationImpact: 0,
-        appealable: true,
-      };
+  describe("applyReputationBasedActions", () => {
+    it("should apply reputation-based actions successfully", async () => {
+      mockRepository.getById.mockResolvedValue(mockUserReputation);
 
       const result = await reputationService.applyReputationBasedActions(
-        moderationResult,
-        "user-123"
+        mockModerationResult,
+        "user123"
       );
 
-      expect(result).toHaveProperty("reputationImpact");
-      expect(result).toHaveProperty("appealable");
-      expect(result).toHaveProperty("appealTimeLimit");
-      expect(result).toHaveProperty("penaltyMultiplier");
-      expect(result).toHaveProperty("autoAppealThreshold");
-      expect(result.appealable).toBe(true); // Verified users can appeal
-      expect(result.appealTimeLimit).toBe(7); // 7 days for standard users
+      expect(mockRepository.getById).toHaveBeenCalledWith("user123");
+      expect(getReputationLevel).toHaveBeenCalledWith(mockUserReputation.score);
+      expect(calculateReputationImpact).toHaveBeenCalledWith(
+        mockModerationResult,
+        "verified"
+      );
+      expect(isAppealable).toHaveBeenCalledWith(
+        mockModerationResult,
+        "verified"
+      );
+      expect(getAppealTimeLimit).toHaveBeenCalledWith("verified");
+      expect(getPenaltyMultiplier).toHaveBeenCalledWith("verified");
+      expect(getAutoAppealThreshold).toHaveBeenCalledWith("verified");
+
+      expect(result).toEqual({
+        ...mockModerationResult,
+        reputationImpact: 5,
+        appealable: true,
+        appealTimeLimit: 14,
+        penaltyMultiplier: 1.0,
+        autoAppealThreshold: 0.5,
+      });
     });
 
-    it("should handle banned users correctly", async () => {
-      // Mock a banned user by temporarily modifying the service
-      const bannedUserReputation = {
-        userId: "banned-user",
-        score: 10, // Banned level
-        level: "banned" as const,
-        totalWhispers: 0,
-        approvedWhispers: 0,
-        flaggedWhispers: 5,
-        rejectedWhispers: 0,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      // Mock the getUserReputation method
-      mockRepository.getById.mockResolvedValue(bannedUserReputation);
-
-      const moderationResult = {
-        status: ModerationStatus.FLAGGED,
-        contentRank: ContentRank.R,
-        isMinorSafe: false,
-        violations: [
-          {
-            type: ViolationType.HATE_SPEECH,
-            severity: "high",
-            confidence: 0.9,
-            description: "Hate speech detected",
-            suggestedAction: "reject",
-          } as Violation,
-        ],
-        confidence: 1,
-        moderationTime: 0.5,
-        apiResults: {},
-        reputationImpact: 0,
-        appealable: false,
-      };
+    it("should return original result on error", async () => {
+      // Mock getUserReputation to throw an error
+      jest
+        .spyOn(reputationService, "getUserReputation")
+        .mockRejectedValue(new Error("Database error"));
 
       const result = await reputationService.applyReputationBasedActions(
-        moderationResult,
-        "banned-user"
+        mockModerationResult,
+        "user123"
       );
 
-      expect(result.appealable).toBe(false); // Banned users cannot appeal
-      expect(result.appealTimeLimit).toBe(0); // No appeals for banned users
-      expect(result.penaltyMultiplier).toBe(2.0); // Maximum penalty for banned users
-    });
-
-    it("should handle trusted users correctly", async () => {
-      const trustedUserReputation = {
-        userId: "trusted-user",
-        score: 95,
-        level: "trusted" as const,
-        totalWhispers: 100,
-        approvedWhispers: 98,
-        flaggedWhispers: 1,
-        rejectedWhispers: 1,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      mockRepository.getById.mockResolvedValue(trustedUserReputation);
-
-      const moderationResult = {
-        status: ModerationStatus.FLAGGED,
-        contentRank: ContentRank.PG13,
-        isMinorSafe: true,
-        violations: [
-          {
-            type: ViolationType.SPAM,
-            severity: "low",
-            confidence: 0.6,
-            description: "Possible spam",
-            suggestedAction: "warn",
-          } as Violation,
-        ],
-        confidence: 1,
-        moderationTime: 0.5,
-        apiResults: {},
-        reputationImpact: 0,
-        appealable: true,
-      };
-
-      const result = await reputationService.applyReputationBasedActions(
-        moderationResult,
-        "trusted-user"
-      );
-
-      expect(result.appealable).toBe(true);
-      expect(result.appealTimeLimit).toBe(30); // 30 days for trusted users
-      expect(result.penaltyMultiplier).toBe(0.5); // Reduced penalties for trusted users
-      expect(result.autoAppealThreshold).toBe(0.3); // Low threshold for trusted users
-    });
-
-    it("should handle standard users correctly", async () => {
-      const standardUserReputation = {
-        userId: "standard-user",
-        score: 60,
-        level: "standard" as const,
-        totalWhispers: 20,
-        approvedWhispers: 18,
-        flaggedWhispers: 2,
-        rejectedWhispers: 0,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      mockRepository.getById.mockResolvedValue(standardUserReputation);
-
-      const moderationResult = {
-        status: ModerationStatus.FLAGGED,
-        contentRank: ContentRank.R,
-        isMinorSafe: false,
-        violations: [
-          {
-            type: ViolationType.HARASSMENT,
-            severity: "medium",
-            confidence: 0.8,
-            description: "Harassment detected",
-            suggestedAction: "reject",
-          } as Violation,
-        ],
-        confidence: 1,
-        moderationTime: 0.5,
-        apiResults: {},
-        reputationImpact: 0,
-        appealable: true,
-      };
-
-      const result = await reputationService.applyReputationBasedActions(
-        moderationResult,
-        "standard-user"
-      );
-
-      expect(result.appealable).toBe(true);
-      expect(result.appealTimeLimit).toBe(7); // 7 days for standard users
-      expect(result.penaltyMultiplier).toBe(1.0); // Normal penalties for standard users
-      expect(result.autoAppealThreshold).toBe(0.7); // Higher threshold for standard users
-    });
-
-    it("should handle flagged users correctly", async () => {
-      const flaggedUserReputation = {
-        userId: "flagged-user",
-        score: 30,
-        level: "flagged" as const,
-        totalWhispers: 10,
-        approvedWhispers: 5,
-        flaggedWhispers: 4,
-        rejectedWhispers: 1,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      mockRepository.getById.mockResolvedValue(flaggedUserReputation);
-
-      const moderationResult = {
-        status: ModerationStatus.FLAGGED,
-        contentRank: ContentRank.R,
-        isMinorSafe: false,
-        violations: [
-          {
-            type: ViolationType.HATE_SPEECH,
-            severity: "critical",
-            confidence: 0.9,
-            description: "Critical hate speech",
-            suggestedAction: "ban",
-          } as Violation,
-        ],
-        confidence: 1,
-        moderationTime: 0.5,
-        apiResults: {},
-        reputationImpact: 0,
-        appealable: true,
-      };
-
-      const result = await reputationService.applyReputationBasedActions(
-        moderationResult,
-        "flagged-user"
-      );
-
-      expect(result.appealable).toBe(false); // Critical violations for flagged users are not appealable
-      expect(result.appealTimeLimit).toBe(3); // 3 days for flagged users
-      expect(result.penaltyMultiplier).toBe(1.5); // Increased penalties for flagged users
-      expect(result.autoAppealThreshold).toBe(0.9); // Very high threshold for flagged users
-    });
-
-    it("should handle errors gracefully in applyReputationBasedActions", async () => {
-      const moderationResult = {
-        status: ModerationStatus.APPROVED,
-        contentRank: ContentRank.G,
-        isMinorSafe: true,
-        violations: [],
-        confidence: 1,
-        moderationTime: 0.5,
-        apiResults: {},
-        reputationImpact: 0,
-        appealable: true,
-      };
-
-      // Mock an error in getUserReputation
-      mockRepository.getById.mockRejectedValue(new Error("Test error"));
-      mockRepository.save.mockRejectedValue(new Error("Save error"));
-
-      // Should apply reputation actions even when repository fails (uses default reputation)
-      const result = await reputationService.applyReputationBasedActions(
-        moderationResult,
-        "error-user"
-      );
-
-      // Should apply reputation actions using default reputation
-      expect(result.reputationImpact).toBe(0); // No violations = no impact
-      expect(result.appealable).toBe(true);
-      expect(result.appealTimeLimit).toBe(7); // Default for standard users
-      expect(result.penaltyMultiplier).toBe(1); // Default for standard users
-      expect(result.autoAppealThreshold).toBe(0.7); // Default for standard users
-    });
-
-    it("should handle moderation results with no violations", async () => {
-      const moderationResult = {
-        status: ModerationStatus.APPROVED,
-        contentRank: ContentRank.G,
-        isMinorSafe: true,
-        violations: [],
-        confidence: 1,
-        moderationTime: 0.5,
-        apiResults: {},
-        reputationImpact: 0,
-        appealable: true,
-      };
-
-      const result = await reputationService.applyReputationBasedActions(
-        moderationResult,
-        "user-123"
-      );
-
-      expect(result.reputationImpact).toBe(0); // No violations = no impact
-      expect(result.appealable).toBe(true);
-    });
-
-    it("should handle unknown violation types", async () => {
-      const moderationResult = {
-        status: ModerationStatus.FLAGGED,
-        contentRank: ContentRank.R,
-        isMinorSafe: false,
-        violations: [
-          {
-            type: "UNKNOWN_VIOLATION" as ViolationType,
-            severity: "medium",
-            confidence: 0.8,
-            description: "Unknown violation",
-            suggestedAction: "warn",
-          } as Violation,
-        ],
-        confidence: 1,
-        moderationTime: 0.5,
-        apiResults: {},
-        reputationImpact: 0,
-        appealable: true,
-      };
-
-      const result = await reputationService.applyReputationBasedActions(
-        moderationResult,
-        "user-123"
-      );
-
-      expect(result.reputationImpact).toBeGreaterThan(0); // Should use default impact
+      expect(result).toEqual(mockModerationResult);
     });
   });
 
-  describe("Violation Recording", () => {
-    it("should record violations and calculate impact", async () => {
-      const userId = "user-123";
-      const whisperId = "whisper-456";
+  describe("recordViolation", () => {
+    it("should record violation successfully", async () => {
+      mockRepository.getById.mockResolvedValue(mockUserReputation);
+      mockRepository.save.mockResolvedValue();
 
-      // Record a minor violation
       await reputationService.recordViolation(
-        userId,
-        whisperId,
-        ViolationType.SPAM,
-        "low"
+        "user123",
+        "whisper123",
+        ViolationType.HARASSMENT,
+        "medium"
       );
 
-      // Record a major violation
-      await reputationService.recordViolation(
-        userId,
-        whisperId,
-        ViolationType.MINOR_SAFETY,
-        "critical"
+      expect(mockRepository.getById).toHaveBeenCalledWith("user123");
+      expect(calculateViolationImpact).toHaveBeenCalledWith(
+        ViolationType.HARASSMENT,
+        "medium"
       );
-
-      // The service should log these violations
-      // In a real implementation, we would verify the reputation was updated
+      expect(calculateNewScoreAfterViolation).toHaveBeenCalledWith(
+        mockUserReputation.score,
+        10
+      );
+      expect(getReputationLevel).toHaveBeenCalledWith(75);
+      expect(mockRepository.save).toHaveBeenCalledWith({
+        ...mockUserReputation,
+        score: 75,
+        level: "verified",
+        flaggedWhispers: mockUserReputation.flaggedWhispers + 1,
+        lastViolation: expect.any(Date),
+        violationHistory: expect.arrayContaining([
+          expect.objectContaining({
+            whisperId: "whisper123",
+            violationType: ViolationType.HARASSMENT,
+            severity: "medium",
+            resolved: false,
+          }),
+        ]),
+        updatedAt: expect.any(Date),
+      });
     });
 
-    it("should record successful whispers", async () => {
-      const userId = "user-123";
+    it("should handle errors gracefully", async () => {
+      mockRepository.getById.mockRejectedValue(new Error("Database error"));
 
-      await reputationService.recordSuccessfulWhisper(userId);
-
-      // The service should log successful whispers
-      // In a real implementation, we would verify the reputation was updated
-    });
-
-    it("should handle errors in recordViolation", async () => {
-      const mockRepository = (reputationService as any).repository;
-      mockRepository.save.mockRejectedValue(new Error("Save error"));
-
-      // Should not throw, just log error
+      // Should not throw error
       await expect(
         reputationService.recordViolation(
-          "user-123",
-          "whisper-456",
-          ViolationType.SPAM,
-          "low"
+          "user123",
+          "whisper123",
+          ViolationType.HARASSMENT,
+          "medium"
         )
-      ).resolves.not.toThrow();
-    });
-
-    it("should handle errors in recordSuccessfulWhisper", async () => {
-      const mockRepository = (reputationService as any).repository;
-      mockRepository.save.mockRejectedValue(new Error("Save error"));
-
-      // Should not throw, just log error
-      await expect(
-        reputationService.recordSuccessfulWhisper("user-123")
-      ).resolves.not.toThrow();
-    });
-
-    it("should handle errors in processReputationRecovery", async () => {
-      const mockRepository = (reputationService as any).repository;
-      mockRepository.save.mockRejectedValue(new Error("Save error"));
-
-      // Should not throw, just log error
-      await expect(
-        reputationService.processReputationRecovery("user-123")
-      ).resolves.not.toThrow();
-    });
-
-    it("should handle errors in resetReputation", async () => {
-      const mockRepository = (reputationService as any).repository;
-      mockRepository.save.mockRejectedValue(new Error("Save error"));
-
-      // Should not throw, just log error
-      await expect(
-        reputationService.resetReputation("user-123")
-      ).resolves.not.toThrow();
+      ).resolves.toBeUndefined();
     });
   });
 
-  describe("Reputation Recovery", () => {
-    it("should process reputation recovery", async () => {
-      const userId = "user-123";
+  describe("recordSuccessfulWhisper", () => {
+    it("should record successful whisper successfully", async () => {
+      mockRepository.getById.mockResolvedValue(mockUserReputation);
+      mockRepository.save.mockResolvedValue();
 
-      await reputationService.processReputationRecovery(userId);
+      await reputationService.recordSuccessfulWhisper("user123");
 
-      // The service should process recovery
-      // In a real implementation, we would verify the reputation was updated
+      expect(mockRepository.getById).toHaveBeenCalledWith("user123");
+      expect(getRecoveryRate).toHaveBeenCalledWith(mockUserReputation.score);
+      expect(getReputationLevel).toHaveBeenCalledWith(86.5); // 85 + 1.5
+      expect(mockRepository.save).toHaveBeenCalledWith({
+        ...mockUserReputation,
+        score: 86.5,
+        level: "verified",
+        approvedWhispers: mockUserReputation.approvedWhispers + 1,
+        totalWhispers: mockUserReputation.totalWhispers + 1,
+        updatedAt: expect.any(Date),
+      });
     });
 
-    it("should handle users with no last violation", async () => {
-      const userId = "user-123";
-      const reputation = {
-        userId,
-        score: 50,
-        level: "standard" as const,
-        totalWhispers: 10,
-        approvedWhispers: 8,
-        flaggedWhispers: 2,
-        rejectedWhispers: 0,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        // No lastViolation field
-      };
+    it("should cap score at 100", async () => {
+      const highScoreReputation = { ...mockUserReputation, score: 99 };
+      mockRepository.getById.mockResolvedValue(highScoreReputation);
+      mockRepository.save.mockResolvedValue();
+      getRecoveryRate.mockReturnValue(5);
 
-      mockRepository.getById.mockResolvedValue(reputation);
+      await reputationService.recordSuccessfulWhisper("user123");
 
-      await reputationService.processReputationRecovery(userId);
-      // Should handle gracefully
+      expect(mockRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          score: 100, // Capped at 100
+        })
+      );
+    });
+
+    it("should handle errors gracefully", async () => {
+      mockRepository.getById.mockRejectedValue(new Error("Database error"));
+
+      await expect(
+        reputationService.recordSuccessfulWhisper("user123")
+      ).resolves.toBeUndefined();
     });
   });
 
-  describe("Reputation Statistics", () => {
-    it("should return reputation statistics", async () => {
-      // Mock the repository response
+  describe("processReputationRecovery", () => {
+    it("should process reputation recovery when enough time has passed", async () => {
+      mockRepository.getById.mockResolvedValue(mockUserReputation);
+      mockRepository.save.mockResolvedValue();
+      getDaysSinceLastViolation.mockReturnValue(35); // More than 30 days
+
+      await reputationService.processReputationRecovery("user123");
+
+      expect(mockRepository.getById).toHaveBeenCalledWith("user123");
+      expect(getDaysSinceLastViolation).toHaveBeenCalledWith(
+        mockUserReputation
+      );
+      expect(calculateRecoveryPoints).toHaveBeenCalledWith(
+        mockUserReputation,
+        35
+      );
+      expect(calculateNewScoreAfterRecovery).toHaveBeenCalledWith(
+        mockUserReputation.score,
+        5
+      );
+      expect(getReputationLevel).toHaveBeenCalledWith(80);
+      expect(mockRepository.save).toHaveBeenCalledWith({
+        ...mockUserReputation,
+        score: 80,
+        level: "verified",
+        updatedAt: expect.any(Date),
+      });
+    });
+
+    it("should not process recovery when not enough time has passed", async () => {
+      mockRepository.getById.mockResolvedValue(mockUserReputation);
+      getDaysSinceLastViolation.mockReturnValue(20); // Less than 30 days
+
+      await reputationService.processReputationRecovery("user123");
+
+      expect(mockRepository.getById).toHaveBeenCalledWith("user123");
+      expect(getDaysSinceLastViolation).toHaveBeenCalledWith(
+        mockUserReputation
+      );
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it("should handle errors gracefully", async () => {
+      mockRepository.getById.mockRejectedValue(new Error("Database error"));
+
+      await expect(
+        reputationService.processReputationRecovery("user123")
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe("resetReputation", () => {
+    it("should reset reputation successfully", async () => {
+      mockRepository.save.mockResolvedValue();
+
+      await reputationService.resetReputation("user123");
+
+      expect(getDefaultReputation).toHaveBeenCalledWith("user123");
+      expect(mockRepository.save).toHaveBeenCalledWith(mockDefaultReputation);
+    });
+
+    it("should handle errors gracefully", async () => {
+      mockRepository.save.mockRejectedValue(new Error("Database error"));
+
+      await expect(
+        reputationService.resetReputation("user123")
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe("getReputationStats", () => {
+    it("should get reputation stats successfully", async () => {
       const mockStats = {
         totalUsers: 100,
-        trustedUsers: 10,
+        trustedUsers: 20,
         verifiedUsers: 30,
-        standardUsers: 40,
+        standardUsers: 25,
         flaggedUsers: 15,
-        bannedUsers: 5,
-        averageScore: 75,
+        bannedUsers: 10,
+        averageScore: 75.5,
       };
-
-      const mockRepository = (reputationService as any).repository;
       mockRepository.getStats.mockResolvedValue(mockStats);
 
-      const stats = await reputationService.getReputationStats();
+      const result = await reputationService.getReputationStats();
 
-      expect(stats).toHaveProperty("totalUsers");
-      expect(stats).toHaveProperty("trustedUsers");
-      expect(stats).toHaveProperty("verifiedUsers");
-      expect(stats).toHaveProperty("standardUsers");
-      expect(stats).toHaveProperty("flaggedUsers");
-      expect(stats).toHaveProperty("bannedUsers");
-      expect(stats).toHaveProperty("averageScore");
-
-      expect(stats.totalUsers).toBe(100);
-      expect(stats.averageScore).toBe(75);
+      expect(mockRepository.getStats).toHaveBeenCalled();
+      expect(result).toEqual(mockStats);
     });
 
-    it("should handle errors in getReputationStats", async () => {
-      const mockRepository = (reputationService as any).repository;
-      mockRepository.getStats.mockRejectedValue(new Error("Stats error"));
+    it("should return default stats on error", async () => {
+      mockRepository.getStats.mockRejectedValue(new Error("Database error"));
 
-      // Should return default stats object on error
-      const stats = await reputationService.getReputationStats();
+      const result = await reputationService.getReputationStats();
 
-      expect(stats).toEqual({
+      expect(result).toEqual({
         totalUsers: 0,
         trustedUsers: 0,
         verifiedUsers: 0,
@@ -719,167 +710,6 @@ describe("ReputationService", () => {
         bannedUsers: 0,
         averageScore: 0,
       });
-    });
-  });
-
-  describe("Reputation Reset", () => {
-    it("should reset user reputation", async () => {
-      const userId = "user-123";
-
-      await reputationService.resetReputation(userId);
-
-      // The service should log the reset
-      // In a real implementation, we would verify the reputation was reset
-    });
-  });
-
-  describe("Violation Impact Calculation", () => {
-    it("should calculate correct violation impacts", () => {
-      // Test different violation types and severities
-      const testCases = [
-        { type: ViolationType.SPAM, severity: "low", expectedBase: 5 },
-        {
-          type: ViolationType.HARASSMENT,
-          severity: "medium",
-          expectedBase: 15,
-        },
-        { type: ViolationType.HATE_SPEECH, severity: "high", expectedBase: 25 },
-        {
-          type: ViolationType.MINOR_SAFETY,
-          severity: "critical",
-          expectedBase: 35,
-        },
-      ];
-
-      testCases.forEach(({ type, severity, expectedBase }) => {
-        // We can't directly test private methods, but we can test through public interfaces
-        // The impact calculation is tested indirectly through recordViolation
-        expect(type).toBeDefined();
-        expect(severity).toBeDefined();
-        expect(expectedBase).toBeGreaterThan(0);
-      });
-    });
-
-    it("should handle unknown violation types", async () => {
-      const userId = "user-123";
-      const whisperId = "whisper-456";
-
-      // Should handle unknown violation type gracefully
-      await expect(
-        reputationService.recordViolation(
-          userId,
-          whisperId,
-          "UNKNOWN_TYPE" as ViolationType,
-          "medium"
-        )
-      ).resolves.not.toThrow();
-    });
-
-    it("should handle unknown severity levels", async () => {
-      const userId = "user-123";
-      const whisperId = "whisper-456";
-
-      // Should handle unknown severity gracefully
-      await expect(
-        reputationService.recordViolation(
-          userId,
-          whisperId,
-          ViolationType.SPAM,
-          "unknown" as any
-        )
-      ).resolves.not.toThrow();
-    });
-  });
-
-  describe("Edge Cases and Error Handling", () => {
-    it("should handle null/undefined violations array", async () => {
-      const moderationResult = {
-        status: ModerationStatus.FLAGGED,
-        contentRank: ContentRank.R,
-        isMinorSafe: false,
-        violations: null as any,
-        confidence: 1,
-        moderationTime: 0.5,
-        apiResults: {},
-        reputationImpact: 0,
-        appealable: true,
-      };
-
-      const result = await reputationService.applyReputationBasedActions(
-        moderationResult,
-        "user-123"
-      );
-
-      expect(result.reputationImpact).toBe(0);
-    });
-
-    it("should handle empty violations array", async () => {
-      const moderationResult = {
-        status: ModerationStatus.APPROVED,
-        contentRank: ContentRank.G,
-        isMinorSafe: true,
-        violations: [],
-        confidence: 1,
-        moderationTime: 0.5,
-        apiResults: {},
-        reputationImpact: 0,
-        appealable: true,
-      };
-
-      const result = await reputationService.applyReputationBasedActions(
-        moderationResult,
-        "user-123"
-      );
-
-      expect(result.reputationImpact).toBe(0);
-    });
-
-    it("should handle unknown reputation levels in time limits", async () => {
-      const moderationResult = {
-        status: ModerationStatus.FLAGGED,
-        contentRank: ContentRank.R,
-        isMinorSafe: false,
-        violations: [
-          {
-            type: ViolationType.SPAM,
-            severity: "low",
-            confidence: 0.8,
-            description: "Spam detected",
-            suggestedAction: "warn",
-          } as Violation,
-        ],
-        confidence: 1,
-        moderationTime: 0.5,
-        apiResults: {},
-        reputationImpact: 0,
-        appealable: true,
-      };
-
-      // Mock a user with unknown reputation level
-      const unknownLevelReputation = {
-        userId: "unknown-user",
-        score: 999, // Invalid score
-        level: "unknown" as any,
-        totalWhispers: 0,
-        approvedWhispers: 0,
-        flaggedWhispers: 0,
-        rejectedWhispers: 0,
-        violationHistory: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      mockRepository.getById.mockResolvedValue(unknownLevelReputation);
-
-      const result = await reputationService.applyReputationBasedActions(
-        moderationResult,
-        "unknown-user"
-      );
-
-      // Should use default values for unknown levels
-      expect(result.appealTimeLimit).toBe(30); // Uses score 999 which maps to trusted level
-      expect(result.penaltyMultiplier).toBe(0.5); // Uses score 999 which maps to trusted level
-      expect(result.autoAppealThreshold).toBe(0.3); // Uses score 999 which maps to trusted level
     });
   });
 });
