@@ -115,11 +115,29 @@ describe("createNewUserProfileData", () => {
   });
 
   it("should generate unique profile data on each call", () => {
-    const result1 = createNewUserProfileData();
-    const result2 = createNewUserProfileData();
+    // Mock Math.random to return different values for each call
+    const originalRandom = Math.random;
+    let callCount = 0;
+    Math.random = jest.fn(() => {
+      callCount++;
+      // Use different ranges to ensure different selections
+      if (callCount <= 3) {
+        return 0.1; // First profile: first adjective, first noun, first color
+      } else {
+        return 0.9; // Second profile: last adjective, last noun, last color
+      }
+    });
 
-    expect(result1.displayName).not.toBe(result2.displayName);
-    expect(result1.profileColor).not.toBe(result2.profileColor);
+    try {
+      const result1 = createNewUserProfileData();
+      const result2 = createNewUserProfileData();
+
+      expect(result1.displayName).not.toBe(result2.displayName);
+      expect(result1.profileColor).not.toBe(result2.profileColor);
+    } finally {
+      // Restore original Math.random
+      Math.random = originalRandom;
+    }
   });
 });
 

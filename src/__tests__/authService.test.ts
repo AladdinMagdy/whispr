@@ -10,7 +10,7 @@ import {
   AuthServiceDependencies,
 } from "../services/authService";
 import { getAuthInstance, getFirestoreInstance } from "../config/firebase";
-import { signInAnonymously, signOut } from "firebase/auth";
+import { signInAnonymously, signOut, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
 // Mock Firebase modules
@@ -717,6 +717,101 @@ describe("AuthService - Error Handling and Edge Cases", () => {
         { totalReactions: 1 },
         { merge: true }
       );
+    });
+
+    it("should handle errors in initializeAuthListener", async () => {
+      // Mock onAuthStateChanged to throw an error
+      (onAuthStateChanged as jest.Mock).mockImplementation(
+        (auth: any, callback: any, errorCallback: any) => {
+          // Simulate an error in the auth state change
+          errorCallback(new Error("Auth state change error"));
+          return jest.fn(); // Return unsubscribe function
+        }
+      );
+
+      // Create a new instance to trigger initializeAuthListener
+      const dependencies: AuthServiceDependencies = {
+        auth: { currentUser: null } as any,
+        firestore: {} as any,
+      };
+
+      const testService = AuthService.createInstance(dependencies);
+      testService.setCallbacks({
+        onError: jest.fn(),
+      });
+
+      // The error should be handled gracefully
+      expect(testService).toBeDefined();
+    });
+
+    it("should handle errors in getCurrentUser", async () => {
+      // Mock getOrCreateAnonymousUser to throw an error
+      const testService = AuthService.createInstance({
+        auth: { currentUser: { uid: "test-user" } } as any,
+        firestore: {} as any,
+      });
+
+      // Mock getDoc to throw an error
+      (getDoc as jest.Mock).mockRejectedValue(new Error("Database error"));
+
+      const result = await testService.getCurrentUser();
+      expect(result).toBeNull();
+    });
+
+    it("should handle errors in updateLastActive", async () => {
+      const testService = AuthService.createInstance({
+        auth: { currentUser: { uid: "test-user" } } as any,
+        firestore: {} as any,
+      });
+
+      // Mock setDoc to throw an error
+      (setDoc as jest.Mock).mockRejectedValue(new Error("Database error"));
+
+      // Should not throw, should handle error gracefully
+      await testService.updateLastActive();
+    });
+
+    it("should handle errors in incrementWhisperCount", async () => {
+      const testService = AuthService.createInstance({
+        auth: { currentUser: { uid: "test-user" } } as any,
+        firestore: {} as any,
+      });
+
+      // Mock getDoc to throw an error
+      (getDoc as jest.Mock).mockRejectedValue(new Error("Database error"));
+
+      // Should not throw, should handle error gracefully
+      await testService.incrementWhisperCount();
+    });
+
+    it("should handle errors in incrementReactionCount", async () => {
+      const testService = AuthService.createInstance({
+        auth: { currentUser: { uid: "test-user" } } as any,
+        firestore: {} as any,
+      });
+
+      // Mock getDoc to throw an error
+      (getDoc as jest.Mock).mockRejectedValue(new Error("Database error"));
+
+      // Should not throw, should handle error gracefully
+      await testService.incrementReactionCount();
+    });
+
+    it("should test factory functions", () => {
+      // Test getAuthService
+      const service1 = getAuthService();
+      const service2 = getAuthService();
+      expect(service1).toBe(service2);
+
+      // Test resetAuthService
+      resetAuthService();
+      const service3 = getAuthService();
+      expect(service1).not.toBe(service3);
+
+      // Test destroyAuthService
+      destroyAuthService();
+      const service4 = getAuthService();
+      expect(service3).not.toBe(service4);
     });
   });
 });
