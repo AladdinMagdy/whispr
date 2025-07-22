@@ -15,8 +15,12 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
   showMessage = true,
 }) => {
   return (
-    <View style={styles.container}>
-      <ActivityIndicator size={size} color={color} />
+    <View testID="loading-spinner-container" style={styles.container}>
+      <ActivityIndicator
+        testID="activity-indicator"
+        size={size}
+        color={color}
+      />
       {showMessage && <Text style={styles.message}>{message}</Text>}
     </View>
   );

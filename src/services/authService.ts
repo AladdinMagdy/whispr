@@ -18,6 +18,7 @@ import {
   serverTimestamp,
   Firestore,
 } from "firebase/firestore";
+import { generateAnonymousProfile } from "../utils/profileGenerationUtils";
 
 export interface AnonymousUser {
   uid: string;
@@ -253,69 +254,7 @@ export class AuthService {
     displayName: string;
     profileColor: string;
   } {
-    const adjectives = [
-      "Whispering",
-      "Silent",
-      "Quiet",
-      "Mysterious",
-      "Secretive",
-      "Gentle",
-      "Soft",
-      "Hushed",
-      "Muted",
-      "Subtle",
-      "Hidden",
-      "Veiled",
-      "Concealed",
-      "Private",
-      "Intimate",
-    ];
-
-    const nouns = [
-      "Whisperer",
-      "Listener",
-      "Voice",
-      "Echo",
-      "Shadow",
-      "Ghost",
-      "Spirit",
-      "Soul",
-      "Heart",
-      "Mind",
-      "Dreamer",
-      "Thinker",
-      "Observer",
-      "Wanderer",
-      "Seeker",
-    ];
-
-    const colors = [
-      "#4CAF50",
-      "#2196F3",
-      "#9C27B0",
-      "#FF9800",
-      "#F44336",
-      "#00BCD4",
-      "#8BC34A",
-      "#FF5722",
-      "#795548",
-      "#607D8B",
-      "#E91E63",
-      "#3F51B5",
-      "#009688",
-      "#FFC107",
-      "#9E9E9E",
-    ];
-
-    const randomAdjective =
-      adjectives[Math.floor(Math.random() * adjectives.length)];
-    const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
-    const randomColor = colors[Math.floor(Math.random() * colors.length)];
-
-    return {
-      displayName: `${randomAdjective} ${randomNoun}`,
-      profileColor: randomColor,
-    };
+    return generateAnonymousProfile();
   }
 
   /**

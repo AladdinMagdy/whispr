@@ -103,13 +103,20 @@ const AppealNotification: React.FC<AppealNotificationProps> = ({
   };
 
   return (
-    <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+    <Animated.View
+      testID="appeal-notification"
+      style={[styles.container, { opacity: fadeAnim }]}
+    >
       <View style={styles.notification}>
         <View style={styles.content}>
           <Text style={styles.icon}>⚖️</Text>
           <Text style={styles.text}>{getNotificationText()}</Text>
         </View>
-        <TouchableOpacity style={styles.button} onPress={onNavigateToAppeals}>
+        <TouchableOpacity
+          testID="view-appeals-button"
+          style={styles.button}
+          onPress={onNavigateToAppeals}
+        >
           <Text style={styles.buttonText}>View</Text>
         </TouchableOpacity>
       </View>

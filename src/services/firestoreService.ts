@@ -31,6 +31,24 @@ import {
 import { getFirestoreInstance } from "@/config/firebase";
 import { Whisper, Comment, Like, ModerationResult } from "../types";
 import { getErrorMessage } from "../utils/errorHelpers";
+import {
+  buildWhisperQueryConstraints,
+  buildWhisperSubscriptionConstraints,
+  buildCommentQueryConstraints,
+  buildLikeQueryConstraints,
+} from "../utils/firestoreQueryUtils";
+import {
+  transformQuerySnapshot,
+  calculatePaginationMetadata,
+  transformCommentData,
+  transformLikeData,
+  validateCommentData,
+  validateLikeData,
+  sanitizeCommentText,
+  sanitizeUserDisplayName,
+  type FirestoreLikeData,
+  type FirestoreCommentData,
+} from "../utils/firestoreDataTransformUtils";
 
 // ===== INTERFACES =====
 
@@ -161,84 +179,44 @@ export class FirestoreService {
     options: WhisperFeedOptions = {}
   ): Promise<PaginatedWhispersResult> {
     try {
-      const {
-        limit: limitCount = 20,
-        lastWhisper,
-        userId,
-        startAfter: startAfterDoc,
-        userAge,
-        isMinor,
-        contentPreferences,
-      } = options;
+      // Build query constraints using utility function
+      const { constraints } = buildWhisperQueryConstraints(options);
 
+      // Create and execute query
       let whispersQuery: Query<DocumentData> = collection(
         this.firestore,
         this.whispersCollection
       );
-
-      const constraints: QueryConstraint[] = [orderBy("createdAt", "desc")];
-
-      // Add user filter if specified
-      if (userId) {
-        constraints.push(where("userId", "==", userId));
-      }
-
-      // Add age-based filtering
-      if (userAge !== undefined && isMinor !== undefined) {
-        if (isMinor) {
-          // For minors, only show content marked as minor-safe
-          constraints.push(where("moderationResult.isMinorSafe", "==", true));
-        } else if (contentPreferences?.strictFiltering) {
-          // For adults with strict filtering, exclude adult content
-          constraints.push(
-            where("moderationResult.contentRank", "in", ["G", "PG", "PG13"])
-          );
-        }
-      }
-
-      // Add pagination
-      if (startAfterDoc) {
-        constraints.push(startAfter(startAfterDoc));
-      } else if (lastWhisper) {
-        constraints.push(startAfter(lastWhisper));
-      }
-
-      constraints.push(limit(limitCount));
-
       whispersQuery = query(whispersQuery, ...constraints);
       const querySnapshot = await getDocs(whispersQuery);
 
-      const whispers: Whisper[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        whispers.push({
-          id: doc.id,
-          userId: data.userId,
-          userDisplayName: data.userDisplayName,
-          userProfileColor: data.userProfileColor,
-          audioUrl: data.audioUrl,
-          duration: data.duration,
-          whisperPercentage: data.whisperPercentage,
-          averageLevel: data.averageLevel,
-          confidence: data.confidence,
-          likes: data.likes || 0,
-          replies: data.replies || 0,
-          createdAt: data.createdAt?.toDate() || new Date(),
-          transcription: data.transcription || "",
-          isTranscribed: data.isTranscribed || false,
-          moderationResult: data.moderationResult || null,
-        });
-      });
+      // Transform query snapshot to whispers using utility function
+      const whispers = transformQuerySnapshot(querySnapshot, (docId, data) => ({
+        id: docId,
+        userId: data.userId,
+        userDisplayName: data.userDisplayName,
+        userProfileColor: data.userProfileColor,
+        audioUrl: data.audioUrl,
+        duration: data.duration,
+        whisperPercentage: data.whisperPercentage,
+        averageLevel: data.averageLevel,
+        confidence: data.confidence,
+        likes: data.likes || 0,
+        replies: data.replies || 0,
+        createdAt: data.createdAt?.toDate() || new Date(),
+        transcription: data.transcription || "",
+        isTranscribed: data.isTranscribed || false,
+        moderationResult: data.moderationResult || undefined,
+      }));
 
-      // Privacy filtering would be implemented here if needed
-      // For now, return all whispers
-      const filteredWhispers = whispers;
-
-      const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
-      const hasMore = querySnapshot.docs.length === limitCount;
+      // Calculate pagination metadata using utility function
+      const { lastDoc, hasMore } = calculatePaginationMetadata(
+        querySnapshot,
+        options.limit || 20
+      );
 
       return {
-        whispers: filteredWhispers,
+        whispers,
         lastDoc,
         hasMore,
       };
@@ -258,47 +236,22 @@ export class FirestoreService {
     options: WhisperFeedOptions = {}
   ): () => void {
     try {
-      const {
-        limit: limitCount = 20,
-        userId,
-        userAge,
-        isMinor,
-        contentPreferences,
-      } = options;
+      // Build query constraints using utility function
+      const { constraints } = buildWhisperSubscriptionConstraints(options);
 
+      // Create and execute query
       let whispersQuery: Query<DocumentData> = collection(
         this.firestore,
         this.whispersCollection
       );
-
-      const constraints: QueryConstraint[] = [orderBy("createdAt", "desc")];
-
-      // Add user filter if specified
-      if (userId) {
-        constraints.push(where("userId", "==", userId));
-      }
-
-      // Add age-based filtering
-      if (userAge !== undefined && isMinor !== undefined) {
-        if (isMinor) {
-          constraints.push(where("moderationResult.isMinorSafe", "==", true));
-        } else if (contentPreferences?.strictFiltering) {
-          constraints.push(
-            where("moderationResult.contentRank", "in", ["G", "PG", "PG13"])
-          );
-        }
-      }
-
-      constraints.push(limit(limitCount));
-
       whispersQuery = query(whispersQuery, ...constraints);
 
       const unsubscribe = onSnapshot(whispersQuery, (querySnapshot) => {
-        const whispers: Whisper[] = [];
-        querySnapshot.forEach((doc) => {
-          const data = doc.data();
-          whispers.push({
-            id: doc.id,
+        // Transform query snapshot to whispers using utility function
+        const whispers = transformQuerySnapshot(
+          querySnapshot,
+          (docId, data) => ({
+            id: docId,
             userId: data.userId,
             userDisplayName: data.userDisplayName,
             userProfileColor: data.userProfileColor,
@@ -312,9 +265,9 @@ export class FirestoreService {
             createdAt: data.createdAt?.toDate() || new Date(),
             transcription: data.transcription || "",
             isTranscribed: data.isTranscribed || false,
-            moderationResult: data.moderationResult || null,
-          });
-        });
+            moderationResult: data.moderationResult || undefined,
+          })
+        );
 
         callback(whispers);
       });
@@ -337,61 +290,51 @@ export class FirestoreService {
     options: WhisperFeedOptions = {}
   ): () => void {
     try {
-      const { userId, userAge, isMinor, contentPreferences } = options;
+      // Build query constraints using utility function
+      const { constraints } = buildWhisperSubscriptionConstraints({
+        ...options,
+        sinceTimestamp,
+        limit: 1,
+      });
 
+      // Create and execute query
       let whispersQuery: Query<DocumentData> = collection(
         this.firestore,
         this.whispersCollection
       );
-
-      const constraints: QueryConstraint[] = [orderBy("createdAt", "desc")];
-
-      // Add timestamp filter if provided
-      if (sinceTimestamp) {
-        constraints.push(where("createdAt", ">", sinceTimestamp));
-      }
-
-      // Add user filter if specified
-      if (userId) {
-        constraints.push(where("userId", "==", userId));
-      }
-
-      // Add age-based filtering
-      if (userAge !== undefined && isMinor !== undefined) {
-        if (isMinor) {
-          constraints.push(where("moderationResult.isMinorSafe", "==", true));
-        } else if (contentPreferences?.strictFiltering) {
-          constraints.push(
-            where("moderationResult.contentRank", "in", ["G", "PG", "PG13"])
-          );
-        }
-      }
-
-      constraints.push(limit(1));
-
       whispersQuery = query(whispersQuery, ...constraints);
 
       const unsubscribe = onSnapshot(whispersQuery, (querySnapshot) => {
         querySnapshot.docChanges().forEach((change) => {
           if (change.type === "added") {
-            const data = change.doc.data();
-            const whisper: Whisper = {
-              id: change.doc.id,
-              userId: data.userId,
-              userDisplayName: data.userDisplayName,
-              userProfileColor: data.userProfileColor,
-              audioUrl: data.audioUrl,
-              duration: data.duration,
-              whisperPercentage: data.whisperPercentage,
-              averageLevel: data.averageLevel,
-              confidence: data.confidence,
-              likes: data.likes || 0,
-              replies: data.replies || 0,
-              createdAt: data.createdAt?.toDate() || new Date(),
-              transcription: data.transcription || "",
-              isTranscribed: data.isTranscribed || false,
-              moderationResult: data.moderationResult || null,
-            };
+            // Transform document to whisper using utility function
+            const whisper = transformQuerySnapshot(
+              {
+                forEach: (
+                  callback: (doc: {
+                    id: string;
+                    data: () => DocumentData;
+                  }) => void
+                ) => callback(change.doc),
+              },
+              (docId, data) => ({
+                id: docId,
+                userId: data.userId,
+                userDisplayName: data.userDisplayName,
+                userProfileColor: data.userProfileColor,
+                audioUrl: data.audioUrl,
+                duration: data.duration,
+                whisperPercentage: data.whisperPercentage,
+                averageLevel: data.averageLevel,
+                confidence: data.confidence,
+                likes: data.likes || 0,
+                replies: data.replies || 0,
+                createdAt: data.createdAt?.toDate() || new Date(),
+                transcription: data.transcription || "",
+                isTranscribed: data.isTranscribed || false,
+                moderationResult: data.moderationResult || undefined,
+              })
+            )[0];
 
             callback(whisper);
           }
@@ -434,16 +377,30 @@ export class FirestoreService {
         );
         console.log("👎 Whisper unliked successfully");
       } else {
-        // Like: create the like document and increment count
+        // Sanitize input data
+        const sanitizedDisplayName = userDisplayName
+          ? sanitizeUserDisplayName(userDisplayName)
+          : "Anonymous";
+
+        // Validate like data using utility function
         const likeData = {
           whisperId,
           userId,
-          userDisplayName: userDisplayName || "Anonymous",
+          userDisplayName: sanitizedDisplayName,
           userProfileColor: userProfileColor || "#007AFF",
+        };
+
+        const validation = validateLikeData(likeData);
+        if (!validation.isValid) {
+          throw new Error(`Invalid like data: ${validation.errors.join(", ")}`);
+        }
+
+        const finalLikeData = {
+          ...likeData,
           createdAt: serverTimestamp(),
         };
 
-        await setDoc(likeDocRef, likeData);
+        await setDoc(likeDocRef, finalLikeData);
         await updateDoc(
           doc(this.firestore, this.whispersCollection, whisperId),
           {
@@ -488,43 +445,32 @@ export class FirestoreService {
     lastDoc: QueryDocumentSnapshot<DocumentData> | null;
   }> {
     try {
+      // Build query constraints using utility function
+      const { constraints } = buildLikeQueryConstraints({
+        contentId: whisperId,
+        contentType: "whisper",
+        limit: limitCount,
+        lastDoc,
+      });
+
+      // Create and execute query
       const likesRef = collection(this.firestore, "likes");
-      const constraints: QueryConstraint[] = [
-        where("whisperId", "==", whisperId),
-        orderBy("createdAt", "desc"),
-        limit(limitCount),
-      ];
-
-      if (lastDoc) {
-        constraints.push(startAfter(lastDoc));
-      }
-
       const q = query(likesRef, ...constraints);
       const querySnapshot = await getDocs(q);
 
-      const likes: Like[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        likes.push({
-          id: doc.id,
-          whisperId: data.whisperId,
-          userId: data.userId,
-          userDisplayName: data.userDisplayName,
-          userProfileColor: data.userProfileColor,
-          createdAt: data.createdAt?.toDate() || new Date(),
-        });
-      });
+      // Transform query snapshot to likes using utility function
+      const likes = transformQuerySnapshot(querySnapshot, (docId, data) =>
+        transformLikeData(docId, data as FirestoreLikeData)
+      );
 
-      // Privacy filtering would be implemented here if needed
-      // For now, return all likes
-      const filteredLikes = likes;
-
-      const lastVisibleDoc =
-        querySnapshot.docs[querySnapshot.docs.length - 1] || null;
-      const hasMore = querySnapshot.docs.length === limitCount;
+      // Calculate pagination metadata using utility function
+      const { lastDoc: lastVisibleDoc, hasMore } = calculatePaginationMetadata(
+        querySnapshot,
+        limitCount
+      );
 
       return {
-        likes: filteredLikes,
+        likes,
         hasMore,
         lastDoc: lastVisibleDoc,
       };
@@ -574,12 +520,28 @@ export class FirestoreService {
     text: string
   ): Promise<string> {
     try {
+      // Sanitize input data
+      const sanitizedText = sanitizeCommentText(text);
+      const sanitizedDisplayName = sanitizeUserDisplayName(userDisplayName);
+
+      // Validate comment data using utility function
       const commentData = {
         whisperId,
         userId,
-        userDisplayName,
+        userDisplayName: sanitizedDisplayName,
         userProfileColor,
-        text,
+        text: sanitizedText,
+      };
+
+      const validation = validateCommentData(commentData);
+      if (!validation.isValid) {
+        throw new Error(
+          `Invalid comment data: ${validation.errors.join(", ")}`
+        );
+      }
+
+      const finalCommentData = {
+        ...commentData,
         likes: 0,
         createdAt: serverTimestamp(),
         isEdited: false,
@@ -587,7 +549,7 @@ export class FirestoreService {
 
       const docRef = await addDoc(
         collection(this.firestore, "comments"),
-        commentData
+        finalCommentData
       );
 
       // Increment reply count on the whisper
@@ -652,47 +614,31 @@ export class FirestoreService {
     lastDoc: QueryDocumentSnapshot<DocumentData> | null;
   }> {
     try {
+      // Build query constraints using utility function
+      const { constraints } = buildCommentQueryConstraints({
+        whisperId,
+        limit: limitCount,
+        lastDoc,
+      });
+
+      // Create and execute query
       const commentsRef = collection(this.firestore, "comments");
-      const constraints: QueryConstraint[] = [
-        where("whisperId", "==", whisperId),
-        orderBy("createdAt", "desc"),
-        limit(limitCount),
-      ];
-
-      if (lastDoc) {
-        constraints.push(startAfter(lastDoc));
-      }
-
       const q = query(commentsRef, ...constraints);
       const querySnapshot = await getDocs(q);
 
-      const comments: Comment[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        comments.push({
-          id: doc.id,
-          whisperId: data.whisperId,
-          userId: data.userId,
-          userDisplayName: data.userDisplayName,
-          userProfileColor: data.userProfileColor,
-          text: data.text,
-          likes: data.likes || 0,
-          createdAt: data.createdAt?.toDate() || new Date(),
-          isEdited: data.isEdited || false,
-          editedAt: data.editedAt?.toDate(),
-        });
-      });
+      // Transform query snapshot to comments using utility function
+      const comments = transformQuerySnapshot(querySnapshot, (docId, data) =>
+        transformCommentData(docId, data as FirestoreCommentData)
+      );
 
-      // Privacy filtering would be implemented here if needed
-      // For now, return all comments
-      const filteredComments = comments;
-
-      const lastVisibleDoc =
-        querySnapshot.docs[querySnapshot.docs.length - 1] || null;
-      const hasMore = querySnapshot.docs.length === limitCount;
+      // Calculate pagination metadata using utility function
+      const { lastDoc: lastVisibleDoc, hasMore } = calculatePaginationMetadata(
+        querySnapshot,
+        limitCount
+      );
 
       return {
-        comments: filteredComments,
+        comments,
         hasMore,
         lastDoc: lastVisibleDoc,
       };

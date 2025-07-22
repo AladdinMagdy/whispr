@@ -5,6 +5,8 @@ import { TranscriptionService } from "./transcriptionService";
 import { AudioFormatTest } from "../utils/audioFormatTest";
 import { Whisper, AudioRecording, ModerationResult } from "@/types";
 import { FEATURE_FLAGS } from "@/constants";
+import { createWhisperUploadData } from "../utils/whisperCreationUtils";
+import { buildWhisperQueryConstraints } from "../utils/whisperQueryUtils";
 import {
   QueryDocumentSnapshot,
   DocumentData,
@@ -12,10 +14,7 @@ import {
   addDoc,
   serverTimestamp,
   query,
-  orderBy,
-  limit,
   where,
-  startAfter,
   getDocs,
   doc,
   getDoc,
@@ -133,14 +132,12 @@ export class WhisperService {
       // Create whisper document in Firestore using the new service
       const whisperService = getWhisperService();
 
-      const whisperUploadData: WhisperUploadData = {
+      // Use utility function to create whisper upload data
+      const whisperUploadData = createWhisperUploadData(
+        audioRecording,
         audioUrl,
-        duration: audioRecording.duration,
-        whisperPercentage: audioRecording.isWhisper ? 100 : 0, // Convert boolean to percentage
-        averageLevel: audioRecording.volume,
-        confidence: audioRecording.isWhisper ? 0.9 : 0.1, // Simple confidence based on whisper status
-        transcription,
-      };
+        transcription
+      );
 
       const whisperId = await whisperService.createWhisper(
         userId,
@@ -282,17 +279,12 @@ export class WhisperService {
     uploadData: WhisperUploadData
   ): Promise<string> {
     try {
+      // Use utility function to create whisper data
       const whisperData = {
+        ...uploadData,
         userId,
-        userDisplayName,
+        userDisplayName: userDisplayName.trim(), // Ensure trimmed display name
         userProfileColor,
-        audioUrl: uploadData.audioUrl,
-        duration: uploadData.duration,
-        whisperPercentage: uploadData.whisperPercentage,
-        averageLevel: uploadData.averageLevel,
-        confidence: uploadData.confidence,
-        transcription: uploadData.transcription,
-        moderationResult: uploadData.moderationResult,
         likes: 0,
         replies: 0,
         createdAt: serverTimestamp(),
@@ -319,54 +311,13 @@ export class WhisperService {
     options: WhisperFeedOptions = {}
   ): Promise<PaginatedWhispersResult> {
     try {
-      const {
-        limit: limitCount = 20,
-        startAfter: startAfterDoc,
-        userId,
-        isMinor,
-        contentPreferences,
-      } = options;
-
-      let q = query(collection(this.firestore, this.whispersCollection));
-
-      // Apply filters
-      const constraints: Array<
-        | ReturnType<typeof where>
-        | ReturnType<typeof orderBy>
-        | ReturnType<typeof limit>
-        | ReturnType<typeof startAfter>
-      > = [];
-
-      // User-specific feed
-      if (userId) {
-        constraints.push(where("userId", "==", userId));
-      }
-
-      // Age-based filtering
-      if (isMinor !== undefined) {
-        constraints.push(where("isMinorSafe", "==", true));
-      }
-
-      // Content preferences
-      if (contentPreferences?.strictFiltering) {
-        constraints.push(where("moderationResult.status", "==", "approved"));
-      }
-
-      // Order by creation date (newest first)
-      constraints.push(orderBy("createdAt", "desc"));
-
-      // Apply limit
-      constraints.push(limit(limitCount));
-
-      // Apply pagination
-      if (startAfterDoc) {
-        constraints.push(startAfter(startAfterDoc));
-      }
+      // Use utility function to build query constraints
+      const queryConstraints = buildWhisperQueryConstraints(options);
 
       // Build and execute query
-      q = query(
+      const q = query(
         collection(this.firestore, this.whispersCollection),
-        ...constraints
+        ...queryConstraints.constraints
       );
       const querySnapshot = await getDocs(q);
 
@@ -376,7 +327,7 @@ export class WhisperService {
       });
 
       const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
-      const hasMore = querySnapshot.docs.length === limitCount;
+      const hasMore = querySnapshot.docs.length === (options.limit || 20);
 
       return {
         whispers,
@@ -506,30 +457,12 @@ export class WhisperService {
     options: WhisperFeedOptions = {}
   ): () => void {
     try {
-      const { limit: limitCount = 20, userId, isMinor } = options;
+      // Use utility function to build query constraints
+      const queryConstraints = buildWhisperQueryConstraints(options);
 
-      let q = query(collection(this.firestore, this.whispersCollection));
-
-      const constraints: Array<
-        | ReturnType<typeof where>
-        | ReturnType<typeof orderBy>
-        | ReturnType<typeof limit>
-      > = [];
-
-      if (userId) {
-        constraints.push(where("userId", "==", userId));
-      }
-
-      if (isMinor !== undefined) {
-        constraints.push(where("isMinorSafe", "==", true));
-      }
-
-      constraints.push(orderBy("createdAt", "desc"));
-      constraints.push(limit(limitCount));
-
-      q = query(
+      const q = query(
         collection(this.firestore, this.whispersCollection),
-        ...constraints
+        ...queryConstraints.constraints
       );
 
       return onSnapshot(q, (querySnapshot) => {
@@ -556,29 +489,16 @@ export class WhisperService {
     options: WhisperFeedOptions = {}
   ): () => void {
     try {
-      const { userId, isMinor } = options;
+      // Use utility function to build query constraints
+      const queryConstraints = buildWhisperQueryConstraints(options);
 
-      let q = query(collection(this.firestore, this.whispersCollection));
-
-      const constraints: Array<
-        ReturnType<typeof where> | ReturnType<typeof orderBy>
-      > = [];
-
-      if (userId) {
-        constraints.push(where("userId", "==", userId));
-      }
-
-      if (isMinor !== undefined) {
-        constraints.push(where("isMinorSafe", "==", true));
-      }
-
+      // Add timestamp filter for new whispers
+      const constraints = [...queryConstraints.constraints];
       if (sinceTimestamp) {
         constraints.push(where("createdAt", ">", sinceTimestamp));
       }
 
-      constraints.push(orderBy("createdAt", "desc"));
-
-      q = query(
+      const q = query(
         collection(this.firestore, this.whispersCollection),
         ...constraints
       );
