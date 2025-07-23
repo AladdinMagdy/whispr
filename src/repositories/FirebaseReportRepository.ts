@@ -50,7 +50,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error saving report:", error);
       throw new Error(
         `Failed to save report: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -70,7 +72,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting report by ID:", error);
       throw new Error(
         `Failed to get report: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -89,7 +93,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting all reports:", error);
       throw new Error(
         `Failed to get reports: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -120,7 +126,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error updating report:", error);
       throw new Error(
         `Failed to update report: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -134,7 +142,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error deleting report:", error);
       throw new Error(
         `Failed to delete report: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -154,7 +164,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting reports by whisper:", error);
       throw new Error(
         `Failed to get reports by whisper: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -174,7 +186,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting reports by reporter:", error);
       throw new Error(
         `Failed to get reports by reporter: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -194,7 +208,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting reports by status:", error);
       throw new Error(
         `Failed to get reports by status: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -214,7 +230,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting reports by category:", error);
       throw new Error(
         `Failed to get reports by category: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -234,7 +252,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting reports by priority:", error);
       throw new Error(
         `Failed to get reports by priority: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -255,7 +275,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting reports by date range:", error);
       throw new Error(
         `Failed to get reports by date range: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -296,7 +318,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting reports with filters:", error);
       throw new Error(
         `Failed to get reports with filters: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -373,7 +397,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting report stats:", error);
       throw new Error(
         `Failed to get report stats: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -424,7 +450,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting whisper report stats:", error);
       throw new Error(
         `Failed to get whisper report stats: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -447,7 +475,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error saving comment report:", error);
       throw new Error(
         `Failed to save comment report: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -467,7 +497,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting comment report by ID:", error);
       throw new Error(
         `Failed to get comment report: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -510,7 +542,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting comment reports with filters:", error);
       throw new Error(
         `Failed to get comment reports with filters: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -537,7 +571,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error updating comment report:", error);
       throw new Error(
         `Failed to update comment report: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -565,7 +601,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error updating comment report status:", error);
       throw new Error(
         `Failed to update comment report status: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -587,7 +625,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error checking if user reported comment:", error);
       throw new Error(
         `Failed to check if user reported comment: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -638,7 +678,9 @@ export class FirebaseReportRepository implements ReportRepository {
       console.error("Error getting comment report stats:", error);
       throw new Error(
         `Failed to get comment report stats: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -661,24 +703,32 @@ export class FirebaseReportRepository implements ReportRepository {
       reason: data.reason,
       evidence: data.evidence,
       createdAt:
-        data.createdAt instanceof Timestamp
-          ? data.createdAt.toDate()
+        data.createdAt &&
+        typeof data.createdAt === "object" &&
+        "toDate" in data.createdAt
+          ? (data.createdAt as { toDate: () => Date }).toDate()
           : data.createdAt,
       updatedAt:
-        data.updatedAt instanceof Timestamp
-          ? data.updatedAt.toDate()
+        data.updatedAt &&
+        typeof data.updatedAt === "object" &&
+        "toDate" in data.updatedAt
+          ? (data.updatedAt as { toDate: () => Date }).toDate()
           : data.updatedAt,
       reviewedAt:
-        data.reviewedAt instanceof Timestamp
-          ? data.reviewedAt.toDate()
+        data.reviewedAt &&
+        typeof data.reviewedAt === "object" &&
+        "toDate" in data.reviewedAt
+          ? (data.reviewedAt as { toDate: () => Date }).toDate()
           : data.reviewedAt,
       reviewedBy: data.reviewedBy,
       resolution: data.resolution
         ? {
             ...data.resolution,
             timestamp:
-              data.resolution.timestamp instanceof Timestamp
-                ? data.resolution.timestamp.toDate()
+              data.resolution.timestamp &&
+              typeof data.resolution.timestamp === "object" &&
+              "toDate" in data.resolution.timestamp
+                ? (data.resolution.timestamp as { toDate: () => Date }).toDate()
                 : data.resolution.timestamp,
           }
         : undefined,
@@ -703,24 +753,32 @@ export class FirebaseReportRepository implements ReportRepository {
       reason: data.reason,
       evidence: data.evidence,
       createdAt:
-        data.createdAt instanceof Timestamp
-          ? data.createdAt.toDate()
+        data.createdAt &&
+        typeof data.createdAt === "object" &&
+        "toDate" in data.createdAt
+          ? (data.createdAt as { toDate: () => Date }).toDate()
           : data.createdAt,
       updatedAt:
-        data.updatedAt instanceof Timestamp
-          ? data.updatedAt.toDate()
+        data.updatedAt &&
+        typeof data.updatedAt === "object" &&
+        "toDate" in data.updatedAt
+          ? (data.updatedAt as { toDate: () => Date }).toDate()
           : data.updatedAt,
       reviewedAt:
-        data.reviewedAt instanceof Timestamp
-          ? data.reviewedAt.toDate()
+        data.reviewedAt &&
+        typeof data.reviewedAt === "object" &&
+        "toDate" in data.reviewedAt
+          ? (data.reviewedAt as { toDate: () => Date }).toDate()
           : data.reviewedAt,
       reviewedBy: data.reviewedBy,
       resolution: data.resolution
         ? {
             ...data.resolution,
             timestamp:
-              data.resolution.timestamp instanceof Timestamp
-                ? data.resolution.timestamp.toDate()
+              data.resolution.timestamp &&
+              typeof data.resolution.timestamp === "object" &&
+              "toDate" in data.resolution.timestamp
+                ? (data.resolution.timestamp as { toDate: () => Date }).toDate()
                 : data.resolution.timestamp,
           }
         : undefined,

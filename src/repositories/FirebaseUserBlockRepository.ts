@@ -177,7 +177,7 @@ export class FirebaseUserBlockRepository implements UserBlockRepository {
       );
       const querySnapshot = await getDocs(q);
 
-      if (querySnapshot.empty) {
+      if (querySnapshot.empty || querySnapshot.docs.length === 0) {
         return null;
       }
 

@@ -46,7 +46,9 @@ export class FirebaseReputationRepository implements ReputationRepository {
       console.error("Error saving user reputation:", error);
       throw new Error(
         `Failed to save user reputation: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -66,7 +68,9 @@ export class FirebaseReputationRepository implements ReputationRepository {
       console.error("Error getting user reputation by ID:", error);
       throw new Error(
         `Failed to get user reputation: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -87,7 +91,9 @@ export class FirebaseReputationRepository implements ReputationRepository {
       console.error("Error getting all user reputations:", error);
       throw new Error(
         `Failed to get user reputations: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -123,7 +129,9 @@ export class FirebaseReputationRepository implements ReputationRepository {
       console.error("Error updating user reputation:", error);
       throw new Error(
         `Failed to update user reputation: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -137,7 +145,9 @@ export class FirebaseReputationRepository implements ReputationRepository {
       console.error("Error deleting user reputation:", error);
       throw new Error(
         `Failed to delete user reputation: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -159,7 +169,9 @@ export class FirebaseReputationRepository implements ReputationRepository {
       console.error("Error getting user reputations by level:", error);
       throw new Error(
         `Failed to get user reputations by level: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -185,7 +197,9 @@ export class FirebaseReputationRepository implements ReputationRepository {
       console.error("Error getting user reputations by score range:", error);
       throw new Error(
         `Failed to get user reputations by score range: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -214,7 +228,9 @@ export class FirebaseReputationRepository implements ReputationRepository {
       console.error("Error getting users with recent violations:", error);
       throw new Error(
         `Failed to get users with recent violations: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -236,7 +252,9 @@ export class FirebaseReputationRepository implements ReputationRepository {
       console.error("Error getting users by violation count:", error);
       throw new Error(
         `Failed to get users by violation count: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -252,32 +270,45 @@ export class FirebaseReputationRepository implements ReputationRepository {
     averageScore: number;
   }> {
     try {
-      const allReputations = await this.getAll();
+      const reputations = await this.getAll();
+      const totalUsers = reputations.length;
+      const averageScore =
+        totalUsers > 0
+          ? reputations.reduce((sum, rep) => sum + rep.score, 0) / totalUsers
+          : 0;
 
-      const stats = {
-        totalUsers: allReputations.length,
-        trustedUsers: allReputations.filter((r) => r.level === "trusted")
-          .length,
-        verifiedUsers: allReputations.filter((r) => r.level === "verified")
-          .length,
-        standardUsers: allReputations.filter((r) => r.level === "standard")
-          .length,
-        flaggedUsers: allReputations.filter((r) => r.level === "flagged")
-          .length,
-        bannedUsers: allReputations.filter((r) => r.level === "banned").length,
-        averageScore:
-          allReputations.length > 0
-            ? allReputations.reduce((sum, r) => sum + r.score, 0) /
-              allReputations.length
-            : 0,
+      const trustedUsers = reputations.filter(
+        (r) => r.level === "trusted"
+      ).length;
+      const verifiedUsers = reputations.filter(
+        (r) => r.level === "verified"
+      ).length;
+      const standardUsers = reputations.filter(
+        (r) => r.level === "standard"
+      ).length;
+      const flaggedUsers = reputations.filter(
+        (r) => r.level === "flagged"
+      ).length;
+      const bannedUsers = reputations.filter(
+        (r) => r.level === "banned"
+      ).length;
+
+      return {
+        totalUsers,
+        trustedUsers,
+        verifiedUsers,
+        standardUsers,
+        flaggedUsers,
+        bannedUsers,
+        averageScore,
       };
-
-      return stats;
     } catch (error) {
       console.error("Error getting reputation stats:", error);
       throw new Error(
         `Failed to get reputation stats: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -302,7 +333,9 @@ export class FirebaseReputationRepository implements ReputationRepository {
       console.error("Error saving user violation:", error);
       throw new Error(
         `Failed to save user violation: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -331,7 +364,9 @@ export class FirebaseReputationRepository implements ReputationRepository {
       console.error("Error getting user violations:", error);
       throw new Error(
         `Failed to get user violations: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -358,7 +393,9 @@ export class FirebaseReputationRepository implements ReputationRepository {
       console.error("Error getting deleted whisper count:", error);
       throw new Error(
         `Failed to get deleted whisper count: ${
-          error instanceof Error ? error.message : "Unknown error"
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
         }`
       );
     }
@@ -367,36 +404,55 @@ export class FirebaseReputationRepository implements ReputationRepository {
   private mapFirestoreDocToReputation(
     doc: QueryDocumentSnapshot<DocumentData>
   ): UserReputation {
-    const data = doc.data();
-    return {
-      userId: doc.id,
-      score: data.score,
-      level: data.level,
-      totalWhispers: data.totalWhispers,
-      approvedWhispers: data.approvedWhispers,
-      flaggedWhispers: data.flaggedWhispers,
-      rejectedWhispers: data.rejectedWhispers,
-      lastViolation:
-        data.lastViolation instanceof Timestamp
-          ? data.lastViolation.toDate()
-          : data.lastViolation,
-      violationHistory:
-        data.violationHistory?.map((violation: Record<string, unknown>) => ({
-          ...violation,
-          timestamp:
-            violation.timestamp instanceof Timestamp
-              ? violation.timestamp.toDate()
-              : violation.timestamp,
-        })) || [],
-      createdAt:
-        data.createdAt instanceof Timestamp
-          ? data.createdAt.toDate()
-          : data.createdAt,
-      updatedAt:
-        data.updatedAt instanceof Timestamp
-          ? data.updatedAt.toDate()
-          : data.updatedAt,
-    };
+    try {
+      const data = doc.data();
+      return {
+        userId: doc.id,
+        score: data.score,
+        level: data.level,
+        totalWhispers: data.totalWhispers,
+        approvedWhispers: data.approvedWhispers,
+        flaggedWhispers: data.flaggedWhispers,
+        rejectedWhispers: data.rejectedWhispers,
+        lastViolation:
+          data.lastViolation &&
+          typeof data.lastViolation === "object" &&
+          "toDate" in data.lastViolation
+            ? (data.lastViolation as { toDate: () => Date }).toDate()
+            : data.lastViolation,
+        violationHistory:
+          data.violationHistory?.map((violation: Record<string, unknown>) => ({
+            ...violation,
+            timestamp:
+              violation.timestamp &&
+              typeof violation.timestamp === "object" &&
+              "toDate" in violation.timestamp
+                ? (violation.timestamp as { toDate: () => Date }).toDate()
+                : violation.timestamp,
+          })) || [],
+        createdAt:
+          data.createdAt &&
+          typeof data.createdAt === "object" &&
+          "toDate" in data.createdAt
+            ? (data.createdAt as { toDate: () => Date }).toDate()
+            : data.createdAt,
+        updatedAt:
+          data.updatedAt &&
+          typeof data.updatedAt === "object" &&
+          "toDate" in data.updatedAt
+            ? (data.updatedAt as { toDate: () => Date }).toDate()
+            : data.updatedAt,
+      };
+    } catch (error) {
+      console.error("Error mapping Firestore document to reputation:", error);
+      throw new Error(
+        `Failed to map Firestore document to reputation: ${
+          error && typeof error === "object" && "message" in error
+            ? error.message
+            : "Unknown error"
+        }`
+      );
+    }
   }
 
   private mapFirestoreDocToViolation(
@@ -412,12 +468,16 @@ export class FirebaseReputationRepository implements ReputationRepository {
       reportCount: data.reportCount,
       moderatorId: data.moderatorId,
       createdAt:
-        data.createdAt instanceof Timestamp
-          ? data.createdAt.toDate()
+        data.createdAt &&
+        typeof data.createdAt === "object" &&
+        "toDate" in data.createdAt
+          ? (data.createdAt as { toDate: () => Date }).toDate()
           : data.createdAt,
       expiresAt:
-        data.expiresAt instanceof Timestamp
-          ? data.expiresAt.toDate()
+        data.expiresAt &&
+        typeof data.expiresAt === "object" &&
+        "toDate" in data.expiresAt
+          ? (data.expiresAt as { toDate: () => Date }).toDate()
           : data.expiresAt,
     };
   }

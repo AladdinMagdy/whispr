@@ -128,9 +128,15 @@ describe("InteractionService", () => {
       const promise1 = interactionService.toggleLike(whisperId);
 
       // Try to like again immediately
-      const promise2 = interactionService.toggleLike(whisperId);
+      let error: unknown;
+      try {
+        await interactionService.toggleLike(whisperId);
+      } catch (e) {
+        error = e;
+      }
 
-      await expect(promise2).rejects.toThrow(
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
         "Like operation already in progress"
       );
       await promise1; // Wait for first operation to complete
@@ -139,9 +145,17 @@ describe("InteractionService", () => {
     it("should throw error if user not authenticated", async () => {
       (useAuthStore.getState as jest.Mock).mockReturnValue({ user: null });
 
-      await expect(
-        interactionService.toggleLike("test-whisper")
-      ).rejects.toThrow("User must be authenticated to like whispers");
+      let error: unknown;
+      try {
+        await interactionService.toggleLike("test-whisper");
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
+        "User must be authenticated to like whispers"
+      );
     });
   });
 
@@ -286,9 +300,15 @@ describe("InteractionService", () => {
       const promise1 = interactionService.addComment(whisperId, "Comment 1");
 
       // Try to comment again immediately
-      const promise2 = interactionService.addComment(whisperId, "Comment 2");
+      let error: unknown;
+      try {
+        await interactionService.addComment(whisperId, "Comment 2");
+      } catch (e) {
+        error = e;
+      }
 
-      await expect(promise2).rejects.toThrow(
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
         "Comment operation already in progress"
       );
       await promise1; // Wait for first operation to complete
@@ -297,9 +317,17 @@ describe("InteractionService", () => {
     it("should throw error if user not authenticated", async () => {
       (useAuthStore.getState as jest.Mock).mockReturnValue({ user: null });
 
-      await expect(
-        interactionService.addComment("test-whisper", "test")
-      ).rejects.toThrow("User must be authenticated to comment");
+      let error: unknown;
+      try {
+        await interactionService.addComment("test-whisper", "test");
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
+        "User must be authenticated to comment"
+      );
     });
   });
 
@@ -331,9 +359,15 @@ describe("InteractionService", () => {
       const promise1 = interactionService.toggleCommentLike(commentId);
 
       // Try to like again immediately
-      const promise2 = interactionService.toggleCommentLike(commentId);
+      let error: unknown;
+      try {
+        await interactionService.toggleCommentLike(commentId);
+      } catch (e) {
+        error = e;
+      }
 
-      await expect(promise2).rejects.toThrow(
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
         "Comment like operation already in progress"
       );
       await promise1; // Wait for first operation to complete
@@ -342,9 +376,17 @@ describe("InteractionService", () => {
     it("should throw error if user not authenticated", async () => {
       (useAuthStore.getState as jest.Mock).mockReturnValue({ user: null });
 
-      await expect(
-        interactionService.toggleCommentLike("test-comment")
-      ).rejects.toThrow("User must be authenticated to like comments");
+      let error: unknown;
+      try {
+        await interactionService.toggleCommentLike("test-comment");
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
+        "User must be authenticated to like comments"
+      );
     });
   });
 
@@ -375,17 +417,31 @@ describe("InteractionService", () => {
         new Error("Server error")
       );
 
-      await expect(
-        interactionService.deleteComment(commentId, whisperId)
-      ).rejects.toThrow("Server error");
+      let error: unknown;
+      try {
+        await interactionService.deleteComment(commentId, whisperId);
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("Server error");
     });
 
     it("should throw error if user not authenticated", async () => {
       (useAuthStore.getState as jest.Mock).mockReturnValue({ user: null });
 
-      await expect(
-        interactionService.deleteComment("comment-id", "whisper-id")
-      ).rejects.toThrow("User must be authenticated to delete comments");
+      let error: unknown;
+      try {
+        await interactionService.deleteComment("comment-id", "whisper-id");
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
+        "User must be authenticated to delete comments"
+      );
     });
   });
 
@@ -840,9 +896,15 @@ describe("InteractionService", () => {
         new Error("Server error")
       );
 
-      await expect(
-        interactionService.getComment("test-comment")
-      ).rejects.toThrow("Server error");
+      let error: unknown;
+      try {
+        await interactionService.getComment("test-comment");
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("Server error");
     });
 
     it("should return null if comment not found", async () => {
@@ -915,9 +977,17 @@ describe("InteractionService", () => {
     it("should throw error if user not authenticated", async () => {
       (useAuthStore.getState as jest.Mock).mockReturnValue({ user: null });
 
-      await expect(
-        interactionService.getWhisperLikesWithPrivacy("test-whisper")
-      ).rejects.toThrow("User must be authenticated to view likes");
+      let error: unknown;
+      try {
+        await interactionService.getWhisperLikesWithPrivacy("test-whisper");
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
+        "User must be authenticated to view likes"
+      );
     });
 
     it("should handle server errors", async () => {
@@ -925,9 +995,15 @@ describe("InteractionService", () => {
         new Error("Server error")
       );
 
-      await expect(
-        interactionService.getWhisperLikesWithPrivacy("test-whisper")
-      ).rejects.toThrow("Server error");
+      let error: unknown;
+      try {
+        await interactionService.getWhisperLikesWithPrivacy("test-whisper");
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("Server error");
     });
   });
 
@@ -1047,9 +1123,15 @@ describe("InteractionService", () => {
 
       // The clearWhisperCache method doesn't handle AsyncStorage errors gracefully
       // so it should throw the error
-      await expect(
-        interactionService.clearWhisperCache(whisperId)
-      ).rejects.toThrow("Storage error");
+      let error: unknown;
+      try {
+        await interactionService.clearWhisperCache(whisperId);
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("Storage error");
     });
 
     it("should handle debounce server update errors", async () => {
@@ -1064,9 +1146,15 @@ describe("InteractionService", () => {
       mockFirestoreService.getWhisper.mockResolvedValue({ likes: 1 });
 
       // The service should throw the error since it's not debounced for accuracy
-      await expect(interactionService.toggleLike(whisperId)).rejects.toThrow(
-        "Server error"
-      );
+      let error: unknown;
+      try {
+        await interactionService.toggleLike(whisperId);
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("Server error");
     });
 
     it("should handle server count mismatch in toggleLike", async () => {
@@ -1101,9 +1189,15 @@ describe("InteractionService", () => {
         new Error("Server error")
       );
 
-      await expect(interactionService.toggleLike(whisperId)).rejects.toThrow(
-        "Server error"
-      );
+      let error: unknown;
+      try {
+        await interactionService.toggleLike(whisperId);
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("Server error");
     });
 
     it("should revert optimistic update on server failure in toggleCommentLike", async () => {
@@ -1114,9 +1208,15 @@ describe("InteractionService", () => {
         new Error("Server error")
       );
 
-      await expect(
-        interactionService.toggleCommentLike(commentId)
-      ).rejects.toThrow("Server error");
+      let error: unknown;
+      try {
+        await interactionService.toggleCommentLike(commentId);
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("Server error");
     });
   });
 
