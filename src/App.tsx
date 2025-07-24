@@ -4,14 +4,21 @@ import { createStackNavigator } from "@react-navigation/stack";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { PaperProvider } from "react-native-paper";
-import { View, Text, ActivityIndicator } from "react-native";
+import {
+  View,
+  Text,
+  ActivityIndicator,
+  AppState,
+  TouchableOpacity,
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-// Import screens
 import RecordScreen from "./screens/RecordScreen";
 import SuspensionScreen from "./screens/SuspensionScreen";
 import AppealScreen from "./screens/AppealScreen";
 
-// Import providers
+import MainTabs from "./navigation/MainTabs";
+import OnboardingNavigator from "./navigation/OnboardingNavigator";
 import { AuthProvider } from "./providers/AuthProvider";
 
 // Import Firebase initialization
@@ -19,17 +26,73 @@ import { initializeFirebase } from "./config/firebase";
 import { setupAuthServiceCallbacks } from "./store/useAuthStore";
 import { getAudioCacheService } from "./services/audioCacheService";
 import { pauseAllAudioSlides } from "./components/AudioSlide";
-import { AppState } from "react-native";
-
-// Import MainTabs properly
-import MainTabs from "./navigation/MainTabs";
 import { useSuspensionCheck } from "./hooks/useSuspensionCheck";
+import AppBackground from "./components/AppBackground";
 
 const Stack = createStackNavigator();
 
-// Separate component that handles suspension check inside AuthProvider
 function AppContent() {
   const { isSuspended, loading: suspensionLoading } = useSuspensionCheck();
+  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState<
+    boolean | null
+  >(null);
+
+  useEffect(() => {
+    const checkOnboardingStatus = async () => {
+      try {
+        const onboardingComplete = await AsyncStorage.getItem(
+          "onboardingComplete"
+        );
+        console.log(
+          "🔍 Onboarding status from AsyncStorage:",
+          onboardingComplete
+        );
+        setHasCompletedOnboarding(onboardingComplete === "true");
+      } catch (error) {
+        console.error("Error checking onboarding status:", error);
+        setHasCompletedOnboarding(false);
+      }
+    };
+    checkOnboardingStatus();
+  }, []);
+
+  const handleOnboardingComplete = async () => {
+    try {
+      console.log("✅ Onboarding completed, saving to AsyncStorage");
+      await AsyncStorage.setItem("onboardingComplete", "true");
+      setHasCompletedOnboarding(true);
+    } catch (error) {
+      console.error("Error saving onboarding status:", error);
+      setHasCompletedOnboarding(true);
+    }
+  };
+
+  const resetOnboarding = async () => {
+    try {
+      console.log("🔄 Resetting onboarding status");
+      await AsyncStorage.removeItem("onboardingComplete");
+      setHasCompletedOnboarding(false);
+    } catch (error) {
+      console.error("Error resetting onboarding status:", error);
+    }
+  };
+
+  if (hasCompletedOnboarding === null) {
+    console.log("⏳ Loading onboarding status...");
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" />
+        <Text style={{ marginTop: 16 }}>Loading...</Text>
+      </View>
+    );
+  }
+
+  if (!hasCompletedOnboarding) {
+    console.log("🎯 Showing onboarding screens");
+    return <OnboardingNavigator onComplete={handleOnboardingComplete} />;
+  }
+
+  console.log("🏠 Showing main app (onboarding completed)");
 
   if (suspensionLoading) {
     return (
@@ -45,8 +108,23 @@ function AppContent() {
   }
 
   return (
-    <NavigationContainer>
-      <StatusBar style="auto" />
+    <>
+      {/* Temporary reset button for testing */}
+      <TouchableOpacity
+        style={{
+          position: "absolute",
+          top: 50,
+          right: 20,
+          backgroundColor: "#ff4444",
+          padding: 10,
+          borderRadius: 5,
+          zIndex: 1000,
+        }}
+        onPress={resetOnboarding}
+      >
+        <Text style={{ color: "#fff", fontSize: 12 }}>Reset Onboarding</Text>
+      </TouchableOpacity>
+
       <Stack.Navigator
         initialRouteName="MainTabs"
         screenOptions={{
@@ -90,7 +168,7 @@ function AppContent() {
           }}
         />
       </Stack.Navigator>
-    </NavigationContainer>
+    </>
   );
 }
 
@@ -193,7 +271,12 @@ export default function App() {
     <SafeAreaProvider>
       <PaperProvider>
         <AuthProvider>
-          <AppContent />
+          <AppBackground variant="default">
+            <NavigationContainer>
+              <StatusBar style="light" />
+              <AppContent />
+            </NavigationContainer>
+          </AppBackground>
         </AuthProvider>
       </PaperProvider>
     </SafeAreaProvider>

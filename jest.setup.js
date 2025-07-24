@@ -45,6 +45,49 @@ jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 );
 
+// Mock @react-native-community/datetimepicker
+jest.mock('@react-native-community/datetimepicker', () => ({
+  default: 'DateTimePicker',
+}));
+
+// Mock expo-blur
+jest.mock('expo-blur', () => ({
+  BlurView: 'BlurView',
+}));
+
+// Mock expo-font
+jest.mock('expo-font', () => ({
+  loadAsync: jest.fn().mockResolvedValue(true),
+  isLoaded: jest.fn().mockReturnValue(true),
+}));
+
+// Mock expo-linear-gradient
+jest.mock('expo-linear-gradient', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+
+  const LinearGradient = ({ children, style, ...props }) => {
+    return React.createElement(View, { style, ...props }, children);
+  };
+
+  return { LinearGradient };
+});
+
+// Mock SVG files
+jest.mock('*.svg', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+
+  const SvgMock = ({ width, height, style, ...props }) => {
+    return React.createElement(View, {
+      style: [{ width, height }, style],
+      ...props
+    });
+  };
+
+  return SvgMock;
+}, { virtual: true });
+
 // Mock expo-av for audio functionality
 jest.mock('expo-av', () => ({
   Audio: {
